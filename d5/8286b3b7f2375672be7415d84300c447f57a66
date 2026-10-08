@@ -1,0 +1,39 @@
+Cargo.toml
+  s_24d456e49210ef::t_3d0a5a175f70d5 9
+docs/images/architecture.svg
+  s_24d456e49210ef::t_0241c12a2046cc 1-96
+docs/images/ui.svg
+  s_24d456e49210ef::t_96466f8dfb5e11 1,60
+  s_24d456e49210ef::t_9e2611c669bc44 2-39,41-59,61
+  s_24d456e49210ef::t_beff336eff89be 40
+site/index.html
+  s_24d456e49210ef::t_3d0a5a175f70d5 185,198,202,333,348
+docs/images/handoff.svg
+  s_24d456e49210ef::t_136ea800b68561 47-48
+  s_24d456e49210ef::t_78866a506d1a46 1-46,49-70
+README.md
+  s_24d456e49210ef::t_beff336eff89be 5-6,22-23,29-31,73-75,158-160
+  s_24d456e49210ef::t_ea14b0764ccfe7 82-84
+  s_24d456e49210ef::t_908d3de50a4133 92-100,114-115
+  s_24d456e49210ef::t_3d0a5a175f70d5 10,103,110
+docs/STATUS.md
+  s_24d456e49210ef::t_1cfff618aec670 40
+  s_24d456e49210ef::t_908d3de50a4133 38-39
+  s_24d456e49210ef::t_41c3692db0ff69 41-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d58286b3b7f2375672be7415d84300c447f57a66",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
