@@ -1,0 +1,94 @@
+name: release
+# Push a tag like v0.2.0 (matching the version in Cargo.toml) to publish a release:
+# binaries for macOS and Linux (arm64, x86_64), .deb packages, checksums, and, when the
+# HOMEBREW_TAP_TOKEN secret is set, an updated formula in snehal96/homebrew-tap.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-14 }
+          # 22.04 keeps the glibc requirement low (2.35) so older distros can run it.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the crate version
+        run: |
+          want="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          [[ "$GITHUB_REF_NAME" == "$want" ]] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $want"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p anchorleg
+      - if: runner.os == 'Linux'
+        run: cargo install cargo-deb --locked
+      - run: ./scripts/package.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum -- anchorleg-*.tar.gz anchorleg_*.deb > SHA256SUMS && cat SHA256SUMS
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sha256
+          path: dist/*.sha256
+
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - if: env.TAP_TOKEN == ''
+        run: echo "::notice::HOMEBREW_TAP_TOKEN isn't set; skipping the Homebrew tap update."
+      - if: env.TAP_TOKEN != ''
+        uses: actions/checkout@v4
+      - if: env.TAP_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: snehal96/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - if: env.TAP_TOKEN != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: sha256
+          path: sha256
+      - if: env.TAP_TOKEN != ''
+        name: Update the formula
+        run: |
+          mkdir -p tap/Formula
+          ./scripts/homebrew-formula.sh "$GITHUB_REF_NAME" sha256 > tap/Formula/anchorleg.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/anchorleg.rb
+          git commit -m "anchorleg ${GITHUB_REF_NAME#v}" && git push

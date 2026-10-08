@@ -1,0 +1,6 @@
+{
+  "name": "anchorleg-mod",
+  "version": "0.1.0",
+  "description": "Reports exact quota to anchorleg and stops cleanly between model requests when an account runs low.",
+  "author": { "name": "anchorleg" }
+}

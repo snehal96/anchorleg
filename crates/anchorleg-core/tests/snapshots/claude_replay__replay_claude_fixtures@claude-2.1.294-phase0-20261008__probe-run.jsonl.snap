@@ -1,0 +1,132 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/claude-2.1.294-phase0-20261008/probe-run.jsonl
+---
+[
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/relay-phase0-work",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "e41be561-b02c-4580-84b9-acb20169ca9c"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "e41be561-b02c-4580-84b9-acb20169ca9c",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "e41be561-b02c-4580-84b9-acb20169ca9c"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "OK",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "e41be561-b02c-4580-84b9-acb20169ca9c"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791466800,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1791466800,
+          "status": null,
+          "utilization": 0.09
+        },
+        "seven_day": {
+          "resetsAt": 1791504000,
+          "status": null,
+          "utilization": 0.67
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1791466800,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.09,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791504000,
+        "signal": "quota",
+        "status": null,
+        "used": 0.67,
+        "window": "seven_day"
+      }
+    ]
+  },
+  {
+    "event": {
+      "duration_ms": 1265,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "num_turns": 1,
+      "result": "OK",
+      "session_id": "e41be561-b02c-4580-84b9-acb20169ca9c",
+      "subtype": "success",
+      "total_cost_usd": 0.0002984
+    },
+    "signals": [
+      {
+        "ok": true,
+        "session_id": "e41be561-b02c-4580-84b9-acb20169ca9c",
+        "signal": "finished",
+        "text": "OK"
+      }
+    ]
+  }
+]

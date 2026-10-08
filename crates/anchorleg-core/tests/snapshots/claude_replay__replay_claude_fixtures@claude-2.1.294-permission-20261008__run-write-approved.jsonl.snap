@@ -1,0 +1,194 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/claude-2.1.294-permission-20261008/run-write-approved.jsonl
+---
+[
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay_user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/permreal",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01F9f4PPpb7XZsV4f4xfRe4C",
+            "input": {
+              "content": "approved\n",
+              "file_path": "/tmp/scratch/permreal/hello.txt"
+            },
+            "name": "Write",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791466800,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1791466800,
+          "status": null,
+          "utilization": 0.18
+        },
+        "seven_day": {
+          "resetsAt": 1791504000,
+          "status": null,
+          "utilization": 0.68
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1791466800,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.18,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791504000,
+        "signal": "quota",
+        "status": null,
+        "used": 0.68,
+        "window": "seven_day"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "done",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 4522,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "num_turns": 2,
+      "result": "done",
+      "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee",
+      "subtype": "success",
+      "total_cost_usd": 0.006977540000000001
+    },
+    "signals": [
+      {
+        "ok": true,
+        "session_id": "bc13c4de-e4e4-4faa-8407-2a92df739cee",
+        "signal": "finished",
+        "text": "done"
+      }
+    ]
+  }
+]

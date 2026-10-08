@@ -1,0 +1,16 @@
+PASS account 1 answered
+INFO account 1 init: {"apiKeySource":"none","model":"claude-haiku-5-5"}
+INFO account 1 rate_limit_event: {"status":"allowed","resetsAt":1791466800,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.08,"resetsAt":1791466800},"seven_day":{"utilization":0.67,"resetsAt":1791504000}}}
+PASS account 2 answered
+INFO account 2 init: {"apiKeySource":"none","model":"claude-haiku-5-5"}
+INFO account 2 rate_limit_event: {"status":"allowed","resetsAt":1791468600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"out_of_credits","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0,"resetsAt":1791468600},"seven_day":{"utilization":0.44,"resetsAt":1791882000}}}
+PASS the two tokens report different rate-limit windows, so each token selects its own account
+INFO session 39b75790-63d8-45fd-aa2c-abccfd493adc started on account 1
+FAIL account 2 could not resume the session directly (see resume-continue.jsonl and .stderr)
+INFO copied transcript to /Users/me/.claude-two/projects/-tmp-relay-phase0-work/39b75790-63d8-45fd-aa2c-abccfd493adc.jsonl
+PASS account 2 resumed after copying the transcript into its config dir
+PASS probe mod validates
+PASS probe mod ran inside a claude -p session
+PASS rateLimits present: [{"kind":"five_hour","percentUsed":9,"resetsAt":"2026-10-08T13:40:00.000Z"},{"kind":"seven_day","percentUsed":67,"resetsAt":"2026-10-09T00:00:00.000Z"}]
+INFO context: {"tokens":27272,"window":1000000,"percent":3}
+INFO skipped (install codex and set CODEX_HOME_1 to run it)

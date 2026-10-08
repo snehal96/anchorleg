@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"11111111-aaaa-4bbb-8ccc-000000000002","model":"claude-sonnet-5-5"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1791460800,"rateLimitType":"five_hour","utilization":0.91,"surpassedThreshold":0.9,"unifiedWindows":{"five_hour":{"status":"allowed_warning","utilization":0.91,"resetsAt":1791460800},"seven_day":{"status":"allowed","utilization":0.42,"resetsAt":1791892800}}}}
+{"type":"assistant","session_id":"11111111-aaaa-4bbb-8ccc-000000000002","message":{"content":[{"type":"tool_use","id":"toolu_01","name":"Edit","input":{"file_path":"src/lib.rs"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"ok"}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"Edited src/lib.rs","session_id":"11111111-aaaa-4bbb-8ccc-000000000002"}

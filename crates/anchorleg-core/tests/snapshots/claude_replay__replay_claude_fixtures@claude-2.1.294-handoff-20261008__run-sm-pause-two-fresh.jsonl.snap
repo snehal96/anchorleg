@@ -1,0 +1,603 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.jsonl
+---
+[
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay_user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/phase3/run1",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_013971tG2aPYg2WsazrjqAH8",
+            "input": {
+              "content": "draft",
+              "file_path": "/tmp/scratch/phase3/run1/draft.txt"
+            },
+            "name": "Write",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01HsVqfANvKnuBi91jaraYXx",
+            "input": {
+              "file_path": "/tmp/scratch/phase3/run1/notes.txt"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791466800,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1791466800,
+          "status": null,
+          "utilization": 0.09
+        },
+        "seven_day": {
+          "resetsAt": 1791504000,
+          "status": null,
+          "utilization": 0.67
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1791466800,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.09,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791504000,
+        "signal": "quota",
+        "status": null,
+        "used": 0.67,
+        "window": "seven_day"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 3319,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "num_turns": 3,
+      "result": "",
+      "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907",
+      "subtype": "success",
+      "total_cost_usd": 0.00376283
+    },
+    "signals": [
+      {
+        "ok": true,
+        "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907",
+        "signal": "finished",
+        "text": ""
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "relay"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/phase3/run1",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "Checking the working tree and reading `notes.txt` in parallel.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_018Cqc4xkKc724CNJXcVbyHh",
+            "input": {
+              "command": "git status --short && echo \"---\" && git diff refs/relay/run-4/1 --stat 2>&1 | tail -5; echo \"---\"; ls -la",
+              "description": "Show git status, checkpoint diff, and directory listing"
+            },
+            "name": "Bash",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01QtioaU9DgFS4q8QccCdczi",
+            "input": {
+              "file_path": "/tmp/scratch/phase3/run1/notes.txt"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791468600,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1791468600,
+          "status": null,
+          "utilization": 0.0
+        },
+        "seven_day": {
+          "resetsAt": 1791882000,
+          "status": null,
+          "utilization": 0.44
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1791468600,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.0,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791882000,
+        "signal": "quota",
+        "status": null,
+        "used": 0.44,
+        "window": "seven_day"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "The secret word is `KIWI-1`. Writing `answer.txt` and reading `.handoff/TASK.md` so I can add notes.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01Y6jPNhUDGzL68571ZDmMDK",
+            "input": {
+              "content": "KIWI-1\n",
+              "file_path": "/tmp/scratch/phase3/run1/answer.txt"
+            },
+            "name": "Write",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_0141MDU7Lfo2mN6LwgNzVpWo",
+            "input": {
+              "file_path": "/tmp/scratch/phase3/run1/.handoff/TASK.md"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791468600,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1791468600,
+          "status": null,
+          "utilization": 0.01
+        },
+        "seven_day": {
+          "resetsAt": 1791882000,
+          "status": null,
+          "utilization": 0.44
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1791468600,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.01,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791882000,
+        "signal": "quota",
+        "status": null,
+        "used": 0.44,
+        "window": "seven_day"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01L6btfTwMxeuEvRMJkRMVXR",
+            "input": {
+              "file_path": "/tmp/scratch/phase3/run1/.handoff/TASK.md",
+              "new_string": "Decisions made, approaches tried and dropped (and why). Keep this section up to date as you work; relay keeps it when it rewrites the file.\n\n- Resumed from handoff. Verified `draft.txt` exists (5 bytes, \"draft\"), matching checkpoint `refs/relay/run-4/1`. Step 1 already done, not redone.\n- Read `notes.txt`: secret word is `KIWI-1`.\n- Wrote `answer.txt` containing only `KIWI-1`. Step 3 done.\n- No dead ends.\n",
+              "old_string": "Decisions made, approaches tried and dropped (and why). Keep this section up to date as you work; relay keeps it when it rewrites the file.\n",
+              "replace_all": false
+            },
+            "name": "Edit",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "KIWI-1",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 10978,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "num_turns": 6,
+      "result": "KIWI-1",
+      "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6",
+      "subtype": "success",
+      "total_cost_usd": 0.00535793
+    },
+    "signals": [
+      {
+        "ok": true,
+        "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6",
+        "signal": "finished",
+        "text": "KIWI-1"
+      }
+    ]
+  }
+]

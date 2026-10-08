@@ -1,0 +1,35 @@
+[package]
+name = "anchorleg-core"
+description = "Supervisor, policy, adapters, handoff and store for anchorleg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dirs.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shlex.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+# Tokens for `token_from = "keychain"` accounts: the macOS Keychain, or the Secret Service
+# (GNOME Keyring, KWallet) on Linux. libdbus is built from source, so the binary needs no
+# dbus headers to build.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust", "vendored"] }
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

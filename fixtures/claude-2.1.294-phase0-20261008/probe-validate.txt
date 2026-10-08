@@ -1,0 +1,14 @@
+Validating plugin manifest: /Users/me/Desktop/personal/project/quota-relay/spikes/probe-mod/.claude-plugin/plugin.json
+
+⚠ Found 1 warning:
+
+  ❯ author: No author information provided. Consider adding author details for plugin attribution
+
+Validating hooks: /Users/me/Desktop/personal/project/quota-relay/spikes/probe-mod/hooks/hooks.json
+
+  ❯ ./register.js hooks: session.measure, turn.complete
+  ❯ ./register.js calls: $.env.get (via record), $.fs.write (via record), $.session.usage (via record)
+  ❯ ./register.js env writes: nothing
+  ❯ ./register.js env reads: RELAY_PROBE_OUT
+
+✔ Validation passed with warnings

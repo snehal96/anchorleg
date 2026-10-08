@@ -1,0 +1,14 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/claude-2.1.294-permission-20261008/probe-tool-check.jsonl
+---
+[
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  }
+]

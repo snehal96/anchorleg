@@ -1,0 +1,6 @@
+not json at all
+{"no_type":true}
+{"type":"stream_event","event":{"type":"content_block_delta"}}
+{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto"}}
+{"type":"result","is_error":"sometimes"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","utilization":0.5,"brandNewField":{"x":1}}}

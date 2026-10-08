@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="540" viewBox="0 0 880 540" role="img" aria-labelledby="t d">
+  <title id="t">How anchorleg works</title>
+  <desc id="d">You, anchorleg ui or your scripts give anchorleg a task. anchorleg, a single Rust binary, picks an account by priority and live quota, launches the official CLI headless, watches its event stream and switches with a handoff and checkpoint. It drives claude -p with the anchorleg-mod inside, codex exec with quota read live from codex app-server, and agy -p, which switches on quota errors. Handoff files and checkpoints stay in your repo, never pushed.</desc>
+  <style>
+    .bg{fill:#eef1f4} .card{fill:#ffffff;stroke:#d5dce3} .chip{fill:#eef1f4} .ink{fill:#14202b} .muted{fill:#566572}
+    .sig{fill:#b86e00} .modbox{fill:#fdf6ea;stroke:#b86e00} .pill{fill:#14202b} .pilltext{fill:#ffffff}
+    .arrow{stroke:#566572;fill:none} .head{fill:#566572} .strip{fill:#e3e8ee;stroke:#d5dce3}
+    text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+    .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+    @media (prefers-color-scheme: dark){
+      .bg{fill:#0f151b} .card{fill:#161e26;stroke:#26313c} .chip{fill:#1c2630} .ink{fill:#dce3ea} .muted{fill:#94a3b1}
+      .sig{fill:#f2b53a} .modbox{fill:#2a2416;stroke:#f2b53a} .pill{fill:#dce3ea} .pilltext{fill:#0f151b}
+      .arrow{stroke:#94a3b1} .head{fill:#94a3b1} .strip{fill:#1c2630;stroke:#26313c}
+    }
+  </style>
+  <rect class="bg" width="880" height="540" rx="14"/>
+
+  <!-- who starts tasks -->
+  <rect class="pill" x="214" y="22" width="196" height="32" rx="16"/>
+  <text class="pilltext" x="312" y="43" font-size="13" font-weight="600" text-anchor="middle">you · anchorleg ui</text>
+  <rect class="pill" x="470" y="22" width="196" height="32" rx="16"/>
+  <text class="pilltext" x="568" y="43" font-size="13" font-weight="600" text-anchor="middle">scripts · run --json</text>
+  <path class="arrow" d="M312 56 V80" stroke-width="2"/><path class="head" d="M312 84 l-5 -8 h10 z"/>
+  <path class="arrow" d="M568 56 V80" stroke-width="2"/><path class="head" d="M568 84 l-5 -8 h10 z"/>
+
+  <!-- anchorleg -->
+  <rect class="card" x="32" y="88" width="816" height="168" rx="12"/>
+  <text class="ink" x="54" y="120" font-size="19" font-weight="700">anchorleg</text>
+  <text class="muted" x="150" y="120" font-size="13">a single Rust binary</text>
+  <text class="muted mono" x="826" y="120" font-size="12" text-anchor="end">SQLite: quota · runs · approvals</text>
+
+  <rect class="chip" x="54" y="138" width="176" height="96" rx="8"/>
+  <text class="ink" x="70" y="166" font-size="15" font-weight="700">Pick</text>
+  <text class="muted" x="70" y="190" font-size="12.5">priority, live quota,</text>
+  <text class="muted" x="70" y="208" font-size="12.5">blocked-until</text>
+
+  <rect class="chip" x="252" y="138" width="176" height="96" rx="8"/>
+  <text class="ink" x="268" y="166" font-size="15" font-weight="700">Launch</text>
+  <text class="muted" x="268" y="190" font-size="12.5">the official CLI, headless,</text>
+  <text class="muted" x="268" y="208" font-size="12.5">same model and effort</text>
+
+  <rect class="chip" x="450" y="138" width="176" height="96" rx="8"/>
+  <text class="ink" x="466" y="166" font-size="15" font-weight="700">Watch</text>
+  <text class="muted" x="466" y="190" font-size="12.5">event stream, limits,</text>
+  <text class="muted" x="466" y="208" font-size="12.5">tool-call approvals</text>
+
+  <rect class="chip" x="648" y="138" width="178" height="96" rx="8"/>
+  <text class="ink" x="664" y="166" font-size="15" font-weight="700">Switch</text>
+  <text class="muted" x="664" y="190" font-size="12.5">handoff + checkpoint,</text>
+  <text class="muted" x="664" y="208" font-size="12.5">resume or start fresh</text>
+
+  <path class="head" d="M245 186 l-7 -5 v10 z"/>
+  <path class="head" d="M443 186 l-7 -5 v10 z"/>
+  <path class="head" d="M641 186 l-7 -5 v10 z"/>
+
+  <!-- start / events arrows -->
+  <path class="arrow" d="M150 260 V314" stroke-width="2"/><path class="head" d="M150 318 l-5 -8 h10 z"/>
+  <path class="arrow" d="M174 318 V264" stroke-width="2"/><path class="head" d="M174 260 l-5 8 h10 z"/>
+  <text class="muted" x="140" y="292" font-size="12" text-anchor="end">start · resume</text>
+  <text class="muted" x="184" y="292" font-size="12">events</text>
+  <path class="arrow" d="M428 260 V314" stroke-width="2"/><path class="head" d="M428 318 l-5 -8 h10 z"/>
+  <path class="arrow" d="M452 318 V264" stroke-width="2"/><path class="head" d="M452 260 l-5 8 h10 z"/>
+  <path class="arrow" d="M706 260 V314" stroke-width="2"/><path class="head" d="M706 318 l-5 -8 h10 z"/>
+  <path class="arrow" d="M730 318 V264" stroke-width="2"/><path class="head" d="M730 260 l-5 8 h10 z"/>
+
+  <!-- Claude -->
+  <rect class="card" x="32" y="322" width="260" height="140" rx="12"/>
+  <text class="ink mono" x="52" y="350" font-size="15" font-weight="700">claude -p</text>
+  <text class="muted" x="272" y="350" font-size="12" text-anchor="end">Claude Code</text>
+  <rect class="modbox" x="48" y="364" width="228" height="82" rx="8" stroke-width="1.2"/>
+  <text class="sig" x="62" y="388" font-size="13" font-weight="700">anchorleg-mod inside</text>
+  <text class="muted" x="62" y="409" font-size="12.5">exact quota · pauses at 90%</text>
+  <text class="muted" x="62" y="428" font-size="12.5">asks you about tool calls</text>
+
+  <!-- Codex -->
+  <rect class="card" x="310" y="322" width="260" height="140" rx="12"/>
+  <text class="ink mono" x="330" y="350" font-size="15" font-weight="700">codex exec</text>
+  <text class="muted" x="550" y="350" font-size="12" text-anchor="end">Codex</text>
+  <text class="muted" x="330" y="384" font-size="12.5">quota read live before each pick</text>
+  <text class="muted mono" x="330" y="404" font-size="11.5">codex app-server, no request</text>
+  <text class="muted" x="330" y="434" font-size="12.5">switches on hard limits</text>
+
+  <!-- agy -->
+  <rect class="card" x="588" y="322" width="260" height="140" rx="12"/>
+  <text class="ink mono" x="608" y="350" font-size="15" font-weight="700">agy -p</text>
+  <text class="muted" x="828" y="350" font-size="12" text-anchor="end">Antigravity</text>
+  <text class="muted" x="608" y="384" font-size="12.5">no quota exposed by the CLI</text>
+  <text class="muted" x="608" y="404" font-size="12.5">switches on quota errors</text>
+  <text class="muted" x="608" y="434" font-size="12.5">one account per HOME</text>
+
+  <!-- repo -->
+  <rect class="strip" x="32" y="480" width="816" height="40" rx="10"/>
+  <text class="ink" x="52" y="505" font-size="13" font-weight="600">In your repo</text>
+  <text class="muted mono" x="148" y="505" font-size="12.5">.handoff/TASK.md · refs/anchorleg/run-&lt;id&gt;/&lt;n&gt;</text>
+  <text class="muted" x="828" y="505" font-size="12.5" text-anchor="end">local only, never pushed</text>
+</svg>

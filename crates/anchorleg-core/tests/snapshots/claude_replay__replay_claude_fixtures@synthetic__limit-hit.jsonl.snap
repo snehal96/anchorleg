@@ -1,0 +1,117 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/synthetic/limit-hit.jsonl
+---
+[
+  {
+    "event": {
+      "apiKeySource": null,
+      "cwd": null,
+      "event": "init",
+      "model": "claude-sonnet-5-5",
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000003"
+    },
+    "signals": [
+      {
+        "model": "claude-sonnet-5-5",
+        "session_id": "11111111-aaaa-4bbb-8ccc-000000000003",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          },
+          {
+            "text": "Running the tests now.",
+            "type": "text"
+          },
+          {
+            "id": "toolu_02",
+            "input": {
+              "command": "cargo test"
+            },
+            "name": "Bash",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000003"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "attempt": 1,
+      "error": "rate_limit",
+      "error_status": 429,
+      "event": "api_retry",
+      "max_retries": 10,
+      "retry_delay_ms": 2000
+    },
+    "signals": [
+      {
+        "attempt": 1,
+        "category": "rate_limit",
+        "signal": "retrying"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791460800,
+      "status": "rejected",
+      "surpassedThreshold": null,
+      "unifiedWindows": null,
+      "utilization": 1.0
+    },
+    "signals": [
+      {
+        "resets_at": 1791460800,
+        "signal": "quota",
+        "status": "rejected",
+        "used": 1.0,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791460800,
+        "signal": "limit_hit",
+        "window": "five_hour"
+      }
+    ]
+  },
+  {
+    "event": {
+      "duration_ms": null,
+      "errors": [],
+      "event": "result",
+      "is_error": true,
+      "num_turns": null,
+      "result": "Claude AI usage limit reached|1791460800",
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000003",
+      "subtype": "success",
+      "total_cost_usd": null
+    },
+    "signals": [
+      {
+        "resets_at": 1791460800,
+        "signal": "limit_hit",
+        "window": null
+      },
+      {
+        "ok": false,
+        "session_id": "11111111-aaaa-4bbb-8ccc-000000000003",
+        "signal": "finished",
+        "text": "Claude AI usage limit reached|1791460800"
+      }
+    ]
+  }
+]

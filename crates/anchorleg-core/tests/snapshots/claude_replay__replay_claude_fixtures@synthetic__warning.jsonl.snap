@@ -1,0 +1,108 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/synthetic/warning.jsonl
+---
+[
+  {
+    "event": {
+      "apiKeySource": null,
+      "cwd": null,
+      "event": "init",
+      "model": "claude-sonnet-5-5",
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000002"
+    },
+    "signals": [
+      {
+        "model": "claude-sonnet-5-5",
+        "session_id": "11111111-aaaa-4bbb-8ccc-000000000002",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1791460800,
+      "status": "allowed_warning",
+      "surpassedThreshold": 0.9,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1791460800,
+          "status": "allowed_warning",
+          "utilization": 0.91
+        },
+        "seven_day": {
+          "resetsAt": 1791892800,
+          "status": "allowed",
+          "utilization": 0.42
+        }
+      },
+      "utilization": 0.91
+    },
+    "signals": [
+      {
+        "resets_at": 1791460800,
+        "signal": "quota",
+        "status": "warning",
+        "used": 0.91,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1791892800,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.42,
+        "window": "seven_day"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01",
+            "input": {
+              "file_path": "src/lib.rs"
+            },
+            "name": "Edit",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000002"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": null,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "num_turns": null,
+      "result": "Edited src/lib.rs",
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000002",
+      "subtype": "success",
+      "total_cost_usd": null
+    },
+    "signals": [
+      {
+        "ok": true,
+        "session_id": "11111111-aaaa-4bbb-8ccc-000000000002",
+        "signal": "finished",
+        "text": "Edited src/lib.rs"
+      }
+    ]
+  }
+]

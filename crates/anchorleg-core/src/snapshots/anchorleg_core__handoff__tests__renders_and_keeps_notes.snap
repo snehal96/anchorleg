@@ -1,0 +1,51 @@
+---
+source: crates/anchorleg-core/src/handoff.rs
+expression: md
+---
+# Task handoff
+
+<!-- Written by anchorleg when claude-sm stopped (limit reached). Any agent can continue from this file: read it, check the working tree, finish the task. -->
+
+## Goal
+
+fix the tests
+
+Later messages from the user, in order:
+
+- also run clippy
+
+## Steps
+
+- [ ] Fix a (in progress when it stopped)
+
+## Where it stopped
+
+The agent's last message:
+
+> Halfway.
+
+## Files changed
+
+- `src/a.rs` (edited)
+
+`git status --short`:
+
+```
+ M src/a.rs
+```
+
+## Files read
+
+- `README.md`
+
+## Commands run
+
+- `cargo test`
+
+## Checkpoint
+
+The working tree at the stop is saved as `refs/anchorleg/run-3/1` (local only). `git diff refs/anchorleg/run-3/1` shows what changed since.
+
+## Notes
+
+Decisions made, approaches tried and dropped (and why). Keep this section up to date as you work; anchorleg keeps it when it rewrites the file.

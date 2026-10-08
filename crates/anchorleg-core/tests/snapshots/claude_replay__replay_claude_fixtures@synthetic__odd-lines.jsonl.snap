@@ -1,0 +1,63 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/synthetic/odd-lines.jsonl
+---
+[
+  {
+    "event": {
+      "error": "expected ident at line 1 column 2",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "stream_event"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/compact_boundary"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "invalid type: string \"sometimes\", expected a boolean",
+      "event": "unrecognized",
+      "kind": "result"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": null,
+      "resetsAt": null,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": null,
+      "utilization": 0.5
+    },
+    "signals": [
+      {
+        "resets_at": null,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.5,
+        "window": null
+      }
+    ]
+  }
+]

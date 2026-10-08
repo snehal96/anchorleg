@@ -1,0 +1,54 @@
+[package]
+name = "anchorleg"
+description = "anchorleg: keep headless coding tasks running across accounts and vendors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "anchorleg"
+path = "src/main.rs"
+
+[dependencies]
+anchorleg-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+shlex.workspace = true
+ratatui.workspace = true
+rpassword.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+# `cargo deb` (scripts/package.sh on Linux).
+[package.metadata.deb]
+maintainer = "snehal96 <snehal96@users.noreply.github.com>"
+copyright = "anchorleg contributors, MIT OR Apache-2.0"
+license-file = ["../../LICENSE-MIT", "0"]
+extended-description = """\
+anchorleg runs Claude Code, Codex and Antigravity headless, watches every account's quota, \
+and when one runs low it pauses the task at a clean point, writes a handoff and a local git \
+checkpoint, and continues on another of your accounts."""
+section = "devel"
+priority = "optional"
+depends = "$auto"
+recommends = "git"
+assets = [
+    ["target/release/anchorleg", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/anchorleg/README.md", "644"],
+    ["../../LICENSE-MIT", "usr/share/doc/anchorleg/LICENSE-MIT", "644"],
+    ["../../LICENSE-APACHE", "usr/share/doc/anchorleg/LICENSE-APACHE", "644"],
+]

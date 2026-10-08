@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"11111111-aaaa-4bbb-8ccc-000000000001","model":"claude-haiku-5-5","apiKeySource":"none","cwd":"/tmp/relay-phase0-work","tools":["Bash","Read"]}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}
+{"type":"assistant","session_id":"11111111-aaaa-4bbb-8ccc-000000000001","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"OK","session_id":"11111111-aaaa-4bbb-8ccc-000000000001","num_turns":1,"duration_ms":1830,"total_cost_usd":0.0004}

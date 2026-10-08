@@ -1,0 +1,33 @@
+name: Bug report
+description: Something anchorleg did wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      description: The command you ran (e.g. `anchorleg run …`), or what you did in `anchorleg ui`.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`anchorleg --version`, the CLI involved (`claude --version`, `codex --version`, `agy --version`) and your OS."
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Run log (optional)
+      description: >
+        The relevant lines from the run's log (`anchorleg sessions` shows run ids; logs are in
+        anchorleg's data folder under `runs/`). Remove anything private first: paths, account
+        names, prompts, tokens.
+      render: text

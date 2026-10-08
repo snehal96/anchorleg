@@ -1,0 +1,79 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/synthetic/hello.jsonl
+---
+[
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/relay-phase0-work",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000001"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "rateLimitType": "five_hour",
+      "resetsAt": null,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": null,
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": null,
+        "signal": "quota",
+        "status": "allowed",
+        "used": null,
+        "window": "five_hour"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "OK",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000001"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 1830,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "num_turns": 1,
+      "result": "OK",
+      "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+      "subtype": "success",
+      "total_cost_usd": 0.0004
+    },
+    "signals": [
+      {
+        "ok": true,
+        "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
+        "signal": "finished",
+        "text": "OK"
+      }
+    ]
+  }
+]

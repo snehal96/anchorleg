@@ -1,0 +1,1 @@
+{"tool":"Write","input":{"file_path":"/tmp/scratch/permprobe/work/probe.txt","content":"ok\n"},"core":{"decision":"ask","reason":"Claude requested permissions to write to /tmp/scratch/permprobe/work/probe.txt, but you haven't granted it yet."}}

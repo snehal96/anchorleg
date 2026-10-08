@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"11111111-aaaa-4bbb-8ccc-000000000003","model":"claude-sonnet-5-5"}
+{"type":"assistant","session_id":"11111111-aaaa-4bbb-8ccc-000000000003","message":{"content":[{"type":"thinking","thinking":"..."},{"type":"text","text":"Running the tests now."},{"type":"tool_use","id":"toolu_02","name":"Bash","input":{"command":"cargo test"}}]}}
+{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"retry_delay_ms":2000,"error_status":429,"error":"rate_limit"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1791460800,"rateLimitType":"five_hour","utilization":1.0}}
+{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached|1791460800","session_id":"11111111-aaaa-4bbb-8ccc-000000000003"}

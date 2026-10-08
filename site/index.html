@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>anchorleg</title>
+<meta name="description" content="anchorleg keeps headless coding agents (Claude Code, Codex, Antigravity) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314202b'/%3E%3Crect x='8' y='7' width='7' height='18' rx='2' fill='%23f0a52b'/%3E%3Crect x='17' y='7' width='7' height='18' rx='2' fill='%234fc19a'/%3E%3C/svg%3E">
+<!-- GoatCounter: cookieless page views and clicks (data-goatcounter-click). Dashboard: https://anchorleg.goatcounter.com -->
+<script data-goatcounter="https://anchorleg.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a dispatch board. One column of prose beside a live "anchorleg log" panel; quota meters
+   are the recurring motif (the thing the tool actually watches). */
+:root {
+  --ground: #eef1f4;      /* cool paper, slight blue bias */
+  --panel: #ffffff;
+  --ink: #14202b;
+  --muted: #566572;
+  --rule: #d5dce3;
+  --signal: #b86e00;      /* amber: the quota-warning colour, readable as text on light */
+  --signal-fill: #f0a52b;
+  --ok: #1d7a5f;
+  --stop: #b23a3a;
+  --code-bg: #e3e8ee;
+  --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --step-0: 1rem;
+  --step-1: 1.25rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2.2rem, 5vw, 3.6rem);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0f151b; --panel: #161e26; --ink: #dce3ea; --muted: #94a3b1; --rule: #26313c;
+    --signal: #f2b53a; --signal-fill: #f2b53a; --ok: #4fc19a; --stop: #e07070; --code-bg: #1c2630;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0f151b; --panel: #161e26; --ink: #dce3ea; --muted: #94a3b1; --rule: #26313c;
+  --signal: #f2b53a; --signal-fill: #f2b53a; --ok: #4fc19a; --stop: #e07070; --code-bg: #1c2630;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.6 var(--body);
+  padding-inline: max(16px, 4vw);
+  padding-block: 0 3rem;
+}
+.wrap { max-width: 68rem; margin-inline: auto; }
+a { color: inherit; text-decoration-color: var(--signal); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 4px; }
+code, pre, .mono { font-family: var(--mono); font-size: 0.9em; }
+:not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.1; margin: 0; }
+h2 { font-size: var(--step-2); font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-size: var(--step-1); font-weight: 700; }
+p { margin: 0; max-width: 62ch; }
+.eyebrow { font: 500 0.78rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+/* top bar */
+.top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-block: 1.25rem; flex-wrap: wrap; }
+.brand { font: 800 1.15rem/1 var(--display); display: flex; align-items: center; gap: 0.6rem; }
+.brand .baton { display: inline-flex; gap: 2px; }
+.brand .baton i { width: 6px; height: 16px; border-radius: 2px; background: var(--signal-fill); display: block; }
+.brand .baton i:nth-child(2) { background: var(--ok); }
+.top nav { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: 0.95rem; }
+.top nav a { text-decoration: none; color: var(--muted); }
+.top nav a:hover { color: var(--ink); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 3.5rem); align-items: center; padding-block: clamp(1.5rem, 5vw, 4rem); }
+.hero h1 { font-size: var(--step-3); font-weight: 800; letter-spacing: -0.025em; }
+.hero h1 em { font-style: normal; color: var(--signal); }
+.hero .lede { font-size: 1.15rem; color: var(--muted); margin-top: 1.1rem; }
+.install { margin-top: 1.75rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.cmd { display: flex; align-items: stretch; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; max-width: 34rem; min-width: 0; }
+.cmd pre { margin: 0; padding: 0.75rem 0.9rem; overflow-x: auto; flex: 1; min-width: 0; font-size: 0.88rem; line-height: 1.5; }
+.cmd button { border: 0; border-left: 1px solid var(--rule); background: transparent; color: var(--muted); font: 500 0.82rem var(--body); padding-inline: 0.9rem; cursor: pointer; }
+.cmd button:hover { color: var(--ink); }
+.gh { width: 1em; height: 1em; vertical-align: -0.125em; }
+.alt { color: var(--muted); font-size: 0.88rem; margin: 0; }
+.alt a { color: inherit; }
+.cta { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-top: 0.4rem; font-size: 0.95rem; }
+.btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 0.95rem; border-radius: 6px; text-decoration: none; font-weight: 600; }
+.btn.primary { background: var(--ink); color: var(--ground); }
+.btn.ghost { border: 1px solid var(--rule); }
+
+/* the anchorleg log: what the tool prints, as the hero's demo */
+.board { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; min-width: 0; }
+.board header { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--rule); font: 500 0.78rem var(--mono); color: var(--muted); }
+.meters { display: grid; gap: 0.55rem; padding: 0.9rem; border-bottom: 1px solid var(--rule); }
+.meter { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) 3.2rem; gap: 0.7rem; align-items: center; font: 400 0.82rem var(--mono); font-variant-numeric: tabular-nums; }
+.bar { height: 8px; background: var(--code-bg); border-radius: 4px; overflow: hidden; position: relative; }
+.bar span { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--ok); }
+.bar .line { position: absolute; top: -3px; bottom: -3px; left: 90%; width: 2px; background: var(--ink); opacity: 0.35; }
+.meter.hot .bar span { background: var(--signal-fill); }
+.meter .pct { text-align: right; }
+.log { margin: 0; padding: 0.8rem 0.9rem 1rem; list-style: none; display: grid; gap: 0.35rem; font: 400 0.8rem/1.45 var(--mono); }
+.log li { display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); gap: 0.6rem; }
+.log time { color: var(--muted); }
+.log .you { color: var(--ink); font-weight: 500; }
+.log .anchorleg { color: var(--signal); }
+.log .agent { color: var(--muted); }
+.log .ok { color: var(--ok); }
+@media (prefers-reduced-motion: no-preference) {
+  .meter.hot .bar span { animation: fill 2.4s ease-out both; }
+  @keyframes fill { from { width: 55%; } }
+  .log li { animation: rise 0.5s ease-out both; }
+  .log li:nth-child(2) { animation-delay: 0.15s; } .log li:nth-child(3) { animation-delay: 0.3s; }
+  .log li:nth-child(4) { animation-delay: 0.45s; } .log li:nth-child(5) { animation-delay: 0.6s; }
+  .log li:nth-child(6) { animation-delay: 0.75s; } .log li:nth-child(7) { animation-delay: 0.9s; }
+  @keyframes rise { from { opacity: 0.25; transform: translateY(3px); } }
+}
+
+section { padding-block: clamp(2.5rem, 6vw, 4.5rem); border-top: 1px solid var(--rule); }
+.section-head { display: grid; gap: 0.6rem; margin-bottom: 2rem; }
+.section-head p { color: var(--muted); }
+
+/* the switch, in order */
+.steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.25rem; counter-reset: step; list-style: none; padding: 0; margin: 0; }
+.steps li { display: grid; gap: 0.5rem; align-content: start; counter-increment: step; padding-top: 0.9rem; border-top: 3px solid var(--rule); }
+.steps li:nth-child(2) { border-top-color: var(--signal-fill); }
+.steps li::before { content: counter(step); font: 500 0.8rem var(--mono); color: var(--muted); }
+.steps p { color: var(--muted); font-size: 0.95rem; }
+
+/* features */
+.features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.5rem 3rem; }
+.feature { display: grid; gap: 0.7rem; align-content: start; min-width: 0; }
+.feature p { color: var(--muted); }
+.screen { margin: 0.4rem 0 0; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 0.8rem 0.9rem; overflow-x: auto; font: 400 0.76rem/1.45 var(--mono); white-space: pre; }
+.screen .u { background: var(--code-bg); }
+.screen .a { color: var(--signal); font-weight: 500; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.table-wrap { overflow-x: auto; }
+td, th { text-align: left; padding: 0.4rem 0.6rem 0.4rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 500 0.75rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* rules */
+.rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem 3rem; list-style: none; padding: 0; margin: 0; }
+.rules li { padding-left: 1.4rem; position: relative; }
+.rules li::before { content: ""; position: absolute; left: 0; top: 0.6em; width: 0.6rem; height: 2px; background: var(--ok); }
+.rules strong { display: block; }
+.rules span { color: var(--muted); font-size: 0.95rem; }
+
+/* status */
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.75rem; }
+.chip { display: flex; justify-content: space-between; gap: 0.75rem; align-items: center; padding: 0.7rem 0.9rem; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; }
+.chip b { font-weight: 600; }
+.pill { font: 500 0.72rem var(--mono); padding: 0.2rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.yes { color: var(--ok); }
+.pill.soon { color: var(--signal); }
+.pill.later { color: var(--muted); }
+
+.start pre { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 1rem; overflow-x: auto; font-size: 0.86rem; line-height: 1.6; margin: 0; }
+.start .c { color: var(--muted); }
+
+footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; color: var(--muted); font-size: 0.9rem; }
+
+@media (max-width: 860px) {
+  .hero, .features, .rules { grid-template-columns: minmax(0, 1fr); }
+  .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .steps { grid-template-columns: minmax(0, 1fr); }
+  .meter { grid-template-columns: 6rem minmax(0, 1fr) 2.8rem; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="brand"><span class="baton" aria-hidden="true"><i></i><i></i></span>anchorleg</div>
+  <nav aria-label="Page">
+    <a href="#how">How it works</a>
+    <a href="#features">Features</a>
+    <a href="#rules">Ground rules</a>
+    <a href="#start">Get started</a>
+    <a href="https://github.com/snehal96/anchorleg" data-goatcounter-click="out-github-nav" data-goatcounter-title="GitHub (nav)"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+  </nav>
+</header>
+
+<div class="hero">
+  <div>
+    <p class="eyebrow">Open source · MIT or Apache-2.0</p>
+    <h1>Your agent hit <em>92%</em>. The task kept going.</h1>
+    <p class="lede">anchorleg runs your Claude Code, Codex and Antigravity tasks in the background and
+      watches every account's 5-hour and weekly limits. When one runs low, it pauses at a clean step,
+      writes a handoff, and carries on with the same task on another of your accounts.</p>
+    <div class="install">
+      <div class="cmd">
+        <pre id="install-cmd">cargo install --git https://github.com/snehal96/anchorleg anchorleg</pre>
+        <button type="button" id="copy-install" aria-label="Copy install command">Copy</button>
+      </div>
+      <p class="alt">Needs Rust and macOS. Homebrew and Linux packages are coming soon. <a href="https://github.com/snehal96/anchorleg#install" data-goatcounter-click="out-install-other" data-goatcounter-title="Install details">Install details</a></p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/snehal96/anchorleg" data-goatcounter-click="out-github-hero" data-goatcounter-title="View on GitHub (hero)"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> View on GitHub</a>
+        <a class="btn ghost" href="#start" data-goatcounter-click="quick-start" data-goatcounter-title="Quick start">Quick start</a>
+      </div>
+    </div>
+  </div>
+
+  <figure class="board" aria-label="Example anchorleg log during an account switch">
+    <header><span>anchorleg · run #12 · ~/code/app</span><span>5-hour window</span></header>
+    <div class="meters">
+      <div class="meter hot"><span>claude-work</span><div class="bar"><span style="width:92%"></span><i class="line" title="pause at 90%"></i></div><span class="pct">92%</span></div>
+      <div class="meter"><span>claude-home</span><div class="bar"><span style="width:31%"></span><i class="line"></i></div><span class="pct">31%</span></div>
+      <div class="meter"><span>claude-side</span><div class="bar"><span style="width:8%"></span><i class="line"></i></div><span class="pct">8%</span></div>
+    </div>
+    <ol class="log">
+      <li><time>14:02</time><span class="you">› fix the failing auth tests</span></li>
+      <li><time>14:02</time><span class="anchorleg">anchorleg: running on claude-work</span></li>
+      <li><time>14:31</time><span class="agent">⏺ Bash(cargo test auth) · 9 of 14 pass</span></li>
+      <li><time>14:33</time><span class="anchorleg">anchorleg: claude-work paused at a clean point (quota at 92%)</span></li>
+      <li><time>14:33</time><span class="anchorleg">anchorleg: handoff written to .handoff/TASK.md, checkpoint refs/anchorleg/run-12/1</span></li>
+      <li><time>14:33</time><span class="anchorleg">anchorleg: switching claude-work → claude-home (resuming the session)</span></li>
+      <li><time>14:41</time><span class="ok">⏺ All 14 auth tests pass.</span></li>
+    </ol>
+  </figure>
+</div>
+
+<section id="how">
+  <div class="section-head">
+    <p class="eyebrow">How it works</p>
+    <h2>What happens when an account runs low</h2>
+    <p>anchorleg starts the official CLI (<code>claude</code>, <code>codex</code> or <code>agy</code>) for you
+      and reads its event stream. Inside Claude Code, a small mod reports exact usage and knows where
+      it is safe to stop; Codex quota is read live before every launch.</p>
+  </div>
+  <ol class="steps">
+    <li><h3>Watch</h3><p>Every account's 5-hour and weekly windows, from the CLI's own rate-limit events and the mod's exact percentages.</p></li>
+    <li><h3>Pause at 90%</h3><p>Before the next model request, never mid-edit. Tool results so far are already saved in the session.</p></li>
+    <li><h3>Hand off</h3><p><code>.handoff/TASK.md</code> with the goal, steps, files touched and last message, plus a local git checkpoint of the working tree.</p></li>
+    <li><h3>Continue</h3><p>The next account gets the session and project memory and resumes it. A large context starts fresh from the handoff instead.</p></li>
+  </ol>
+</section>
+
+<section id="features">
+  <div class="section-head">
+    <p class="eyebrow">Features</p>
+    <h2>One place for every session</h2>
+  </div>
+  <div class="features">
+    <div class="feature">
+      <h3>A session manager in your terminal</h3>
+      <p><code>anchorleg ui</code> lists every session with its live conversation, takes new tasks and
+        replies, and shows each account's quota. Keyboard first, mouse works too.</p>
+<pre class="screen" aria-label="anchorleg ui">┌ Sessions ──────────┐┌ #12 · claude-home · running ─────────────┐
+│ + New session      ││<span class="u">&gt; fix the failing auth tests              </span>│
+│ ● #12 claude-home  ││⏺ Bash(cargo test auth)                    │
+│ ✓ #11 claude-work  ││· anchorleg: claude-work paused (92%)          │
+├ Agents ────────────┤│⏺ All 14 auth tests pass.                  │
+│ 1 claude-work ████ ││                                           │
+│ 2 claude-home █░░░ │├ Reply to #12 (Enter to send) ─────────────┤
+└────────────────────┘└───────────────────────────────────────────┘</pre>
+    </div>
+    <div class="feature">
+      <h3>You approve what the agent may do</h3>
+      <p>A background run can't show Claude's permission dialog, so anchorleg asks you instead. The
+        session waits until you answer: <b>1</b> yes, <b>2</b> yes for this session, <b>3</b> no.</p>
+<pre class="screen" aria-label="permission question">───────────────────────────────────────────────
+<span class="a">Allow Write(src/auth/session.rs)?</span>
+Claude requested permissions to write to src/auth/session.rs
+ 1 Yes    2 Yes, for this session    3 No</pre>
+    </div>
+    <div class="feature">
+      <h3>Same model and effort on every account</h3>
+      <p>One setting per provider, shared by all its accounts, so a task keeps the same strength
+        when it moves. Type <code>/model opus</code> or <code>/effort high</code> in the message box.
+        Your own slash commands and skills pass straight through.</p>
+    </div>
+    <div class="feature">
+      <h3>Scriptable</h3>
+      <p>Every command has <code>--json</code> output and stable exit codes, so another program
+        (your own task delegator, a CI job) can run anchorleg as a subprocess.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Exit</th><th>Outcome</th></tr></thead>
+          <tbody>
+            <tr><td class="num">0</td><td>done</td></tr>
+            <tr><td class="num">75</td><td>every account blocked (with <code>--no-wait</code>)</td></tr>
+            <tr><td class="num">78</td><td>no account configured</td></tr>
+            <tr><td class="num">130</td><td>stopped by you</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="rules">
+  <div class="section-head">
+    <p class="eyebrow">Ground rules</p>
+    <h2>Built to use your subscriptions the way they're meant to be used</h2>
+    <p>anchorleg switches between accounts you own by relaunching the official CLI. That's all.</p>
+  </div>
+  <ul class="rules">
+    <li><strong>Official binaries only</strong><span>It starts <code>claude</code>, <code>codex</code> and <code>agy</code> (later <code>cursor-agent</code>) exactly as you would.</span></li>
+    <li><strong>No token tricks</strong><span>It never extracts subscription tokens, never calls vendor APIs directly, never runs a proxy.</span></li>
+    <li><strong>Nothing changed inside a session</strong><span>The mod reads usage and stops at a step boundary. Switching happens outside, by relaunching.</span></li>
+    <li><strong>Secrets stay in the keychain</strong><span>Tokens, when you use them, live in the macOS Keychain. Never in config, logs or test data.</span></li>
+    <li><strong>Local checkpoints, never pushed</strong><span>Checkpoints are refs under <code>refs/anchorleg/</code>. Your branch, index and stash are untouched.</span></li>
+    <li><strong>Nothing approved without you</strong><span>Tool calls Claude would ask about wait for your answer. No answer in 30 minutes means no.</span></li>
+  </ul>
+</section>
+
+<section>
+  <div class="section-head">
+    <p class="eyebrow">Status</p>
+    <h2>Early, and working with three CLIs today</h2>
+    <p>Real switches between Claude accounts are verified; Codex and Antigravity are verified on real accounts (runs, follow-ups, live Codex quota). The rest is covered by tests that replay captured CLI output.</p>
+  </div>
+  <div class="status">
+    <div class="chip"><b>Claude Code</b><span class="pill yes">supported</span></div>
+    <div class="chip"><b>Codex</b><span class="pill yes">supported</span></div>
+    <div class="chip"><b>Antigravity (agy)</b><span class="pill yes">supported</span></div>
+    <div class="chip"><b>Kimi, Cursor</b><span class="pill later">planned</span></div>
+    <div class="chip"><b>Desktop app</b><span class="pill later">planned</span></div>
+    <div class="chip"><b>Linux, Homebrew</b><span class="pill soon">in progress</span></div>
+  </div>
+</section>
+
+<section id="start" class="start">
+  <div class="section-head">
+    <p class="eyebrow">Get started</p>
+    <h2>Five minutes, if your accounts are already logged in</h2>
+  </div>
+<pre><span class="c"># 1. install (needs Rust; have claude, codex or agy signed in)</span>
+cargo install --git https://github.com/snehal96/anchorleg anchorleg
+
+<span class="c"># 2. add your accounts: import shell aliases like</span>
+<span class="c">#    alias claude-work='CLAUDE_CONFIG_DIR=~/.claude-work claude'</span>
+anchorleg accounts import-aliases --yes
+
+<span class="c"># 3. one model and effort for every Claude account</span>
+anchorleg settings claude --model sonnet --effort high
+
+<span class="c"># 4. open the session manager, press n, describe the task</span>
+anchorleg ui</pre>
+</section>
+
+<footer>
+  <span>anchorleg · dual-licensed MIT or Apache-2.0</span>
+  <span><a href="https://github.com/snehal96/anchorleg" data-goatcounter-click="out-github-footer" data-goatcounter-title="Source (footer)"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> Source</a> · <a href="https://github.com/snehal96/anchorleg/blob/main/docs/CLI.md" data-goatcounter-click="out-cli-docs" data-goatcounter-title="CLI reference">CLI reference</a> · <a href="https://github.com/snehal96/anchorleg#how-it-works" data-goatcounter-click="out-design" data-goatcounter-title="How it works">How it works</a></span>
+</footer>
+
+</div>
+<script>
+document.getElementById('copy-install').addEventListener('click', function (ev) {
+  var btn = ev.currentTarget;
+  var text = document.getElementById('install-cmd').textContent;
+  // Count copies of the install command (GoatCounter event; no-op if it's blocked).
+  if (window.goatcounter && window.goatcounter.count) {
+    window.goatcounter.count({ path: 'copy-install', title: 'Copied install command', event: true });
+  }
+  var done = function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+  var select = function () {
+    var r = document.createRange(); r.selectNodeContents(document.getElementById('install-cmd'));
+    var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = 'Press ⌘C';
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, select);
+    } else { select(); }
+  } catch (e) { select(); }
+});
+</script>
+</body>
+</html>
