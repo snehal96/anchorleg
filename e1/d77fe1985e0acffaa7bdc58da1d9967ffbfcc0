@@ -1,0 +1,49 @@
+.github/workflows/release.yml
+  s_24d456e49210ef::t_7e1b388186fa4b 1-53,55-94
+  s_24d456e49210ef::t_91ec5a3ee94a1c 54
+scripts/package.sh
+  s_24d456e49210ef::t_725ba92b3cef5c 1-32
+.github/workflows/ci.yml
+  s_24d456e49210ef::t_725ba92b3cef5c 8-12
+install.sh
+  s_24d456e49210ef::t_05e666854088ae 1-65,74
+  s_24d456e49210ef::t_1c2ae60f7e5971 66-73
+.gitignore
+  s_24d456e49210ef::t_91ec5a3ee94a1c 15
+crates/anchorleg-core/Cargo.toml
+  s_24d456e49210ef::t_a4c1f3c5dd78ad 21-28
+  s_24d456e49210ef::t_d8c4730d4a1225 29
+README.md
+  s_24d456e49210ef::t_7f01c89ecb583b 121-123
+  s_24d456e49210ef::t_c00c4d686ff755 12,92-94,96,98-102,105,108-109,112-118,149,268-269
+docs/DECISIONS.md
+  s_24d456e49210ef::t_2d77b2f4a61895 282-302
+scripts/homebrew-formula.sh
+  s_24d456e49210ef::t_e0366fd2ff0d4d 1-19,24-62
+  s_24d456e49210ef::t_e7fc03f9933088 20-23
+crates/anchorleg/Cargo.toml
+  s_24d456e49210ef::t_04002e9351c4f3 35-46,49-54
+  s_24d456e49210ef::t_e0366fd2ff0d4d 47-48
+docs/STATUS.md
+  s_24d456e49210ef::t_2d77b2f4a61895 45-52
+docs/RELEASING.md
+  s_24d456e49210ef::t_7f01c89ecb583b 1-54
+Cargo.lock
+  s_24d456e49210ef::t_a548b3bcd44d1d 5-15,105,116,149-265,275-280,329-350,395-403,426-435,496-504,513,566-571,653-682,731,752,776-802,816,828-847,926-940,947-982,996-997,1013-1023,1097-1102,1109-1126,1152-1161,1239,1241-1242,1266-1275,1354,1402,1415,1453-1486,1499-1529,1531-1533,1566-1612,1628-1637,1671-1676,1800-1810,1817-1830,1843-1851,1882-1890,1927-1938,1947-1949,2108,2128,2165,2195-2213,2299-2309,2319-2329,2456-2461,2505,2518,2672,2710-2721,2810-2820,3068,3083-3100,3110-3173,3179-3181,3189-3274,3280-3293,3300-3336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e1d77fe1985e0acffaa7bdc58da1d9967ffbfcc0",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
