@@ -1,0 +1,206 @@
+.github/workflows/pages.yml
+  s_24d456e49210ef::t_b01d0685aec028 1-27
+site/index.html
+  s_24d456e49210ef::t_9b7317ca47da2c 1-369
+docs/STATUS.md
+  s_24d456e49210ef::t_b01d0685aec028 1-83
+.github/workflows/ci.yml
+  s_24d456e49210ef::t_b01d0685aec028 1-18
+README.md
+  s_24d456e49210ef::t_23228e09766959 1-326
+  s_24d456e49210ef::t_825b2bee048196 327-329
+.gitignore
+  s_24d456e49210ef::t_f73d8f10e84197 1-12
+Cargo.lock
+  s_24d456e49210ef::t_2bc9b52fd4133a 1-2480
+Cargo.toml
+  s_24d456e49210ef::t_1f1a23cd4e71ab 1-37
+LICENSE-APACHE
+  s_24d456e49210ef::t_70745af8aa024f 1-202
+LICENSE-MIT
+  s_24d456e49210ef::t_4c151a681d9ff8 1-21
+PLAN.md
+  s_24d456e49210ef::t_824203d09d819f 1-276
+crates/relay-cli/Cargo.toml
+  s_24d456e49210ef::t_aa6767d50add63 1-34
+crates/relay-cli/src/accounts.rs
+  s_24d456e49210ef::t_bbeb10f0d0ea2e 1-265
+crates/relay-cli/src/main.rs
+  s_24d456e49210ef::t_6e8ac55e86e4b2 1-169
+crates/relay-cli/src/permission.rs
+  s_24d456e49210ef::t_1a72a6e3be7f36 1-202
+crates/relay-cli/src/run.rs
+  s_24d456e49210ef::t_302898566afb1f 1-222
+crates/relay-cli/src/settings.rs
+  s_24d456e49210ef::t_74a196d0e6adca 1-102
+crates/relay-cli/src/status.rs
+  s_24d456e49210ef::t_ba86274aaf97bd 1-143
+crates/relay-cli/src/ui.rs
+  s_24d456e49210ef::t_4d09730b42e672 1-2147
+crates/relay-cli/tests/cli.rs
+  s_24d456e49210ef::t_09144c0ca6165c 1-176
+crates/relay-cli/tests/fake/fake-claude.sh
+  s_24d456e49210ef::t_3fcb9033e05ce0 1-57
+crates/relay-cli/tests/run.rs
+  s_24d456e49210ef::t_171a1847bdedc8 1-560
+crates/relay-core/Cargo.toml
+  s_24d456e49210ef::t_94aae523d33b43 1-27
+crates/relay-core/src/adapters/claude.rs
+  s_24d456e49210ef::t_0147bf97f56720 1-525
+crates/relay-core/src/adapters/mod.rs
+  s_24d456e49210ef::t_f9fb908ad0c4c1 1-108
+crates/relay-core/src/checkpoint.rs
+  s_24d456e49210ef::t_11bb649561971f 1-181
+crates/relay-core/src/conversation.rs
+  s_24d456e49210ef::t_2152cca81b3db0 1-243
+crates/relay-core/src/handoff.rs
+  s_24d456e49210ef::t_ce9898d7e6a1c6 1-550
+crates/relay-core/src/lib.rs
+  s_24d456e49210ef::t_e7b8d24b8535b5 1-18
+crates/relay-core/src/output.rs
+  s_24d456e49210ef::t_d59b4bd9cbc68a 1-193
+crates/relay-core/src/policy.rs
+  s_24d456e49210ef::t_dae68d5ae78596 1-339
+crates/relay-core/src/registry.rs
+  s_24d456e49210ef::t_45f718fd35af54 1-898
+crates/relay-core/src/relay_mod.rs
+  s_24d456e49210ef::t_546c0c10206a3b 1-62
+crates/relay-core/src/snapshots/relay_core__handoff__tests__renders_and_keeps_notes.snap
+  s_24d456e49210ef::t_f8a9c6ed240e3b 1-51
+crates/relay-core/src/store.rs
+  s_24d456e49210ef::t_428914a06a4a2d 1-822
+crates/relay-core/src/supervisor.rs
+  s_24d456e49210ef::t_0148af5fe7c9d9 1-815
+crates/relay-core/tests/claude_replay.rs
+  s_24d456e49210ef::t_e683392c1bc3f2 1-25
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-handoff-20261008__run-sm-pause-two-fresh.jsonl.snap
+  s_24d456e49210ef::t_163366c305f72f 1-603
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-mod-stop-20261008__run-sm-then-two.jsonl.snap
+  s_24d456e49210ef::t_09dbd8a43e33a1 1-275
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-permission-20261008__probe-tool-check.jsonl.snap
+  s_24d456e49210ef::t_b83de5b79c5a8f 1-14
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-permission-20261008__run-write-approved.jsonl.snap
+  s_24d456e49210ef::t_24b223dd0b7220 1-194
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-phase0-20261008__acct1-hello.jsonl.snap
+  s_24d456e49210ef::t_76c435f6be091e 1-104
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-phase0-20261008__acct2-hello.jsonl.snap
+  s_24d456e49210ef::t_d1809fbb99ce0f 1-125
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-phase0-20261008__probe-run.jsonl.snap
+  s_24d456e49210ef::t_763a34940663b8 1-132
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-phase0-20261008__resume-continue-copied.jsonl.snap
+  s_24d456e49210ef::t_286c434aaaec04 1-132
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-phase0-20261008__resume-continue.jsonl.snap
+  s_24d456e49210ef::t_d943e19d8053f5 1-33
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.294-phase0-20261008__resume-start.jsonl.snap
+  s_24d456e49210ef::t_afac28df454752 1-132
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@synthetic__hello.jsonl.snap
+  s_24d456e49210ef::t_351c64d01c2b6a 1-79
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@synthetic__limit-hit.jsonl.snap
+  s_24d456e49210ef::t_7d837fbd6606d5 1-117
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@synthetic__odd-lines.jsonl.snap
+  s_24d456e49210ef::t_5a41bf3534609a 1-63
+crates/relay-core/tests/snapshots/claude_replay__replay_claude_fixtures@synthetic__warning.jsonl.snap
+  s_24d456e49210ef::t_c499f52f945dfb 1-108
+docs/BUILD-PLAN.md
+  s_24d456e49210ef::t_cf30c3d2388b9c 1-188
+docs/CLI.md
+  s_24d456e49210ef::t_432eaf52d789e4 1-240
+docs/DECISIONS.md
+  s_24d456e49210ef::t_a6a1d3d3b2aa7e 1-215
+docs/RESEARCH.md
+  s_24d456e49210ef::t_4ce09b21542fdf 1-140
+fixtures/claude-2.1.294-handoff-20261008/README.md
+  s_24d456e49210ef::t_c80410dec9d2ca 1-13
+fixtures/claude-2.1.294-handoff-20261008/TASK.md
+  s_24d456e49210ef::t_bc085f0260443d 1-46
+fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.jsonl
+  s_24d456e49210ef::t_b0ea84efa6503d 1-45
+fixtures/claude-2.1.294-mod-stop-20261008/README.md
+  s_24d456e49210ef::t_3d1507eff45830 1-11
+fixtures/claude-2.1.294-mod-stop-20261008/run-sm-then-two.jsonl
+  s_24d456e49210ef::t_7b388d43f9ce61 1-18
+fixtures/claude-2.1.294-permission-20261008/README.md
+  s_24d456e49210ef::t_e5fe6fc3527c15 1-8
+fixtures/claude-2.1.294-permission-20261008/probe-tool-check.jsonl
+  s_24d456e49210ef::t_a008238d4dde6e 1
+fixtures/claude-2.1.294-permission-20261008/run-write-approved.jsonl
+  s_24d456e49210ef::t_d6b81ad5ffd134 1-15
+fixtures/claude-2.1.294-phase0-20261008/README.md
+  s_24d456e49210ef::t_cece4c57d8c7b3 1-11
+fixtures/claude-2.1.294-phase0-20261008/acct1-hello.jsonl
+  s_24d456e49210ef::t_603efcdc3cafca 1-5
+fixtures/claude-2.1.294-phase0-20261008/acct2-hello.jsonl
+  s_24d456e49210ef::t_b6d364805bd97e 1-7
+fixtures/claude-2.1.294-phase0-20261008/claude-version.txt
+  s_24d456e49210ef::t_c05beae14dbb07 1
+fixtures/claude-2.1.294-phase0-20261008/probe-mod.jsonl
+  s_24d456e49210ef::t_3541563f1df3b4 1-2
+fixtures/claude-2.1.294-phase0-20261008/probe-run.jsonl
+  s_24d456e49210ef::t_08acc04d0f694c 1-8
+fixtures/claude-2.1.294-phase0-20261008/probe-validate.txt
+  s_24d456e49210ef::t_c72a70588c96be 1-14
+fixtures/claude-2.1.294-phase0-20261008/resume-continue-copied.jsonl
+  s_24d456e49210ef::t_8e93a2234edb25 1-8
+fixtures/claude-2.1.294-phase0-20261008/resume-continue.jsonl
+  s_24d456e49210ef::t_e92244bab1a095 1
+fixtures/claude-2.1.294-phase0-20261008/resume-start.jsonl
+  s_24d456e49210ef::t_323b675d0d295c 1-8
+fixtures/claude-2.1.294-phase0-20261008/summary.txt
+  s_24d456e49210ef::t_7815411d100069 1-16
+fixtures/synthetic/README.md
+  s_24d456e49210ef::t_4994397b4f5b40 1-5
+fixtures/synthetic/hello.jsonl
+  s_24d456e49210ef::t_44d4bd692f3e43 1-4
+fixtures/synthetic/limit-hit.jsonl
+  s_24d456e49210ef::t_0b84e4d5e5610b 1-5
+fixtures/synthetic/odd-lines.jsonl
+  s_24d456e49210ef::t_cc5687c053a0c1 1-6
+fixtures/synthetic/warning.jsonl
+  s_24d456e49210ef::t_41cef2bfb8eb8b 1-5
+mod/.claude-plugin/plugin.json
+  s_24d456e49210ef::t_71fc4557a38cd9 1-6
+mod/hooks/hooks.json
+  s_24d456e49210ef::t_29ac0e5df5c51f 1-3
+mod/hooks/register.test.ts
+  s_24d456e49210ef::t_530fbb0a0bb0ce 1-184
+mod/hooks/register.ts
+  s_24d456e49210ef::t_d41f01ff46cefc 1-132
+scripts/check.sh
+  s_24d456e49210ef::t_d787e735a1823a 1-16
+scripts/scrub-capture.py
+  s_24d456e49210ef::t_bd43482f79783d 1-103
+spikes/phase0.sh
+  s_24d456e49210ef::t_313ef656321cf2 1-161
+spikes/probe-mod/.claude-plugin/plugin.json
+  s_c38347c9d9ef36::t_1768224bd84682 1-5
+spikes/probe-mod/hooks/hooks.json
+  s_c38347c9d9ef36::t_0ac139c8ff3293 1-3
+spikes/probe-mod/hooks/register.js
+  s_24d456e49210ef::t_8fa33d6c1ddf03 1-32
+spikes/probe-mod/tsconfig.json
+  s_24d456e49210ef::t_b8397ff28dd9d8 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14913ec7e7650d9f84cd56551657ce3e63a368a0",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    },
+    "s_c38347c9d9ef36": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04cd75d3-d1c2-427f-a6c6-dfd35b106a92",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
