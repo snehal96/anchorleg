@@ -1085,3 +1085,69 @@ fn codex_stops_at_the_threshold_and_continues_on_a_roomier_login() {
     assert_eq!(code, 0, "{r}");
     assert_eq!(r["result"], "finished on c1");
 }
+
+#[test]
+fn policies_pick_among_accounts_with_room() {
+    // c1 is first by priority but 70% used; c2 is at 20%.
+    let env = Env::mixed(&[("c1", "codex"), ("c2", "codex")]);
+    env.script("c1.limits.json", &codex_limits(70, false));
+    env.script("c2.limits.json", &codex_limits(20, false));
+    env.script("c1.jsonl", &codex_ok("t1", "ran on c1"));
+    env.script("c2.jsonl", &codex_ok("t2", "ran on c2"));
+
+    let (_, r) = env.run(&[]);
+    assert_eq!(r["result"], "ran on c1", "drain: priority order");
+    let (_, r) = env.run(&["--policy", "balance"]);
+    assert_eq!(r["result"], "ran on c2", "balance: least used");
+
+    // The default policy is saved in the config and shown by `status`.
+    env.anchorleg()
+        .args(["policy", "balance"])
+        .assert()
+        .success();
+    let (_, r) = env.run(&[]);
+    assert_eq!(r["result"], "ran on c2");
+    let status = env.anchorleg().args(["status", "--json"]).output().unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status["policy"], "balance");
+
+    // --prefer and --account win over the policy; unknown names are refused.
+    let (_, r) = env.run(&["--prefer", "c1"]);
+    assert_eq!(r["result"], "ran on c1");
+    let (_, r) = env.run(&["--account", "c1"]);
+    assert_eq!(r["result"], "ran on c1");
+    env.anchorleg()
+        .args(["run", "--account", "nope", "--", "x"])
+        .assert()
+        .failure();
+
+    // A pinned account goes first too; a weekly reserve keeps an account back.
+    env.anchorleg()
+        .args(["accounts", "set", "c1", "--pinned", "true"])
+        .assert()
+        .success();
+    let (_, r) = env.run(&[]);
+    assert_eq!(r["result"], "ran on c1");
+    env.anchorleg()
+        .args([
+            "accounts",
+            "set",
+            "c1",
+            "--pinned",
+            "false",
+            "--reserve-7d",
+            "0.95",
+        ])
+        .assert()
+        .success();
+    let list = env.anchorleg().args(["accounts", "list"]).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&list.stdout).contains("weekly reserve 95%"),
+        "{}",
+        String::from_utf8_lossy(&list.stdout)
+    );
+    env.anchorleg().args(["policy", "drain"]).assert().success();
+    // c1's weekly is at 10%, inside a 95% reserve (it may use only 5%): c2 runs.
+    let (_, r) = env.run(&[]);
+    assert_eq!(r["result"], "ran on c2");
+}

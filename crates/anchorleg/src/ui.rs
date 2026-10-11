@@ -188,6 +188,8 @@ pub enum Action {
     Answer(PermissionState),
     /// Edit the selected account's CLI settings (`[vendor.<name>]`).
     Settings,
+    /// Next switch policy (drain → balance → save-weekly), saved as the default.
+    CyclePolicy,
     Help,
     Quit,
 }
@@ -443,6 +445,7 @@ impl App {
             Action::Stop => self.stop()?,
             Action::MoveUp | Action::MoveDown => self.move_agent(action == Action::MoveUp)?,
             Action::Toggle => self.toggle_agent()?,
+            Action::CyclePolicy => self.cycle_policy()?,
             Action::Import => self.import()?,
             Action::Remove => self.remove_agent()?,
             Action::Help => self.help = !self.help,
@@ -682,6 +685,19 @@ impl App {
         Ok(())
     }
 
+    fn cycle_policy(&mut self) -> anyhow::Result<()> {
+        let all = policy::Policy::ALL;
+        let i = all
+            .iter()
+            .position(|p| *p == self.config.policy)
+            .unwrap_or(0);
+        let next = all[(i + 1) % all.len()];
+        self.config.policy = next;
+        self.config.save(&self.config_path)?;
+        self.message = format!("policy {}: {}", next.name(), next.describe());
+        Ok(())
+    }
+
     fn toggle_agent(&mut self) -> anyhow::Result<()> {
         let Some(name) = self.ordered_names().get(self.agent).cloned() else {
             return Ok(());
@@ -893,6 +909,7 @@ impl App {
                     KeyCode::Char(' ') | KeyCode::Char('e') => Action::Toggle,
                     KeyCode::Char('i') => Action::Import,
                     KeyCode::Char('o') => Action::Settings,
+                    KeyCode::Char('p') => Action::CyclePolicy,
                     KeyCode::Char('d') | KeyCode::Delete => Action::Remove,
                     _ => return Ok(()),
                 };
@@ -1083,7 +1100,8 @@ impl App {
     }
 
     fn draw_agents(&mut self, f: &mut Frame, area: Rect) {
-        let block = self.pane("Agents", Focus::Agents);
+        let title = format!("Agents · {}", self.config.policy.name());
+        let block = self.pane(&title, Focus::Agents);
         let inner = block.inner(area);
         f.render_widget(block, area);
         let [rows, buttons, buttons2] = Layout::vertical([
@@ -1114,11 +1132,15 @@ impl App {
             } else {
                 meter(used)
             };
-            let mut line = Line::from(vec![
+            let mut spans = vec![
                 Span::raw(format!("{} ", i + 1)),
                 Span::raw(format!("{:<20} ", truncate(&a.name, 20))),
                 state,
-            ]);
+            ];
+            if a.pinned {
+                spans.push(Span::styled(" pinned", Style::new().fg(Color::DarkGray)));
+            }
+            let mut line = Line::from(spans);
             if self.focus == Focus::Agents && i == self.agent {
                 line = line.style(Style::new().add_modifier(Modifier::REVERSED));
             }
@@ -1164,7 +1186,11 @@ impl App {
             x = self.button(f, buttons, x, label, action) + 1;
         }
         let mut x = buttons2.x;
-        for (label, action) in [("Import", Action::Import), ("Settings", Action::Settings)] {
+        for (label, action) in [
+            ("Import", Action::Import),
+            ("Settings", Action::Settings),
+            ("Policy", Action::CyclePolicy),
+        ] {
             x = self.button(f, buttons2, x, label, action) + 1;
         }
     }
@@ -1448,6 +1474,7 @@ fn draw_help(f: &mut Frame) {
         "                    Ctrl+A/E start/end · Ctrl+U clear",
         "Agents              ↑↓ select · Shift+↑↓ (K/J) reorder · space on/off",
         "                    i import aliases · d d remove",
+        "                    p switch policy: drain → balance → save-weekly",
         "Permission asked    1 yes · 2 yes for this session · 3 no",
         "                    o settings for the selected account's CLI (e.g. claude:",
         "                      --permission-mode acceptEdits), used on every launch of it",
@@ -1948,6 +1975,15 @@ mod tests {
         assert_eq!(order(&fx.app).len(), 3, "first d only asks");
         key(&mut fx.app, KeyCode::Char('d'));
         assert_eq!(order(&fx.app), ["two", "three"]);
+
+        // p cycles the switch policy and saves it.
+        assert!(screen(&mut fx.app).contains("Agents · drain"));
+        key(&mut fx.app, KeyCode::Char('p'));
+        assert_eq!(
+            Config::load(&fx.app.config_path).unwrap().policy,
+            policy::Policy::Balance
+        );
+        assert!(screen(&mut fx.app).contains("Agents · balance"));
     }
 
     #[test]

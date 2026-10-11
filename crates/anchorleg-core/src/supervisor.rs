@@ -69,6 +69,12 @@ pub struct RunOptions {
     /// At a switch, a session with more context than this (tokens) starts fresh from
     /// `.handoff/TASK.md` instead of being resumed on a cold cache.
     pub fresh_above: u64,
+    /// How to choose among accounts with room (D29).
+    pub policy: policy::Policy,
+    /// Use this account first whenever it's healthy.
+    pub prefer: Option<String>,
+    /// Only ever use this account.
+    pub only: Option<String>,
 }
 
 /// An existing session to continue with a new message.
@@ -96,6 +102,9 @@ impl RunOptions {
             stop_at: 0.9,
             follow_up: None,
             fresh_above: 100_000,
+            policy: policy::Policy::Drain,
+            prefer: None,
+            only: None,
         }
     }
 }
@@ -260,7 +269,12 @@ impl Supervisor<'_> {
         };
         let mut ordered = self.config.by_priority();
         ordered.retain(|a| DRIVEN.contains(&a.vendor));
-        let pick_opts = PickOptions::default();
+        let pick_opts = PickOptions {
+            policy: opts.policy,
+            prefer: opts.prefer.clone(),
+            only: opts.only.clone(),
+            ..PickOptions::default()
+        };
         let mut current: Option<&Account> = None;
         let mut next = match &opts.follow_up {
             Some(f) => Continue::Reply(f.session_id.clone()),
@@ -353,7 +367,13 @@ impl Supervisor<'_> {
                                 opts,
                             )?;
                         } else if current.is_none() {
-                            self.decide(run_id, None, Some(account), "start", json!({}))?;
+                            self.decide(
+                                run_id,
+                                None,
+                                Some(account),
+                                "start",
+                                json!({ "policy": opts.policy.name() }),
+                            )?;
                             self.carry_follow_up(opts, run_id, account);
                         }
                         account

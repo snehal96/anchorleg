@@ -23,6 +23,8 @@ pub enum AccountsCmd {
     Add(AddArgs),
     /// Remove an account (and its Keychain token, if any).
     Rm { name: String },
+    /// Change how an account is used.
+    Set(SetArgs),
     /// Turn shell aliases like `claude-sm='CLAUDE_CONFIG_DIR=… claude'` into accounts.
     ImportAliases {
         /// Write the accounts. Without it, only show what would be added.
@@ -32,6 +34,31 @@ pub enum AccountsCmd {
         #[arg(long)]
         from_file: Option<PathBuf>,
     },
+}
+
+#[derive(Args)]
+pub struct SetArgs {
+    name: String,
+    /// Lower is used first (with the `drain` policy, and to break ties).
+    #[arg(long)]
+    priority: Option<u32>,
+    /// Keep this fraction of the weekly window for when nothing else is free, e.g. 0.2;
+    /// 0 turns it off.
+    #[arg(long, value_parser = parse_reserve)]
+    reserve_7d: Option<f64>,
+    /// Use this account first whenever it has room, whatever the policy.
+    #[arg(long)]
+    pinned: Option<bool>,
+    /// Use the account (`true`) or keep it configured but never pick it (`false`).
+    #[arg(long)]
+    enabled: Option<bool>,
+}
+
+fn parse_reserve(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(f) if (0.0..1.0).contains(&f) => Ok(f),
+        _ => Err("expected a fraction from 0 up to (not including) 1, e.g. 0.2".to_owned()),
+    }
 }
 
 #[derive(Args)]
@@ -94,6 +121,29 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             println!("removed {name}");
             Ok(())
         }
+        AccountsCmd::Set(args) => {
+            let account = config
+                .accounts
+                .iter_mut()
+                .find(|a| a.name == args.name)
+                .with_context(|| format!("no account `{}`", args.name))?;
+            if let Some(p) = args.priority {
+                account.priority = p;
+            }
+            if let Some(r) = args.reserve_7d {
+                account.reserve_7d = (r > 0.0).then_some(r);
+            }
+            if let Some(p) = args.pinned {
+                account.pinned = p;
+            }
+            if let Some(e) = args.enabled {
+                account.enabled = e;
+            }
+            let line = describe_use(account);
+            config.save(&path)?;
+            println!("{}: {line}", args.name);
+            Ok(())
+        }
         AccountsCmd::ImportAliases { yes, from_file } => {
             import_aliases(&mut config, &path, yes, from_file.as_deref())
         }
@@ -121,14 +171,43 @@ fn list(config: &Config, json: bool) -> anyhow::Result<()> {
                 format!("{} {bin}", env.join(" ")).trim().to_owned()
             }
         };
+        let extra = [
+            (!a.enabled).then(|| "off".to_owned()),
+            a.pinned.then(|| "pinned".to_owned()),
+            a.reserve_7d
+                .map(|r| format!("weekly reserve {:.0}%", r * 100.0)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let extra = if extra.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", extra.join(", "))
+        };
         println!(
-            "{:>4}  {:<16} {:<7} {how}",
+            "{:>4}  {:<16} {:<7} {how}{extra}",
             a.priority,
             a.name,
             vendor_name(a.vendor)
         );
     }
     Ok(())
+}
+
+/// How the policy treats an account, in a few words.
+fn describe_use(a: &anchorleg_core::registry::Account) -> String {
+    let mut parts = vec![format!("priority {}", a.priority)];
+    if !a.enabled {
+        parts.push("off".to_owned());
+    }
+    if a.pinned {
+        parts.push("pinned".to_owned());
+    }
+    if let Some(r) = a.reserve_7d {
+        parts.push(format!("weekly reserve {:.0}%", r * 100.0));
+    }
+    parts.join(", ")
 }
 
 fn show(config: &Config, name: &str) -> anyhow::Result<()> {

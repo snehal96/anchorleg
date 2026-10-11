@@ -241,6 +241,29 @@ anchorleg settings                                                  # show all
 In `anchorleg ui`, type `/model opus` or `/effort high` in the message box. Any other `/command` goes
 to Claude as usual: your skills, custom commands and built-ins such as `/compact`.
 
+### Which account goes first
+
+Blocked accounts are skipped, and an account at 95% or more is used only when nothing healthier
+is free. Among the rest, the **policy** decides:
+
+| Policy | Picks | Good for |
+|---|---|---|
+| `drain` (default) | priority order | one main account, others as backup |
+| `balance` | the least used (fullest window) | several equal subscriptions |
+| `save-weekly` | the most weekly room left | weekly limits running out before the week ends |
+
+```bash
+anchorleg policy balance                        # the default for every run (no name: show it)
+anchorleg run --policy save-weekly -- "…"       # just this run
+anchorleg run --prefer work -- "…"              # this account first while it has room
+anchorleg run --account work -- "…"             # only this account, no switching
+anchorleg accounts set work --pinned true       # always first while it has room
+anchorleg accounts set home --reserve-7d 0.2    # keep its last 20% of the week for emergencies
+anchorleg accounts set side --priority 3 --enabled false
+```
+
+In `anchorleg ui`, press `p` in the Agents pane to change the policy.
+
 `anchorleg run` options worth knowing:
 
 | Option | Default | What it does |
@@ -248,6 +271,8 @@ to Claude as usual: your skills, custom commands and built-ins such as `/compact
 | `--stop-at F` | `0.9` | Pause at a clean point once any window reaches this fraction |
 | `--fresh-above N` | `100000` | At a switch, start fresh from the handoff above this many context tokens |
 | `--model M` | provider setting | Model for this run only |
+| `--policy P` | `anchorleg policy` | `drain`, `balance` or `save-weekly`, for this run |
+| `--prefer A` / `--account A` | none | Try account A first / use only account A |
 | `--no-wait` | off | If every account is blocked, exit 75 instead of waiting for a reset |
 | `--no-mod` | off | Run without anchorleg-mod: switch only on hard limits, no approvals |
 

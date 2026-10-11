@@ -7,6 +7,12 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Switch policies: `drain` (priority order, the default), `balance` (least used first) and
+  `save-weekly` (most weekly room first), set with `anchorleg policy` or `anchorleg run --policy`
+  and shown in `anchorleg status` and `anchorleg ui` (`p` to change).
+- `anchorleg run --prefer A` (A first while it has room) and `--account A` (only A).
+- `anchorleg accounts set`: priority, `--reserve-7d` (keep part of the weekly window back),
+  `--pinned`, `--enabled`.
 - Homebrew tap (in progress).
 
 ## [0.1.0] — 2026-10-11, first public version

@@ -19,7 +19,8 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `import-aliases [--yes] [--from-file F]` | works |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--pinned true\|false] [--enabled true\|false]` · `import-aliases [--yes] [--from-file F]` | works |
+| `anchorleg policy [drain\|balance\|save-weekly]` | works |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `ask --json` (anchorleg-mod) | works (Claude, Codex; agy under development) |
@@ -27,7 +28,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg stop <run>` | works |
 | `anchorleg status [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
-| `anchorleg run [--follow-up RUN] [--cwd DIR] [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN] [--cwd DIR] [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -97,7 +98,7 @@ Before launching, anchorleg removes inherited variables that would select anothe
 
 ## `anchorleg run`
 
-Picks an account (priority order, skipping blocked or ≥ 95% ones), runs
+Picks an account (see *Switch policies* below), runs
 `<account launch> -p <prompt> --output-format stream-json --verbose [--model M]` in `--cwd`
 with stdin closed, and records quota from the stream. On a limit hit it blocks that account
 until its reset, copies the session (transcript, subagent transcripts, and newer project
@@ -115,6 +116,34 @@ Codex runs get the same soft stop without a mod: Codex reports quota after every
 (`account/rateLimits/updated`), and once a window reaches `--stop-at` anchorleg interrupts the
 turn there, before the tools that call asked for run, then switches or stays the same way.
 Antigravity reports no quota, so it switches on quota errors only.
+
+### Switch policies
+
+Every pick skips disabled and blocked accounts (rejected until a reset; 1 hour when the CLI gave
+no reset time). An account at 95% or more in any window, or inside its weekly reserve
+(`reserve_7d`: weekly use at or above `1 - reserve_7d`), is used only when no healthier account
+is free, and then the least used of those wins; if everything is blocked, the run waits for the
+earliest reset (or exits 75 with `--no-wait`). Among the healthy accounts:
+
+- `--account A` limits every pick to A (no switching).
+- `--prefer A`, else an account with `pinned = true`, goes first.
+- Otherwise the policy (`--policy`, else `policy` in `config.toml`, set with `anchorleg policy`):
+  `drain` takes the first by priority; `balance` the lowest fullest-window use; `save-weekly`
+  the lowest weekly (`seven_day`) use, then the lowest fullest-window use. Ties keep priority
+  order, and accounts with no quota data count as unused.
+
+The same rules pick the account after a soft stop (with `--stop-at` as the threshold) and after a
+limit hit. `anchorleg status` shows the next pick under the configured policy; the run's `start`
+decision records the policy used.
+
+```toml
+policy = "balance"
+
+[[account]]
+name = "home"
+reserve_7d = 0.2
+pinned = false
+```
 
 ### Handoff and checkpoints
 
@@ -232,6 +261,7 @@ default for you.
 {
   "schema": 1,
   "now": 1791442500,
+  "policy": "drain",
   "next": { "action": "use", "account": "claude-two", "reason": "available" },
   "accounts": [
     {

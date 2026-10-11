@@ -206,11 +206,13 @@ pub struct Account {
     /// can corrupt the event stream; prefer `bin` + `env`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
-    // Phase 4 policy fields, parsed now so configs written today keep working.
+    /// Keep this fraction of the weekly window for when nothing else is free (e.g. 0.2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_7d: Option<f64>,
+    /// Task roles this account is for (later: role routing). Parsed, not used yet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
+    /// Use this account first whenever it's healthy, whatever the policy.
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
 }
@@ -501,12 +503,19 @@ impl SecretStore for MemorySecrets {
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// How `anchorleg run` picks among accounts with room (`anchorleg policy`).
+    #[serde(default, skip_serializing_if = "is_default_policy")]
+    pub policy: crate::policy::Policy,
     #[serde(default, rename = "account")]
     pub accounts: Vec<Account>,
     /// Settings for every account of one CLI (`[vendor.claude]`), applied only when that CLI
     /// is launched.
     #[serde(default, rename = "vendor", skip_serializing_if = "BTreeMap::is_empty")]
     pub vendors: BTreeMap<Vendor, VendorSettings>,
+}
+
+fn is_default_policy(p: &crate::policy::Policy) -> bool {
+    *p == crate::policy::Policy::default()
 }
 
 /// Flags anchorleg sets itself on every launch; a `[vendor.*]` setting can't take them over.

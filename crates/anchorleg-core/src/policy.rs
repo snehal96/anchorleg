@@ -1,7 +1,14 @@
-//! Which account to use next. Phase 1 implements `drain`: priority order, skipping accounts that
-//! are blocked or nearly out. `balance` and `save-weekly` arrive in Phase 4.
+//! Which account to use next (D29). Every policy skips accounts that are blocked, and uses an
+//! account that is nearly out (or into its weekly reserve) only when nothing healthier is free.
+//! Among the healthy ones:
 //!
-//! Pure: everything it needs is passed in, including the time.
+//! - `drain`: priority order. Spends one account before touching the next.
+//! - `balance`: the least used (fullest window), so accounts wear evenly.
+//! - `save-weekly`: the most weekly (7-day) room left, so the scarce weekly windows last; the
+//!   5-hour windows reset soon anyway.
+//!
+//! A preferred account (`--prefer`, or `pinned` in the config) goes first whenever it's healthy.
+//! Ties keep priority order. Pure: everything it needs is passed in, including the time.
 
 use std::collections::HashMap;
 
@@ -10,6 +17,51 @@ use serde::Serialize;
 use crate::adapters::EpochSecs;
 use crate::registry::{Account, Vendor};
 use crate::store::QuotaRow;
+
+/// How to choose among healthy accounts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Policy {
+    #[default]
+    Drain,
+    Balance,
+    SaveWeekly,
+}
+
+impl Policy {
+    pub const ALL: [Policy; 3] = [Self::Drain, Self::Balance, Self::SaveWeekly];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Drain => "drain",
+            Self::Balance => "balance",
+            Self::SaveWeekly => "save-weekly",
+        }
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Drain => "priority order: use one account up before the next",
+            Self::Balance => "least used first, so accounts wear evenly",
+            Self::SaveWeekly => "most weekly room first, so weekly limits last",
+        }
+    }
+}
+
+impl std::str::FromStr for Policy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "drain" | "priority" => Ok(Self::Drain),
+            "balance" => Ok(Self::Balance),
+            "save-weekly" | "save_weekly" => Ok(Self::SaveWeekly),
+            other => Err(format!(
+                "unknown policy {other:?} (drain, balance or save-weekly)"
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PickOptions {
@@ -22,6 +74,11 @@ pub struct PickOptions {
     pub near_limit: f64,
     /// How long to treat a rejected account as blocked when the CLI gave no reset time.
     pub unknown_reset_wait: i64,
+    pub policy: Policy,
+    /// Use this account first whenever it's healthy (`--prefer`).
+    pub prefer: Option<String>,
+    /// Only ever use this account (`--account`).
+    pub only: Option<String>,
 }
 
 impl Default for PickOptions {
@@ -31,6 +88,9 @@ impl Default for PickOptions {
             vendor: None,
             near_limit: 0.95,
             unknown_reset_wait: 3600,
+            policy: Policy::Drain,
+            prefer: None,
+            only: None,
         }
     }
 }
@@ -72,6 +132,14 @@ fn max_used(rows: &[&QuotaRow]) -> f64 {
     rows.iter().filter_map(|r| r.used).fold(0.0, f64::max)
 }
 
+/// The weekly (7-day) window's use; 0 when unknown.
+fn weekly_used(rows: &[&QuotaRow]) -> f64 {
+    rows.iter()
+        .filter(|r| r.window == "seven_day")
+        .filter_map(|r| r.used)
+        .fold(0.0, f64::max)
+}
+
 /// Pick the account to run on. `accounts` must already be in priority order
 /// (see [`crate::registry::Config::by_priority`]).
 pub fn pick<'a>(
@@ -87,9 +155,14 @@ pub fn pick<'a>(
 
     let mut near: Option<(&Account, f64)> = None;
     let mut earliest: Option<(&Account, EpochSecs)> = None;
+    // Healthy accounts, in priority order, with (max used, weekly used).
+    let mut healthy: Vec<(&Account, f64, f64)> = Vec::new();
 
     for &account in accounts {
-        if !account.enabled || opts.vendor.is_some_and(|v| v != account.vendor) {
+        if !account.enabled
+            || opts.vendor.is_some_and(|v| v != account.vendor)
+            || opts.only.as_ref().is_some_and(|only| *only != account.name)
+        {
             continue;
         }
         let account_rows = rows
@@ -105,15 +178,36 @@ pub fn pick<'a>(
             continue;
         }
         let used = max_used(account_rows);
-        if used < opts.near_limit {
-            return Pick::Use {
-                account,
-                reason: PickReason::Available,
-            };
+        let weekly = weekly_used(account_rows);
+        // `reserve_7d = 0.2` keeps the last 20% of the weekly window for when nothing else is free.
+        let into_reserve = account
+            .reserve_7d
+            .is_some_and(|reserve| weekly >= 1.0 - reserve);
+        if used < opts.near_limit && !into_reserve {
+            healthy.push((account, used, weekly));
+            continue;
         }
         if near.is_none_or(|(_, u)| used < u) {
             near = Some((account, used));
         }
+    }
+
+    let preferred = healthy.iter().find(|(a, ..)| {
+        opts.prefer.as_ref() == Some(&a.name) || (opts.prefer.is_none() && a.pinned)
+    });
+    // `min_by` keeps the first of equals, so ties stay in priority order.
+    let chosen = preferred.or_else(|| match opts.policy {
+        Policy::Drain => healthy.first(),
+        Policy::Balance => healthy.iter().min_by(|x, y| x.1.total_cmp(&y.1)),
+        Policy::SaveWeekly => healthy
+            .iter()
+            .min_by(|x, y| x.2.total_cmp(&y.2).then(x.1.total_cmp(&y.1))),
+    });
+    if let Some((account, ..)) = chosen {
+        return Pick::Use {
+            account,
+            reason: PickReason::Available,
+        };
     }
 
     match (near, earliest) {
@@ -314,6 +408,89 @@ mod tests {
         for (label, quota, opts, want) in cases {
             assert_eq!(name(&pick(&all, &quota, NOW, &opts)), want, "{label}");
         }
+    }
+
+    #[test]
+    fn policies_choose_among_healthy_accounts() {
+        let a = acct("a", Vendor::Claude);
+        let b = acct("b", Vendor::Claude);
+        let c = acct("c", Vendor::Claude);
+        let all = [&a, &b, &c];
+        // a: 5h 60%, weekly 70%. b: 5h 20%, weekly 80%. c: 5h 40%, weekly 30%.
+        let quota = vec![
+            row("a", "five_hour", None, Some(0.6), None),
+            row("a", "seven_day", None, Some(0.7), None),
+            row("b", "five_hour", None, Some(0.2), None),
+            row("b", "seven_day", None, Some(0.8), None),
+            row("c", "five_hour", None, Some(0.4), None),
+            row("c", "seven_day", None, Some(0.3), None),
+        ];
+        let with = |policy| PickOptions {
+            policy,
+            ..PickOptions::default()
+        };
+        let pick_name = |o: &PickOptions| name(&pick(&all, &quota, NOW, o));
+        assert_eq!(pick_name(&with(Policy::Drain)), "use a (Available)");
+        // Fullest window: a 70%, b 80%, c 40%.
+        assert_eq!(pick_name(&with(Policy::Balance)), "use c (Available)");
+        assert_eq!(pick_name(&with(Policy::SaveWeekly)), "use c (Available)");
+
+        // No data counts as unused; ties keep priority order.
+        assert_eq!(
+            name(&pick(&all, &[], NOW, &with(Policy::Balance))),
+            "use a (Available)"
+        );
+
+        // Preferred wins while healthy, under any policy.
+        let prefer_b = PickOptions {
+            prefer: Some("b".into()),
+            ..with(Policy::Balance)
+        };
+        assert_eq!(pick_name(&prefer_b), "use b (Available)");
+        // A preferred account that's nearly out doesn't.
+        let mut tight = quota.clone();
+        tight.push(row("b", "five_hour", None, Some(0.97), None));
+        assert_eq!(
+            name(&pick(&all, &tight, NOW, &prefer_b)),
+            "use c (Available)"
+        );
+
+        // `--account`: only that one, even when it's the busiest.
+        let only_a = PickOptions {
+            only: Some("a".into()),
+            ..with(Policy::Balance)
+        };
+        assert_eq!(pick_name(&only_a), "use a (Available)");
+    }
+
+    #[test]
+    fn weekly_reserve_and_pinned() {
+        let mut a = acct("a", Vendor::Claude);
+        a.reserve_7d = Some(0.25);
+        let mut b = acct("b", Vendor::Claude);
+        let quota = vec![
+            row("a", "seven_day", None, Some(0.8), None),
+            row("b", "five_hour", None, Some(0.9), None),
+        ];
+        // a is into its last 25% of the week: b goes first, though b's 5h is fuller.
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &PickOptions::default())),
+            "use b (Available)"
+        );
+        // Nothing else free: the reserve is used after all.
+        b.enabled = false;
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &PickOptions::default())),
+            "use a (NearLimit)"
+        );
+        b.enabled = true;
+        b.pinned = true;
+        assert_eq!(
+            name(&pick(&[&a, &b], &[], NOW, &PickOptions::default())),
+            "use b (Available)"
+        );
+        assert_eq!("save-weekly".parse::<Policy>(), Ok(Policy::SaveWeekly));
+        assert!("fastest".parse::<Policy>().is_err());
     }
 
     #[test]

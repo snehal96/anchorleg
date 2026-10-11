@@ -53,6 +53,21 @@ pub fn run(vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `anchorleg policy [name]`: show or set how runs pick among accounts with room.
+pub fn policy(new: Option<anchorleg_core::policy::Policy>) -> anyhow::Result<()> {
+    let path = Config::default_path()?;
+    let mut config = Config::load(&path)?;
+    if let Some(p) = new {
+        config.policy = p;
+        config.save(&path)?;
+    }
+    for p in anchorleg_core::policy::Policy::ALL {
+        let mark = if p == config.policy { "*" } else { " " };
+        println!("{mark} {:<12} {}", p.name(), p.describe());
+    }
+    Ok(())
+}
+
 /// Change one CLI's settings; a section left empty is removed.
 pub fn update(config: &mut Config, v: Vendor, change: impl FnOnce(&mut VendorSettings)) {
     change(config.vendors.entry(v).or_default());

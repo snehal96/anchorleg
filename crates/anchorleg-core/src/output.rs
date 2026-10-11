@@ -31,6 +31,8 @@ pub mod exit {
 pub struct StatusReport {
     pub schema: u32,
     pub now: EpochSecs,
+    /// The switch policy `next` was picked with.
+    pub policy: policy::Policy,
     /// What `anchorleg run` would do right now.
     pub next: Next,
     /// In the order they're tried.
@@ -110,6 +112,7 @@ pub fn status(
     StatusReport {
         schema: SCHEMA,
         now,
+        policy: opts.policy,
         next,
         accounts,
     }

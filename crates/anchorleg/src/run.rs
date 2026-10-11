@@ -61,6 +61,14 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     opts.log_dir = db.parent().map(|d| d.join("runs"));
     opts.stop_at = args.stop_at;
     opts.fresh_above = args.fresh_above;
+    opts.policy = args.policy.unwrap_or(config.policy);
+    for name in [&args.prefer, &args.account].into_iter().flatten() {
+        if config.get(name).is_none() {
+            anyhow::bail!("no account `{name}`");
+        }
+    }
+    opts.prefer = args.prefer;
+    opts.only = args.account;
     opts.relay_bin = Some(std::env::current_exe()?);
     opts.data_dir = db.parent().map(Path::to_owned);
     if !args.no_mod

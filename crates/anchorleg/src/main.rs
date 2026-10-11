@@ -5,6 +5,7 @@ mod settings;
 mod status;
 mod ui;
 
+use anchorleg_core::policy::Policy;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -57,6 +58,12 @@ enum Command {
         #[arg(long)]
         clear: bool,
     },
+    /// How `anchorleg run` picks among accounts with room: drain, balance or save-weekly.
+    /// No name: show the current one.
+    Policy {
+        #[arg(value_parser = parse_policy)]
+        policy: Option<Policy>,
+    },
     /// List recent sessions (runs), newest first.
     Sessions {
         #[arg(long)]
@@ -104,9 +111,23 @@ pub struct RunArgs {
     /// context is above this many tokens.
     #[arg(long, default_value_t = 100_000)]
     pub fresh_above: u64,
+    /// How to pick among accounts with room, for this run: drain, balance or save-weekly.
+    /// Defaults to `anchorleg policy`.
+    #[arg(long, value_parser = parse_policy)]
+    pub policy: Option<Policy>,
+    /// Use this account first whenever it has room.
+    #[arg(long, value_name = "ACCOUNT")]
+    pub prefer: Option<String>,
+    /// Only use this account: no switching (waits for its reset, or exits with `--no-wait`).
+    #[arg(long, value_name = "ACCOUNT", conflicts_with = "prefer")]
+    pub account: Option<String>,
     /// The task, after `--`.
     #[arg(last = true, required = true)]
     pub prompt: Vec<String>,
+}
+
+fn parse_policy(s: &str) -> Result<Policy, String> {
+    s.parse()
 }
 
 fn parse_fraction(s: &str) -> Result<f64, String> {
@@ -150,6 +171,7 @@ fn main() -> ExitCode {
             },
         ),
         Command::Stop { run } => run::stop(run),
+        Command::Policy { policy } => settings::policy(policy),
         Command::Sessions { json, limit } => status::sessions(json, limit),
         Command::Report { json: _ } => status::report(),
         Command::Run(args) => {

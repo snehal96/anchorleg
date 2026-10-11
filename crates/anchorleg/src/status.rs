@@ -34,7 +34,11 @@ pub fn status(json: bool, refresh: bool) -> anyhow::Result<()> {
             eprintln!("{name}: couldn't read quota ({e})");
         }
     }
-    let report = output::status(&config, &store.quota(None)?, now(), &PickOptions::default());
+    let opts = PickOptions {
+        policy: config.policy,
+        ..PickOptions::default()
+    };
+    let report = output::status(&config, &store.quota(None)?, now(), &opts);
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -90,7 +94,7 @@ fn print_status(r: &StatusReport) {
         }
         Next::NoAccounts => "no eligible account".to_owned(),
     };
-    println!("\nnext run: {next}");
+    println!("\nnext run: {next}  (policy {})", r.policy.name());
 }
 
 fn window_cell(used: Option<f64>, resets_at: Option<i64>, now: i64) -> String {
