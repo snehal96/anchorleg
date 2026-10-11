@@ -1,0 +1,109 @@
+fixtures/codex-0.153.4-app-server-turn-20261011/resume-cancel.jsonl
+  s_24d456e49210ef::t_f8f59b20ab10e7 1-34
+docs/CLI.md
+  s_24d456e49210ef::t_ac8f6d45c38ba4 114-117
+  s_24d456e49210ef::t_5ee6cb10a3118f 156-161
+  s_24d456e49210ef::t_1545c81cf32eed 25,30,163
+  s_24d456e49210ef::t_538fe09aa4bfb2 162,164-172
+  s_24d456e49210ef::t_ff5f722c6ce44f 118,173
+README.md
+  s_24d456e49210ef::t_b8ad3016147f21 278
+  s_24d456e49210ef::t_5ee6cb10a3118f 61-62,75,83,85-86
+  s_24d456e49210ef::t_1545c81cf32eed 5,63,84,100,148-149,279
+  s_24d456e49210ef::t_ac8f6d45c38ba4 50-53
+fixtures/codex-0.153.4-anchorleg-soft-stop-20261011/TASK.md
+  s_24d456e49210ef::t_b8ad3016147f21 1-39
+.gitignore
+  s_24d456e49210ef::t_32682340320865 20-23
+crates/anchorleg-core/src/adapters/codex.rs
+  s_24d456e49210ef::t_0392f8c9060c30 1-3,73-80
+crates/anchorleg-core/src/adapters/agy.rs
+  s_24d456e49210ef::t_53460797b808ec 528-540,553-554,563-564,573-574,583-585,590-602,616-621
+  s_24d456e49210ef::t_5e7d756b4b18b9 21-35,39-128,133-151,157-243
+  s_24d456e49210ef::t_1bf076713efc27 129-132,152-156,541-552,555-562,565-572,575-582,586-589,603-615
+  s_24d456e49210ef::t_0d6d8cd3cc8503 323
+fixtures/codex-0.153.4-app-server-turn-20261011/turn-accept.jsonl
+  s_24d456e49210ef::t_f8f59b20ab10e7 1-69
+site/index.html
+  s_24d456e49210ef::t_87e3fc1a8dc28a 238,240
+  s_24d456e49210ef::t_1545c81cf32eed 7,199,322-323,328
+crates/anchorleg/src/permission.rs
+  s_24d456e49210ef::t_a3077ce93b76f6 6,11,34-37,73-76,81-84,93-98,132-143,147-168
+  s_24d456e49210ef::t_1bf076713efc27 77-80,144-146
+  s_24d456e49210ef::t_50c8db3f863d68 169-170
+fixtures/codex-0.153.4-anchorleg-approval-20261011/run-refused.jsonl
+  s_24d456e49210ef::t_088e3bbc4d77d5 1-13
+scripts/scrub-capture.py
+  s_24d456e49210ef::t_1ef5d46dfdefde 13,67-69
+  s_24d456e49210ef::t_296d51b3f7ff31 12,70-71,75-77
+  s_24d456e49210ef::t_06345656492c73 78
+crates/anchorleg/tests/fake/fake-agy.sh
+  s_24d456e49210ef::t_34b115f8f1f632 26-41
+CHANGELOG.md
+  s_24d456e49210ef::t_1545c81cf32eed 16,30-31
+  s_24d456e49210ef::t_5ee6cb10a3118f 10-12
+  s_24d456e49210ef::t_b8ad3016147f21 13-15
+  s_24d456e49210ef::t_242d3cdc31ea11 17
+crates/anchorleg-core/src/supervisor.rs
+  s_24d456e49210ef::t_aee4ff6cd0b3aa 59-60,62-64,95,673-702,739-747,750
+  s_24d456e49210ef::t_120d7f668724ea 789-794,876-881
+  s_24d456e49210ef::t_204f1717c25389 823-829
+  s_24d456e49210ef::t_49a1c50e7b5df7 226-227,453-457,796,886-889
+  s_24d456e49210ef::t_8cad9999eea988 20,103-117,713-717,719,767-788,795,797,817-821,838-853,860-862,869-875,882-885,890-891,911-920
+crates/anchorleg-core/src/adapters/mod.rs
+  s_24d456e49210ef::t_0392f8c9060c30 7
+crates/anchorleg/tests/fake/fake-codex.py
+  s_24d456e49210ef::t_9e67071d214c01 1-16,20-25,27-120,130-136
+  s_24d456e49210ef::t_ceb81cdd559b2f 17-19,26,121-129
+fixtures/codex-0.153.4-anchorleg-soft-stop-20261011/README.md
+  s_24d456e49210ef::t_b8ad3016147f21 1-16
+docs/images/architecture.svg
+  s_24d456e49210ef::t_1693cabff6dd1e 79-80
+  s_24d456e49210ef::t_b8ad3016147f21 81
+  s_24d456e49210ef::t_5ee6cb10a3118f 3,77
+  s_24d456e49210ef::t_23b98c0802bb93 89
+fixtures/codex-0.153.4-anchorleg-approval-20261011/README.md
+  s_24d456e49210ef::t_088e3bbc4d77d5 1-17
+crates/anchorleg/tests/run.rs
+  s_24d456e49210ef::t_c6650ce8b10886 874
+  s_24d456e49210ef::t_120d7f668724ea 1017-1018
+  s_24d456e49210ef::t_df378b2c4a55f9 60,589,594-603,608,611-617,621-627,664,694-695,723,983-1016,1019-1022
+  s_24d456e49210ef::t_ceb81cdd559b2f 1023,1042-1087
+  s_24d456e49210ef::t_cde4f6048775f8 844,846-848,898-954,960-982
+  s_24d456e49210ef::t_1bf076713efc27 850-851,955-959
+  s_24d456e49210ef::t_0da8d30395e457 1024-1036,1041
+  s_24d456e49210ef::t_3a9a1d88c291eb 1037-1040
+fixtures/codex-0.153.4-app-server-turn-20261011/probe.py
+  s_24d456e49210ef::t_f8f59b20ab10e7 1-54
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_24d456e49210ef::t_cc96842349e443 1-24,27-43,46-56,59-60,79-200,204-434,438-467,474-478,481-495,504-519,527-554,575-581,588-661,668-686,690-692,697-712,717-754,773-784,786-796
+  s_24d456e49210ef::t_5a86f9bcca4047 25-26,44-45,57-58,61-78,435-437,479-480,520-526,555-574,582-587,755-772,785
+  s_24d456e49210ef::t_120d7f668724ea 201-203,468-473,496-503,662-667,687-689,693-696,713-716
+fixtures/codex-0.153.4-app-server-turn-20261011/README.md
+  s_24d456e49210ef::t_74a2347e69faca 1-27
+fixtures/codex-0.153.4-app-server-turn-20261011/resume-unknown.jsonl
+  s_24d456e49210ef::t_f8f59b20ab10e7 1-5
+Cargo.toml
+  s_24d456e49210ef::t_0392f8c9060c30 27
+crates/anchorleg/src/run.rs
+  s_24d456e49210ef::t_a3077ce93b76f6 3
+  s_24d456e49210ef::t_aee4ff6cd0b3aa 64-65
+fixtures/codex-0.153.4-anchorleg-soft-stop-20261011/run.jsonl
+  s_24d456e49210ef::t_b8ad3016147f21 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cf0d4aff8e916245467942ca7875764c7681a13",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
