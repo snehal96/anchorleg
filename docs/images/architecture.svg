@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="880" height="540" viewBox="0 0 880 540" role="img" aria-labelledby="t d">
   <title id="t">How anchorleg works</title>
-  <desc id="d">You, anchorleg ui or your scripts give anchorleg a task. anchorleg, a single Rust binary, picks an account by priority and live quota, launches the official CLI headless, watches its event stream and switches with a handoff and checkpoint. It drives claude -p with the anchorleg-mod inside, codex exec with quota read live from codex app-server, and agy -p, which switches on quota errors. Handoff files and checkpoints stay in your repo, never pushed.</desc>
+  <desc id="d">You, anchorleg ui or your scripts give anchorleg a task. anchorleg, a single Rust binary, picks an account by priority and live quota, launches the official CLI headless, watches its event stream and switches with a handoff and checkpoint. It drives claude -p with the anchorleg-mod inside, codex app-server, which reports quota and asks for approvals, and agy -p, which switches on quota errors. Handoff files and checkpoints stay in your repo, never pushed.</desc>
   <style>
     .bg{fill:#eef1f4} .card{fill:#ffffff;stroke:#d5dce3} .chip{fill:#eef1f4} .ink{fill:#14202b} .muted{fill:#566572}
     .sig{fill:#b86e00} .modbox{fill:#fdf6ea;stroke:#b86e00} .pill{fill:#14202b} .pilltext{fill:#ffffff}
@@ -74,11 +74,11 @@
 
   <!-- Codex -->
   <rect class="card" x="310" y="322" width="260" height="140" rx="12"/>
-  <text class="ink mono" x="330" y="350" font-size="15" font-weight="700">codex exec</text>
+  <text class="ink mono" x="330" y="350" font-size="15" font-weight="700">codex app-server</text>
   <text class="muted" x="550" y="350" font-size="12" text-anchor="end">Codex</text>
-  <text class="muted" x="330" y="384" font-size="12.5">quota read live before each pick</text>
-  <text class="muted mono" x="330" y="404" font-size="11.5">codex app-server, no request</text>
-  <text class="muted" x="330" y="434" font-size="12.5">switches on hard limits</text>
+  <text class="muted" x="330" y="384" font-size="12.5">quota live before and during turns</text>
+  <text class="muted" x="330" y="404" font-size="12.5">approval requests sent to you</text>
+  <text class="muted" x="330" y="434" font-size="12.5">pauses at 90%, between steps</text>
 
   <!-- agy -->
   <rect class="card" x="588" y="322" width="260" height="140" rx="12"/>
@@ -86,7 +86,7 @@
   <text class="muted" x="828" y="350" font-size="12" text-anchor="end">Antigravity</text>
   <text class="muted" x="608" y="384" font-size="12.5">no quota exposed by the CLI</text>
   <text class="muted" x="608" y="404" font-size="12.5">switches on quota errors</text>
-  <text class="muted" x="608" y="434" font-size="12.5">one account per HOME</text>
+  <text class="muted" x="608" y="434" font-size="12.5">own HOME: approvals via a hook</text>
 
   <!-- repo -->
   <rect class="strip" x="32" y="480" width="816" height="40" rx="10"/>

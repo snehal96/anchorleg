@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>anchorleg</title>
-<meta name="description" content="anchorleg keeps headless coding agents (Claude Code, Codex, Antigravity) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<meta name="description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314202b'/%3E%3Crect x='8' y='7' width='7' height='18' rx='2' fill='%23f0a52b'/%3E%3Crect x='17' y='7' width='7' height='18' rx='2' fill='%234fc19a'/%3E%3C/svg%3E">
 <!-- GoatCounter: cookieless page views and clicks (data-goatcounter-click). Dashboard: https://anchorleg.goatcounter.com -->
 <script data-goatcounter="https://anchorleg.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
@@ -196,7 +196,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
   <div>
     <p class="eyebrow">Open source · MIT or Apache-2.0</p>
     <h1>Your agent hit <em>92%</em>. The task kept going.</h1>
-    <p class="lede">anchorleg runs your Claude Code, Codex and Antigravity tasks in the background and
+    <p class="lede">anchorleg runs your Claude Code and Codex tasks in the background and
       watches every account's 5-hour and weekly limits. When one runs low, it pauses at a clean step,
       writes a handoff, and carries on with the same task on another of your accounts.</p>
     <div class="install">
@@ -235,9 +235,9 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
   <div class="section-head">
     <p class="eyebrow">How it works</p>
     <h2>What happens when an account runs low</h2>
-    <p>anchorleg starts the official CLI (<code>claude</code>, <code>codex</code> or <code>agy</code>) for you
+    <p>anchorleg starts the official CLI (<code>claude</code> or <code>codex</code>) for you
       and reads its event stream. Inside Claude Code, a small mod reports exact usage and knows where
-      it is safe to stop; Codex quota is read live before every launch.</p>
+      it is safe to stop; Codex reports its quota after every model call.</p>
   </div>
   <ol class="steps">
     <li><h3>Watch</h3><p>Every account's 5-hour and weekly windows, from the CLI's own rate-limit events and the mod's exact percentages.</p></li>
@@ -319,13 +319,13 @@ Claude requested permissions to write to src/auth/session.rs
 <section>
   <div class="section-head">
     <p class="eyebrow">Status</p>
-    <h2>Early, and working with three CLIs today</h2>
-    <p>Real switches between Claude accounts are verified; Codex and Antigravity are verified on real accounts (runs, follow-ups, live Codex quota). The rest is covered by tests that replay captured CLI output.</p>
+    <h2>Early, and working with two CLIs today</h2>
+    <p>Real switches between Claude accounts are verified; Codex is verified on real accounts (runs, follow-ups, live quota, approvals, the 90% pause). Antigravity support is under development. The rest is covered by tests that replay captured CLI output.</p>
   </div>
   <div class="status">
     <div class="chip"><b>Claude Code</b><span class="pill yes">supported</span></div>
     <div class="chip"><b>Codex</b><span class="pill yes">supported</span></div>
-    <div class="chip"><b>Antigravity (agy)</b><span class="pill yes">supported</span></div>
+    <div class="chip"><b>Antigravity (agy)</b><span class="pill soon">in progress</span></div>
     <div class="chip"><b>Kimi, Cursor</b><span class="pill later">planned</span></div>
     <div class="chip"><b>Desktop app</b><span class="pill later">planned</span></div>
     <div class="chip"><b>Linux, Homebrew</b><span class="pill soon">in progress</span></div>

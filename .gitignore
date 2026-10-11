@@ -17,3 +17,7 @@ dist/
 # Private working notes (plan, decisions, research, status); not published.
 .notes/
 CLAUDE.local.md
+
+# Local secrets (never commit)
+.env
+.env.*

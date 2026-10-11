@@ -1,0 +1,13 @@
+{"text":"Create notes.txt containing ok. Then run this exact command, which needs network access: curl -sI https://example.com | head -1. Reply with one short line.","type":"anchorleg_user"}
+{"text":"running on gpt","type":"anchorleg"}
+{"thread_id":"01a12adb-a7e1-78e0-a4cf-c5133621527e","type":"thread.started"}
+{"type":"turn.started"}
+{"item":{"id":"msg_05cc76b8faa9323d016acb7bd607b481919f2e2539ee429250","text":"I’ll create `notes.txt`, then run the exact network command.","type":"agent_message"},"type":"item.completed"}
+{"item":{"changes":[{"kind":"add","path":"/tmp/scratch/approval/work/notes.txt"}],"id":"exec-c1fa9f20-3a49-49e8-aadd-2afeb5015f13","status":"completed","type":"file_change"},"type":"item.completed"}
+{"text":"waiting for you to allow Bash  curl -sI https://example.com | head -1","type":"anchorleg"}
+{"text":"Bash  curl -sI https://example.com | head -1: refused","type":"anchorleg"}
+{"item":{"aggregated_output":null,"command":"/bin/zsh -lc 'curl -sI https://example.com | head -1'","exit_code":null,"id":"exec-6d2a8e50-0a2a-408e-9012-c244200b3658","status":"declined","type":"command_execution"},"type":"item.completed"}
+{"type":"turn.started"}
+{"item":{"aggregated_output":"-rw-r--r--@ 1 me  wheel  3 Oct 11 17:36 notes.txt\n","command":"/bin/zsh -lc 'ls -l notes.txt'","exit_code":0,"id":"exec-b50fef87-6f18-4086-9ae6-3535ada95f19","status":"completed","type":"command_execution"},"type":"item.completed"}
+{"item":{"id":"msg_05cc76b8faa9323d016acb7bdc7394819183551fb2bd8b5a2f","text":"Created [notes.txt](</tmp/scratch/approval/work/notes.txt>); the network command was not run.","type":"agent_message"},"type":"item.completed"}
+{"type":"turn.completed","usage":{"cached_input_tokens":5888,"input_tokens":20918,"output_tokens":83}}

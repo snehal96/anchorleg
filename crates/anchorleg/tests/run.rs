@@ -57,7 +57,7 @@ impl Env {
             let cfg = dir.path().join("cfg").join(name);
             std::fs::create_dir_all(&cfg).unwrap();
             let (fake, var) = match *vendor {
-                "codex" => ("fake-codex.sh", "CODEX_HOME"),
+                "codex" => ("fake-codex.py", "CODEX_HOME"),
                 "antigravity" => ("fake-agy.sh", "HOME"),
                 _ => ("fake-claude.sh", "CLAUDE_CONFIG_DIR"),
             };
@@ -586,25 +586,43 @@ fn provider_model_and_effort_apply_to_every_account() {
         .failure();
 }
 
+/// `codex app-server` messages for a turn that answers `text`.
 fn codex_ok(thread: &str, text: &str) -> String {
     format!(
         "{}\n{}\n{}\n{}\n",
-        format_args!(r#"{{"type":"thread.started","thread_id":"{thread}"}}"#),
-        r#"{"type":"turn.started"}"#,
         format_args!(
-            r#"{{"type":"item.completed","item":{{"id":"item_0","type":"agent_message","text":"{text}"}}}}"#
+            r#"{{"method":"turn/started","params":{{"threadId":"{thread}","turn":{{"id":"u1","status":"inProgress"}}}}}}"#
         ),
-        r#"{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":0,"output_tokens":10}}"#
+        format_args!(
+            r#"{{"method":"item/completed","params":{{"threadId":"{thread}","item":{{"type":"agentMessage","id":"m1","text":"{text}"}}}}}}"#
+        ),
+        format_args!(
+            r#"{{"method":"thread/tokenUsage/updated","params":{{"threadId":"{thread}","tokenUsage":{{"last":{{"inputTokens":1200,"cachedInputTokens":0,"outputTokens":10}}}}}}}}"#
+        ),
+        format_args!(
+            r#"{{"method":"turn/completed","params":{{"threadId":"{thread}","turn":{{"id":"u1","status":"completed","error":null}}}}}}"#
+        ),
     )
 }
 
+/// A turn that runs a command and then hits the usage limit.
 fn codex_limit(thread: &str) -> String {
     format!(
-        "{}\n{}\n{}\n",
-        format_args!(r#"{{"type":"thread.started","thread_id":"{thread}"}}"#),
-        r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"/bin/zsh -lc \"cargo test\"","aggregated_output":"","exit_code":0,"status":"completed"}}"#,
-        r#"{"type":"turn.failed","error":{"message":"You've hit your usage limit. Upgrade or try again later."}}"#
+        "{}\n{}\n",
+        format_args!(
+            r#"{{"method":"item/completed","params":{{"threadId":"{thread}","item":{{"type":"commandExecution","id":"c1","command":"/bin/zsh -lc 'cargo test'","aggregatedOutput":"","exitCode":0,"status":"completed"}}}}}}"#
+        ),
+        format_args!(
+            r#"{{"method":"turn/completed","params":{{"threadId":"{thread}","turn":{{"id":"u1","status":"failed","error":{{"message":"You've hit your usage limit. Upgrade or try again later.","codexErrorInfo":"usageLimitExceeded"}}}}}}}}"#
+        ),
     )
+}
+
+/// Codex asking to run `command`, offering only accept or cancel (as seen on 0.153.4).
+fn codex_asks(thread: &str, command: &str) -> String {
+    format!(
+        r#"{{"method":"item/commandExecution/requestApproval","id":0,"params":{{"kind":"command","threadId":"{thread}","turnId":"u1","itemId":"c9","startedAtMs":1,"reason":"needs network","command":"/bin/zsh -lc '{command}'","cwd":"/w","commandActions":[{{"type":"unknown","command":"{command}"}}],"availableDecisions":["accept","cancel"]}}}}"#
+    ) + "\n"
 }
 
 fn codex_rollout(used_percent: f64, reached: bool) -> String {
@@ -643,7 +661,7 @@ fn codex_runs_headless_and_reports_rollout_quota() {
     assert_eq!(
         launches,
         [
-            r#"c1 exec --json --skip-git-repo-check -c sandbox_mode="workspace-write" -m gpt-5.6-luna -c model_reasoning_effort=low -- fix the tests"#
+            "c1 thread/start model=gpt-5.6-luna effort=low sandbox=workspace-write approval=on-request -- fix the tests"
         ]
     );
 
@@ -673,8 +691,8 @@ fn codex_limit_moves_the_thread_to_another_login() {
     let launches = env.launches();
     assert_eq!(launches.len(), 2, "{launches:?}");
     assert!(
-        launches[1].starts_with("c2 exec resume --json")
-            && launches[1].ends_with("-- t1 Continue from where you stopped."),
+        launches[1].starts_with("c2 thread/resume t1 ")
+            && launches[1].ends_with("-- Continue from where you stopped."),
         "{launches:?}"
     );
     assert!(
@@ -702,7 +720,7 @@ fn claude_limit_continues_on_codex_from_the_handoff() {
     assert_eq!(r["accounts_used"], serde_json::json!(["a", "c"]));
     let launches = env.launches();
     assert_eq!(launches.len(), 2, "{launches:?}");
-    assert!(launches[1].starts_with("c exec --json"), "{launches:?}");
+    assert!(launches[1].starts_with("c thread/start "), "{launches:?}");
     assert!(!launches[1].contains("resume"));
     assert!(launches[1].contains("You are taking over a task"));
     assert!(launches[1].contains("# Task handoff"));
@@ -823,10 +841,14 @@ fn agy_limit_moves_the_conversation_to_another_login() {
     let launches = env.launches();
     assert_eq!(
         launches[0],
-        "g1 -p fix the tests --output-format stream-json --mode accept-edits --model gemini-3.8-flash-low --effort low"
+        "g1 --dangerously-skip-permissions -p fix the tests --output-format stream-json --model gemini-3.8-flash-low --effort low"
     );
+    // Each login has its own HOME, so anchorleg's approval hook is there (D26).
+    let hooks = std::fs::read_to_string(env.path("cfg/g1/.gemini/config/hooks.json")).unwrap();
+    assert!(hooks.contains("permission agy-hook"), "{hooks}");
     assert!(
-        launches[1].starts_with("g2 -p Continue from where you stopped.")
+        launches[1]
+            .starts_with("g2 --dangerously-skip-permissions -p Continue from where you stopped.")
             && launches[1].ends_with("--conversation conv-1"),
         "{launches:?}"
     );
@@ -849,7 +871,7 @@ fn claude_limit_continues_on_agy_from_the_handoff() {
     assert_eq!(r["result"], "finished on agy");
     let launches = env.launches();
     assert!(
-        launches[1].starts_with("g -p You are taking over a task"),
+        launches[1].starts_with("g --dangerously-skip-permissions -p You are taking over a task"),
         "{launches:?}"
     );
     assert!(!launches[1].contains("--conversation"));
@@ -872,4 +894,194 @@ fn agy_follow_up_on_a_login_without_the_conversation_starts_fresh() {
     let launches = env.launches();
     assert_eq!(launches.len(), 2, "{launches:?}");
     assert!(!launches[1].contains("--conversation"), "{launches:?}");
+}
+
+/// Start `anchorleg run` in the background with extra environment, for tests that answer
+/// questions while it runs.
+fn spawn_run(env: &Env, vars: &[(&str, &str)]) -> std::process::Child {
+    let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("anchorleg"));
+    cmd.args(["run", "--json", "--cwd"])
+        .arg(env.path("work"))
+        .args(["--", "fix", "the", "tests"])
+        .env("ANCHORLEG_CONFIG", env.path("config.toml"))
+        .env("ANCHORLEG_HOME", env.path("home"))
+        .env("HOME", env.path("userhome"))
+        .env("FAKE_DIR", env.path("fake"))
+        .env("FAKE_LOG", env.path("fake.log"))
+        .stdout(std::process::Stdio::piped());
+    for (k, v) in vars {
+        cmd.env(k, v);
+    }
+    cmd.spawn().unwrap()
+}
+
+/// Wait for the run's first question and return it.
+fn first_question(env: &Env) -> Value {
+    let started = std::time::Instant::now();
+    loop {
+        let out = env
+            .anchorleg()
+            .args(["permission", "list", "--json"])
+            .output()
+            .unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+        if v[0]["id"].is_i64() {
+            return v[0].clone();
+        }
+        assert!(started.elapsed().as_secs() < 10, "nothing asked");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn agy_commands_wait_for_the_users_answer() {
+    for (answer, decision) in [("yes", "allow"), ("no", "deny")] {
+        let env = Env::mixed(&[("g", "antigravity")]);
+        env.script("g.jsonl", &agy_ok("conv-1", "tests pass"));
+        let child = spawn_run(&env, &[("FAKE_HOOK", "cargo test")]);
+        let q = first_question(&env);
+        assert_eq!(q["tool"], "Bash");
+        assert_eq!(q["input"]["command"], "cargo test");
+        env.anchorleg()
+            .args(["permission", "answer", &q["id"].to_string(), answer])
+            .assert()
+            .success();
+        let out = child.wait_with_output().unwrap();
+        let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let hook: Value =
+            serde_json::from_str(&std::fs::read_to_string(env.path("fake/hook.out")).unwrap())
+                .unwrap();
+        assert_eq!(hook["decision"], decision, "{hook}");
+        let expected = if answer == "yes" {
+            "tests pass"
+        } else {
+            "The command was refused."
+        };
+        assert_eq!(r["result"], expected, "{r}");
+    }
+}
+
+#[test]
+fn agy_on_the_persons_own_home_only_accepts_edits() {
+    let env = Env::mixed(&[("g", "antigravity")]);
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake/fake-agy.sh");
+    std::fs::write(
+        env.path("config.toml"),
+        format!(
+            "[[account]]\nname = \"g\"\nvendor = \"antigravity\"\npriority = 1\nbin = \"{}\"\n",
+            fake.display()
+        ),
+    )
+    .unwrap();
+    env.script("userhome.jsonl", &agy_ok("conv-1", "done"));
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    let launches = env.launches();
+    assert!(launches[0].contains("--mode accept-edits"), "{launches:?}");
+    assert!(!launches[0].contains("--dangerously-skip-permissions"));
+    assert!(!env.path("userhome/.gemini/config/hooks.json").exists());
+}
+
+#[test]
+fn codex_commands_wait_for_the_users_answer() {
+    for answer in ["yes", "no"] {
+        let env = Env::mixed(&[("c", "codex")]);
+        env.script(
+            "c.jsonl",
+            &(codex_asks("t1", "curl -sI https://example.com") + &codex_ok("t1", "fetched it")),
+        );
+        env.script("c.followup.jsonl", &codex_ok("t1", "carried on without it"));
+        let child = spawn_run(&env, &[]);
+        let q = first_question(&env);
+        assert_eq!(q["tool"], "Bash");
+        assert_eq!(q["input"]["command"], "curl -sI https://example.com");
+        assert_eq!(q["reason"], "needs network");
+        env.anchorleg()
+            .args(["permission", "answer", &q["id"].to_string(), answer])
+            .assert()
+            .success();
+        let out = child.wait_with_output().unwrap();
+        let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let answers = std::fs::read_to_string(env.path("fake/answers.log")).unwrap();
+        let launches = env.launches();
+        if answer == "yes" {
+            assert!(answers.contains(r#""decision": "accept""#), "{answers}");
+            assert_eq!(r["result"], "fetched it", "{r}");
+            assert_eq!(launches.len(), 1, "{launches:?}");
+        } else {
+            // Codex offered no "decline": the turn is cancelled, and anchorleg continues the
+            // thread with a note, like a Claude run told no.
+            assert!(answers.contains(r#""decision": "cancel""#), "{answers}");
+            assert_eq!(r["result"], "carried on without it", "{r}");
+            assert!(
+                launches[1]
+                    .contains("I refused this, so it didn't run: `curl -sI https://example.com`."),
+                "{launches:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn codex_quota_pushed_during_the_turn_is_recorded() {
+    let env = Env::mixed(&[("c", "codex")]);
+    let update = format!(
+        r#"{{"method":"account/rateLimits/updated","params":{}}}"#,
+        codex_limits(42, false)
+    ) + "\n";
+    env.script("c.jsonl", &(update + &codex_ok("t1", "done")));
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    let status = env.anchorleg().args(["status", "--json"]).output().unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(
+        status["accounts"][0]["windows"][0]["used"], 0.42,
+        "{status}"
+    );
+}
+
+#[test]
+fn codex_stops_at_the_threshold_and_continues_on_a_roomier_login() {
+    let env = Env::mixed(&[("c1", "codex"), ("c2", "codex")]);
+    let update = format!(
+        r#"{{"method":"account/rateLimits/updated","params":{}}}"#,
+        codex_limits(95, false)
+    ) + "\n";
+    env.script(
+        "c1.jsonl",
+        &(codex_ok("t1", "").lines().next().unwrap().to_owned()
+            + "\n"
+            + &update
+            + &codex_ok("t1", "finished on c1 anyway")),
+    );
+    env.script("c2.limits.json", &codex_limits(20, false));
+    env.script("c2.jsonl", &codex_ok("t1", "finished on c2"));
+
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["result"], "finished on c2");
+    assert_eq!(r["switches"][0]["rule"], "quota_stop", "{r}");
+    let interrupts = std::fs::read_to_string(env.path("fake/interrupts.log")).unwrap();
+    assert!(interrupts.contains(r#""turnId": "u1""#), "{interrupts}");
+    let launches = env.launches();
+    assert!(
+        launches[1].starts_with("c2 thread/resume t1 "),
+        "{launches:?}"
+    );
+    let log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert!(
+        log.contains("c1 paused at a clean point (five_hour quota at 95%)"),
+        "{log}"
+    );
+    assert!(env.path("work/.handoff/TASK.md").is_file());
+
+    // `--stop-at 1` turns it off: the turn runs to the end on c1.
+    let env = Env::mixed(&[("c1", "codex"), ("c2", "codex")]);
+    env.script(
+        "c1.jsonl",
+        &(update.clone() + &codex_ok("t1", "finished on c1")),
+    );
+    let (code, r) = env.run(&["--stop-at", "1"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["result"], "finished on c1");
 }

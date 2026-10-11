@@ -17,6 +17,7 @@ use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::claude::{self, sync_context};
+use crate::adapters::codex_server::{self, Asker, Event};
 use crate::adapters::{AgentSignal, EpochSecs, QuotaReading, QuotaStatus};
 use crate::adapters::{agy, codex};
 use crate::output::{Outcome, RunReport, SCHEMA, Switch};
@@ -55,8 +56,12 @@ pub struct RunOptions {
     pub log_dir: Option<PathBuf>,
     /// anchorleg-mod's folder, passed as `--plugin-dir` to Claude runs. `None` runs without it.
     pub mod_dir: Option<PathBuf>,
-    /// The `anchorleg` binary the mod calls back (`anchorleg report --json`).
+    /// The `anchorleg` binary the mod and agy's hook call back (`anchorleg report`,
+    /// `anchorleg permission`).
     pub relay_bin: Option<PathBuf>,
+    /// anchorleg's data folder, passed as `ANCHORLEG_HOME` to agy's hook: an agy account runs
+    /// with its own `HOME`, so the hook couldn't find anchorleg's database from it.
+    pub data_dir: Option<PathBuf>,
     /// The mod stops a run at a clean point once any window reaches this fraction.
     pub stop_at: f64,
     /// Send `prompt` as a new message to an existing session instead of starting one.
@@ -87,9 +92,25 @@ impl RunOptions {
             log_dir: None,
             mod_dir: None,
             relay_bin: None,
+            data_dir: None,
             stop_at: 0.9,
             follow_up: None,
             fresh_above: 100_000,
+        }
+    }
+}
+
+/// Where a launch's events come from: the CLI's stdout, or the Codex app-server driver.
+enum Feed {
+    Lines(tokio::io::Lines<BufReader<tokio::process::ChildStdout>>),
+    Codex(tokio::sync::mpsc::UnboundedReceiver<Event>),
+}
+
+impl Feed {
+    async fn next(&mut self) -> std::io::Result<Option<Event>> {
+        match self {
+            Self::Lines(lines) => Ok(lines.next_line().await?.map(Event::Line)),
+            Self::Codex(rx) => Ok(rx.recv().await),
         }
     }
 }
@@ -202,6 +223,8 @@ struct Attempt {
     session_not_found: bool,
     finished: Option<(bool, Option<String>)>,
     exit_status: Option<std::process::ExitStatus>,
+    /// anchorleg stopped a Codex turn at `--stop-at` (the mod records Claude's in the store).
+    soft_stop: Option<String>,
 }
 
 /// How the next launch continues the task.
@@ -427,7 +450,11 @@ impl Supervisor<'_> {
                 };
                 continue;
             }
-            if let Some(reason) = self.store.take_stop(run_id)? {
+            let stopped = match attempt.soft_stop.clone() {
+                Some(reason) => Some(reason),
+                None => self.store.take_stop(run_id)?,
+            };
+            if let Some(reason) = stopped {
                 self.note(
                     opts,
                     run_id,
@@ -643,6 +670,36 @@ impl Supervisor<'_> {
         Ok(())
     }
 
+    /// Put anchorleg's approval hook into an agy account's own `HOME` (D26). `false` (and the
+    /// run uses `--mode accept-edits` instead) for an account on the person's own `HOME`, when
+    /// anchorleg's binary or data folder is unknown, or when the hook can't be written.
+    fn agy_hook(&self, run_id: i64, account: &Account, opts: &RunOptions) -> bool {
+        let (Some(home), Some(bin), Some(_)) = (
+            account.agy_home(&self.home),
+            opts.relay_bin.as_deref(),
+            opts.data_dir.as_deref(),
+        ) else {
+            return false;
+        };
+        if home == self.home {
+            return false;
+        }
+        match agy::install_hook(&home, bin) {
+            Ok(()) => true,
+            Err(e) => {
+                self.note(
+                    opts,
+                    run_id,
+                    &format!(
+                        "couldn't add anchorleg's approval hook for {} ({e}); edits only",
+                        account.name
+                    ),
+                );
+                false
+            }
+        }
+    }
+
     /// Launch the CLI once and follow its stream until it exits.
     async fn attempt(
         &self,
@@ -653,8 +710,13 @@ impl Supervisor<'_> {
         stop_at: f64,
         opts: &RunOptions,
     ) -> Result<Attempt, RunError> {
-        let launch = self.config.launch(account, self.secrets, &self.home)?;
+        let mut launch = self.config.launch(account, self.secrets, &self.home)?;
+        if account.vendor == Vendor::Codex {
+            // An exec-only flag `codex app-server` rejects; anchorleg's defaults do the same.
+            launch.args.retain(|a| a != "--full-auto");
+        }
         let mut cmd = launch.command();
+        let mut codex_turn: Option<codex_server::Turn> = None;
         // The provider's model and effort, shared by all its accounts (D20); `--model` on
         // `anchorleg run` overrides the model for this run.
         let shared = self.config.vendors.get(&account.vendor);
@@ -674,9 +736,18 @@ impl Supervisor<'_> {
                     ..Attempt::default()
                 });
             }
+            let gated = !agy::sets_mode(&launch.args) && self.agy_hook(run_id, account, opts);
+            if gated {
+                cmd.arg(agy::SKIP_PERMISSIONS);
+                cmd.env("ANCHORLEG_ACCOUNT", &account.name)
+                    .env("ANCHORLEG_RUN_ID", run_id.to_string());
+                if let Some(dir) = &opts.data_dir {
+                    cmd.env("ANCHORLEG_HOME", dir);
+                }
+            }
             cmd.arg("-p").arg(prompt);
             cmd.args(["--output-format", "stream-json"]);
-            if !agy::sets_mode(&launch.args) {
+            if !gated && !agy::sets_mode(&launch.args) {
                 cmd.args(agy::ACCEPT_EDITS);
             }
             cmd.args(&model_args);
@@ -693,20 +764,37 @@ impl Supervisor<'_> {
                     ..Attempt::default()
                 });
             }
-            cmd.arg("exec");
-            if resume.is_some() {
-                cmd.arg("resume");
-            }
-            cmd.args(["--json", "--skip-git-repo-check"]);
-            // `exec` defaults to a read-only sandbox, so the agent couldn't edit anything.
-            if !codex::sets_sandbox(&launch.args) {
-                cmd.args(["-c", codex::WORKSPACE_WRITE]);
-            }
-            cmd.args(&model_args).arg("--");
-            if let Some(sid) = resume {
-                cmd.arg(sid);
-            }
-            cmd.arg(prompt);
+            // The app server can ask before a command or an edit; `exec` can't (D27). Model,
+            // effort, sandbox and approvals go in the thread and turn requests.
+            cmd.arg("app-server");
+            let args = &launch.args;
+            let picks_approvals = args.iter().any(|a| {
+                a == "-a"
+                    || a.starts_with("--ask-for-approval")
+                    || a.contains("approval_policy")
+                    || a.starts_with("--dangerously-bypass-approvals")
+            });
+            codex_turn = Some(codex_server::Turn {
+                cwd: opts.cwd.display().to_string(),
+                prompt: prompt.to_owned(),
+                resume: resume.map(str::to_owned),
+                model: opts
+                    .model
+                    .clone()
+                    .or_else(|| shared.and_then(|s| s.model.clone())),
+                effort: shared.and_then(|s| s.effort.clone()),
+                sandbox: (!codex::sets_sandbox(args)).then(|| "workspace-write".to_owned()),
+                // Nobody to ask without anchorleg's binary: Codex then decides alone, as `exec` did.
+                approval: (!picks_approvals).then(|| {
+                    if opts.relay_bin.is_some() {
+                        "on-request"
+                    } else {
+                        "never"
+                    }
+                    .to_owned()
+                }),
+                stop_at,
+            });
         } else {
             if let Some(dir) = &opts.mod_dir {
                 cmd.arg("--plugin-dir").arg(dir);
@@ -726,9 +814,19 @@ impl Supervisor<'_> {
         }
         // Without this, `claude -p` waits 3 s for stdin on every launch (Phase 0).
         cmd.current_dir(&opts.cwd)
-            .stdin(Stdio::null())
+            .stdin(if codex_turn.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            // The app server logs its internals (e.g. "TurnAborted" after a refusal) to stderr;
+            // everything anchorleg needs comes over the protocol.
+            .stderr(if codex_turn.is_some() {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            });
         let mut child = tokio::process::Command::from(cmd)
             .kill_on_drop(true)
             .spawn()
@@ -737,25 +835,61 @@ impl Supervisor<'_> {
                 source,
             })?;
         let stdout = child.stdout.take().expect("stdout is piped");
-        let mut lines = BufReader::new(stdout).lines();
+        let mut source = match codex_turn {
+            Some(turn) => {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                let stdin = child.stdin.take().expect("stdin is piped");
+                let asker = opts.relay_bin.clone().map(|bin| Asker { bin, run_id });
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        codex_server::drive(BufReader::new(stdout), stdin, turn, asker, tx).await
+                    {
+                        tracing::warn!(%e, "talking to codex app-server");
+                    }
+                });
+                Feed::Codex(rx)
+            }
+            None => Feed::Lines(BufReader::new(stdout).lines()),
+        };
         let mut raw_log = self.open_log(opts.log_dir.as_deref(), run_id);
         let mut attempt = Attempt::default();
         let mut deadline: Option<tokio::time::Instant> = None;
         let mut codex_stream = codex::Stream::default();
 
         loop {
-            let line = match deadline {
-                Some(d) => match tokio::time::timeout_at(d, lines.next_line()).await {
-                    Ok(line) => line?,
+            let item = match deadline {
+                Some(d) => match tokio::time::timeout_at(d, source.next()).await {
+                    Ok(item) => item?,
                     Err(_) => {
                         tracing::warn!(account = %account.name, "CLI still running after its limit hit; killing it");
                         child.start_kill()?;
                         break;
                     }
                 },
-                None => lines.next_line().await?,
+                None => source.next().await?,
             };
-            let Some(line) = line else { break };
+            let line = match item {
+                None => break,
+                Some(Event::Line(line)) => line,
+                Some(Event::Quota(readings)) => {
+                    // A full, current snapshot pushed by Codex during the turn.
+                    self.store.replace_quota(
+                        &account.name,
+                        &readings,
+                        Source::Stream,
+                        self.now(),
+                    )?;
+                    continue;
+                }
+                Some(Event::NotFound) => {
+                    attempt.session_not_found = true;
+                    continue;
+                }
+                Some(Event::Stopped(reason)) => {
+                    attempt.soft_stop = Some(reason);
+                    continue;
+                }
+            };
             if let Some(f) = raw_log.as_mut() {
                 let _ = writeln!(f, "{line}");
             }
@@ -772,6 +906,16 @@ impl Supervisor<'_> {
             }
             if attempt.limit_hit && deadline.is_none() {
                 deadline = Some(tokio::time::Instant::now() + opts.limit_grace);
+            }
+        }
+        if matches!(source, Feed::Codex(_)) {
+            // The turn is over and the driver closed the server's stdin; give it a moment to
+            // exit, then make sure it does.
+            if tokio::time::timeout(Duration::from_secs(5), child.wait())
+                .await
+                .is_err()
+            {
+                child.start_kill()?;
             }
         }
         attempt.exit_status = Some(child.wait().await?);

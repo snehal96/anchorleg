@@ -1,4 +1,6 @@
-//! Codex CLI (`codex exec --json`), verified on codex-cli 0.153.4 (fixtures/codex-*).
+//! Codex CLI events in the `codex exec --json` format, verified on codex-cli 0.153.4
+//! (fixtures/codex-*). Runs now go through `codex app-server`, whose messages
+//! [`super::codex_server`] translates into this format (D27).
 //!
 //! The stream has no quota, so it's read from the rollout file the CLI writes for every thread:
 //! `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<thread_id>.jsonl`, whose `token_count`
@@ -68,7 +70,14 @@ impl Stream {
             }],
             Some("turn.failed") => {
                 let message = text("/error/message").unwrap_or_default();
-                match limit_reset(&message) {
+                // Turns run through `codex app-server` carry Codex's own error code (D27).
+                let code = text("/error/codex_error_info");
+                let limit = match code.as_deref() {
+                    Some("usageLimitExceeded" | "rateLimitExceeded") => Some(None),
+                    Some(_) => None,
+                    None => limit_reset(&message),
+                };
+                match limit {
                     Some(resets_at) => vec![AgentSignal::LimitHit {
                         window: None,
                         resets_at,

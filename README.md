@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Keep your coding agents working when an account hits its limit.</b><br>
-  A session manager for Claude Code, Codex and Antigravity that pauses a task at a clean point
+  A session manager for Claude Code and Codex (Antigravity coming) that pauses a task at a clean point
   when an account runs low and continues it on another of your accounts.
 </p>
 
@@ -47,9 +47,10 @@ watches every account's quota, and when one gets close to its limit it:
 
 ## Features
 
-- **Switches before you hit the wall.** A small Claude Code mod inside every session reports
-  exact usage and stops at a step boundary once any window reaches 90% (`--stop-at`). If no
-  account has more room, the task carries on until the real limit, then switches.
+- **Switches before you hit the wall.** anchorleg sees exact usage while the task runs (a small
+  mod inside Claude Code; Codex reports it itself) and stops at a step boundary once any window
+  reaches 90% (`--stop-at`). If no account has more room, the task carries on until the real
+  limit, then switches.
 - **Keeps the context.** The next account gets the session transcript, subagent transcripts and
   project memory, and resumes the session. When the context is large (over 100k tokens by
   default) it starts fresh from the handoff instead, so the next account doesn't pay for an
@@ -57,9 +58,9 @@ watches every account's quota, and when one gets close to its limit it:
 - **A session manager in your terminal.** `anchorleg ui` lists every session with its live
   conversation (in Claude Code's style), takes new tasks and replies, and shows each account's
   quota. Keyboard first; the mouse works too.
-- **You approve what the agent may do.** A background run can't show Claude's permission dialog,
-  so anchorleg asks you: the session waits until you press **1** yes, **2** yes for this session or
-  **3** no.
+- **You approve what the agent may do.** A background run can't show the CLI's permission
+  prompt, so anchorleg asks you: the session waits until you press **1** yes, **2** yes for this
+  session or **3** no. Works for Claude Code and Codex.
 - **Same model and effort on every account.** One setting per provider (`/model opus`,
   `/effort high`), so a task keeps the same strength when it moves. Your own slash commands and
   skills pass straight through.
@@ -71,7 +72,7 @@ watches every account's quota, and when one gets close to its limit it:
 ## How it works
 
 <p align="center">
-  <img src="docs/images/architecture.svg" width="880" alt="anchorleg picks an account, launches the official CLI headless (claude -p with anchorleg-mod, codex exec, agy -p), watches its events and switches with a handoff and checkpoint">
+  <img src="docs/images/architecture.svg" width="880" alt="anchorleg picks an account, launches the official CLI headless (claude -p with anchorleg-mod, codex app-server, agy -p), watches its events and switches with a handoff and checkpoint">
 </p>
 
 - **anchorleg** (`crates/`) is a single Rust binary: account registry, quota store (SQLite), switch
@@ -79,9 +80,10 @@ watches every account's quota, and when one gets close to its limit it:
 - **anchorleg-mod** (`mod/`) is a Claude Code mod embedded in the binary and loaded into every run
   with `--plugin-dir`. It reads usage, stops turns and forwards permission questions. It never
   touches credentials.
-- **Codex** has no mod: anchorleg asks `codex app-server` for each login's quota before every
-  launch (no model request). **Antigravity** shows no quota, so anchorleg switches when a turn
-  fails on quota. Moving between different CLIs always starts fresh from `.handoff/TASK.md`.
+- **Codex** has no mod: anchorleg runs it through `codex app-server`, which reports quota before
+  and during every turn and sends its approval requests to anchorleg. **Antigravity** (under development) shows no
+  quota, so anchorleg switches when a turn fails on quota; an agy login with its own `HOME` gets
+  approvals through an agy hook. Moving between different CLIs always starts fresh from `.handoff/TASK.md`.
 
 Every CLI behaviour anchorleg relies on is checked against real runs; the captured output lives
 in [`fixtures/`](fixtures) and the tests replay it. Command and JSON reference:
@@ -95,7 +97,7 @@ Requirements:
 - [Rust](https://rustup.rs) (stable), to build it: `curl https://sh.rustup.rs -sSf | sh`
 - At least one agent CLI, signed in on each account you want to use:
   [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`),
-  Codex (`codex`, or the copy inside the ChatGPT desktop app) or Antigravity (`agy`)
+  Codex (`codex`, or the copy inside the ChatGPT desktop app) or Antigravity (`agy`, under development)
 
 Install the latest version from GitHub (builds in about a minute):
 
@@ -143,7 +145,8 @@ anchorleg accounts add work --cmd "CLAUDE_CONFIG_DIR=~/.claude-work claude" --pr
 anchorleg accounts add home --cmd "CLAUDE_CONFIG_DIR=~/.claude-home claude" --priority 2
 anchorleg accounts add ci --token-stdin             # a `claude setup-token` token, kept in the keychain
 anchorleg accounts add gpt --cmd "CODEX_HOME=~/.codex codex" --priority 3   # a Codex login
-anchorleg accounts add gemini --vendor antigravity --priority 4             # agy, your own HOME
+anchorleg accounts add gemini --vendor antigravity --priority 4             # agy (under development), your own HOME
+anchorleg accounts add gemini2 --cmd "HOME=~/.agy-2 agy" --priority 5       # agy (under development), its own HOME (sign in once with `HOME=~/.agy-2 agy`)
 anchorleg accounts show work                        # the exact command anchorleg will run
 ```
 
@@ -272,8 +275,8 @@ You are responsible for using your accounts within each provider's terms.
 | CLI | Status |
 |---|---|
 | Claude Code (`claude`) | Supported: switching, handoff, approvals, model and effort |
-| Codex (`codex`, also bundled with the ChatGPT app) | Supported: live quota before every launch, switching, handoff, model and effort. No soft stop or approvals yet; runs with a workspace-write sandbox |
-| Antigravity (`agy`) | Supported: switching on quota errors, handoff, model and effort. Quota isn't visible; edits allowed (`--mode accept-edits`), shell commands need an allow rule in agy's settings. One account per `HOME` |
+| Codex (`codex`, also bundled with the ChatGPT app) | Supported: live quota before and during every turn, switching, handoff, model and effort, approvals and the soft stop at `--stop-at`. Runs through `codex app-server` with a workspace-write sandbox: edits inside the task folder go ahead, and what Codex asks about (network, writes elsewhere) waits for you |
+| Antigravity (`agy`) | **Under development**, not yet validated end to end: switching on quota errors, handoff, model and effort. Quota isn't visible. One account per `HOME`. An account with its own `HOME` gets approvals: edits inside the task folder go ahead, and shell commands and anything else wait for you (anchorleg adds an `anchorleg` hook to that `HOME`'s `.gemini/config/hooks.json`). On your own `HOME`, edits are allowed (`--mode accept-edits`) and shell commands need an allow rule in agy's settings |
 | Kimi, Cursor (`cursor-agent`) | Planned |
 
 `anchorleg ui` shows which of these are installed.

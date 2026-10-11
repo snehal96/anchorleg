@@ -4,6 +4,7 @@
 pub mod agy;
 pub mod claude;
 pub mod codex;
+pub mod codex_server;
 
 use serde::Serialize;
 

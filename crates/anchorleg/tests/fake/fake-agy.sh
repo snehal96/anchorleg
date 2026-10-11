@@ -23,6 +23,22 @@ if [[ -n "$conversation" && ! -f "$store/$conversation.db" ]]; then
   echo "warning: conversation \"$conversation\" not found" >&2
 fi
 
+# With FAKE_HOOK set and agy's permissions skipped, the first tool call goes through the
+# PreToolUse hook in $HOME/.gemini/config/hooks.json, like the real CLI; its answer is saved to
+# $FAKE_DIR/hook.out and a "deny" ends the turn with the reason.
+if [[ -n "${FAKE_HOOK:-}" && " $* " == *" --dangerously-skip-permissions "* ]]; then
+  hooks="$HOME/.gemini/config/hooks.json"
+  command="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchorleg"]["PreToolUse"][0]["hooks"][0]["command"])' "$hooks")"
+  request="{\"toolCall\":{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"$FAKE_HOOK\",\"Cwd\":\"$PWD\"}},\"workspacePaths\":[\"$PWD\"],\"conversationId\":\"fake\"}"
+  answer="$(cd "$(dirname "$hooks")" && printf '%s' "$request" | sh -c "$command")"
+  printf '%s\n' "$answer" >"$FAKE_DIR/hook.out"
+  if [[ "$answer" == *'"deny"'* ]]; then
+    printf '%s\n' '{"event":"init","conversation_id":"conv-d","init":{"model":"m"}}'
+    printf '%s\n' '{"event":"result","result":{"conversation_id":"conv-d","status":"SUCCESS","response":"The command was refused.\n"}}'
+    exit 0
+  fi
+fi
+
 script="$FAKE_DIR/$account.$n.jsonl"
 [[ -f "$script" ]] || script="$FAKE_DIR/$account.jsonl"
 id="$(grep -o '"conversation_id":"[^"]*"' "$script" | head -1 | cut -d'"' -f4)"

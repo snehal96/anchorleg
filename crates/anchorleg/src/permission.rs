@@ -3,10 +3,12 @@
 //! anchorleg-mod sees the CLI about to ask (Claude's `tool.check` answering "ask", which `-p` would
 //! turn into a refusal) and calls `anchorleg permission ask`, which waits until someone answers in
 //! `anchorleg ui` or with `anchorleg permission answer`. Nothing is approved without the person.
+//! For agy, anchorleg's `PreToolUse` hook calls `anchorleg permission agy-hook` the same way (D26).
 
 use std::io::Read as _;
 use std::time::{Duration, Instant};
 
+use anchorleg_core::adapters::agy::{self, HookVerdict};
 use anchorleg_core::conversation::{describe_tool, relative_input};
 use anchorleg_core::store::{PermissionState, RunState, Store};
 use anyhow::{Context, bail};
@@ -29,6 +31,10 @@ pub enum PermissionCmd {
         #[arg(long, default_value_t = 540)]
         wait: u64,
     },
+    /// agy's `PreToolUse` hook (D26): reads agy's request on stdin, asks the person when the call
+    /// needs it, and prints agy's `{decision, reason}`.
+    #[command(hide = true)]
+    AgyHook,
     /// List tool calls waiting for an answer.
     List {
         #[arg(long)]
@@ -64,13 +70,30 @@ struct AskOutput {
 
 pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
     let db = Store::default_path()?;
-    let store = Store::open(&db)?;
+    let store = match Store::open(&db) {
+        Ok(store) => store,
+        // agy's hook must always answer, and a refusal is the safe answer.
+        Err(e) if matches!(cmd, PermissionCmd::AgyHook) => {
+            println!(
+                "{}",
+                json!({ "decision": "deny", "reason": format!("anchorleg: {e}") })
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
     match cmd {
         PermissionCmd::Ask { json: _, wait } => {
             let mut text = String::new();
             std::io::stdin().read_to_string(&mut text)?;
             let input: AskInput = serde_json::from_str(&text).context("reading the request")?;
             let out = ask(&store, &input, Duration::from_secs(wait))?;
+            println!("{}", serde_json::to_string(&out)?);
+        }
+        PermissionCmd::AgyHook => {
+            let mut text = String::new();
+            std::io::stdin().read_to_string(&mut text)?;
+            let out = agy_hook(&store, &text);
             println!("{}", serde_json::to_string(&out)?);
         }
         PermissionCmd::List { json } => {
@@ -104,6 +127,45 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Answer one agy `PreToolUse` request. Outside an anchorleg run (no `ANCHORLEG_RUN_ID`) agy
+/// asks as usual; inside one, anything the policy doesn't allow waits for the person, and any
+/// failure denies the call.
+fn agy_hook(store: &Store, text: &str) -> Value {
+    let Some(run_id) = std::env::var("ANCHORLEG_RUN_ID")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+    else {
+        return json!({ "decision": "ask" });
+    };
+    let req: Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(e) => {
+            return json!({ "decision": "deny", "reason": format!("anchorleg: bad request: {e}") });
+        }
+    };
+    let (tool, input) = match agy::hook_verdict(&req) {
+        HookVerdict::Allow => return json!({ "decision": "allow" }),
+        HookVerdict::Ask { tool, input } => (tool, input),
+    };
+    let ask_req = AskInput {
+        run_id,
+        tool,
+        input,
+        reason: None,
+        id: None,
+    };
+    // Wait as long as anyone may answer; agy's hook timeout is longer still.
+    let wait = Duration::from_secs(GIVE_UP_SECS as u64 + 60);
+    match ask(store, &ask_req, wait) {
+        Ok(out) if out.decision == "allow" => json!({ "decision": "allow", "reason": out.reason }),
+        Ok(out) => json!({
+            "decision": "deny",
+            "reason": format!("{} in anchorleg", out.reason),
+        }),
+        Err(e) => json!({ "decision": "deny", "reason": format!("anchorleg: {e}") }),
+    }
 }
 
 /// One line for a tool call, paths shown relative to the current folder.

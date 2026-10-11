@@ -22,12 +22,12 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `import-aliases [--yes] [--from-file F]` | works |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` | works |
-| `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `ask --json` (anchorleg-mod) | works (Claude) |
+| `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `ask --json` (anchorleg-mod) | works (Claude, Codex; agy under development) |
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
 | `anchorleg stop <run>` | works |
 | `anchorleg status [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
-| `anchorleg run [--follow-up RUN] [--cwd DIR] [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] -- <prompt…>` | works (Claude accounts) |
+| `anchorleg run [--follow-up RUN] [--cwd DIR] [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -111,6 +111,11 @@ stops the run before the next model request. anchorleg then switches to an accou
 threshold and resumes the session (switch rule `quota_stop`); if there's none, it continues on
 the same account until the hard limit (`quota_stop_stay`).
 
+Codex runs get the same soft stop without a mod: Codex reports quota after every model call
+(`account/rateLimits/updated`), and once a window reaches `--stop-at` anchorleg interrupts the
+turn there, before the tools that call asked for run, then switches or stays the same way.
+Antigravity reports no quota, so it switches on quota errors only.
+
 ### Handoff and checkpoints
 
 Whenever a launch stops early (limit hit, quota pause, lost session), anchorleg writes
@@ -147,6 +152,24 @@ Only calls Claude itself would have asked about come here; nothing is allowed wi
 After 30 minutes with no answer, or if the run ends, the call is refused as before. The model
 reads a "no" as a refusal and carries on. Per-CLI settings (below) can still pre-approve, e.g.
 `--permission-mode acceptEdits`.
+
+**Codex.** anchorleg runs Codex through `codex app-server` with a `workspace-write` sandbox
+and `on-request` approvals (unless your `anchorleg settings codex --args` pick a sandbox or an
+approval policy). Edits and commands inside the task folder go ahead; when Codex wants more
+(network access, writing elsewhere) it asks, and the question shows up here as `Bash` or
+`Edit`. If Codex offers no way to decline and continue, a "no" stops its turn and anchorleg
+starts the next one with a note that you refused, so the agent carries on without it.
+
+**Antigravity (under development).** Headless agy can't ask either, and its hooks can refuse a call but not approve
+one. So for an agy account with its own `HOME` (`--cmd "HOME=~/.agy-2 agy"`), anchorleg adds an
+`anchorleg` entry to that `HOME`'s `.gemini/config/hooks.json`, lets agy run tools
+(`--dangerously-skip-permissions`) and has the hook decide every call: reads and edits inside
+the task folder go ahead; shell commands (shown as `Bash`), edits elsewhere, the browser, the web
+and MCP tools wait for your answer, the same way as above. Outside anchorleg runs the hook leaves
+the decision to agy. An agy account on your own `HOME` gets no hook: it runs with
+`--mode accept-edits`, and shell commands need an allow rule in agy's settings. Your own
+`--mode` or `--dangerously-skip-permissions` in `anchorleg settings antigravity --args` turns
+the hook off.
 
 ### Per-CLI settings: model, effort, arguments
 

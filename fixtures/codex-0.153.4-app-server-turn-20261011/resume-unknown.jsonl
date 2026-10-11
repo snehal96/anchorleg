@@ -1,0 +1,5 @@
+{"dir":"out","msg":{"id":1,"method":"initialize","params":{"clientInfo":{"name":"anchorleg-probe","version":"0"}}}}
+{"dir":"in","msg":{"id":1,"result":{"userAgent":"anchorleg-probe/0.153.4 (Mac OS 26.6.2; arm64) Apple_Terminal/470.2 (anchorleg-probe; 0)","codexHome":"/Users/me/.codex","platformFamily":"unix","platformOs":"macos"}}}
+{"dir":"out","msg":{"method":"initialized"}}
+{"dir":"out","msg":{"id":2,"method":"thread/resume","params":{"threadId":"01a12ad3-0000-7000-8000-000000000000","cwd":"/tmp/scratch/codexturn/work","approvalPolicy":"on-request","sandbox":"workspace-write","model":"gpt-5.6-luna","excludeTurns":true}}}
+{"dir":"in","msg":{"error":{"code":-32600,"message":"no rollout found for thread id 01a12ad3-0000-7000-8000-000000000000"},"id":2}}

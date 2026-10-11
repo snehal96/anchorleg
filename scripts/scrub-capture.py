@@ -9,7 +9,8 @@ Rewrites the files in place:
 - init events: drops the installed plugins, MCP connectors, skills and personal slash commands
   (keeps Claude's built-in commands, which tests use); commands_changed events: keeps only
   built-in commands
-- drops SessionStart hook output lines (they echo the person's own hooks)
+- drops SessionStart hook output lines (they echo the person's own hooks) and `codex app-server`
+  messages that name the machine or the person's hooks
 
 List your own account names in scripts/scrub-names.local first. Review the diff before committing.
 """
@@ -63,8 +64,17 @@ def text(s: str) -> str:
     return s
 
 
+# `codex app-server` messages that name the machine or the person's hooks (host name, installation id) or the
+# person's own hooks.
+MACHINE_METHODS = {"remoteControl/status/changed", "hook/started", "hook/completed"}
+
+
 def scrub_event(v: dict) -> dict | None:
     if v.get("type") == "system" and str(v.get("subtype", "")).startswith("hook_"):
+        return None
+    # app-server probe logs wrap each message as {"dir", "msg"}.
+    msg = v.get("msg") if isinstance(v.get("msg"), dict) else v
+    if msg.get("method") in MACHINE_METHODS:
         return None
     if v.get("type") == "system" and v.get("subtype") == "init":
         for key in PERSONAL_LISTS:

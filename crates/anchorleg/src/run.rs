@@ -1,6 +1,6 @@
 //! `anchorleg run`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,11 +61,12 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     opts.log_dir = db.parent().map(|d| d.join("runs"));
     opts.stop_at = args.stop_at;
     opts.fresh_above = args.fresh_above;
+    opts.relay_bin = Some(std::env::current_exe()?);
+    opts.data_dir = db.parent().map(Path::to_owned);
     if !args.no_mod
         && let Some(dir) = db.parent()
     {
         opts.mod_dir = Some(anchorleg_core::anchorleg_mod::install(dir)?);
-        opts.relay_bin = Some(std::env::current_exe()?);
     }
 
     let progress: &dyn Progress = if args.json { &Quiet } else { &Stderr };
