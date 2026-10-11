@@ -32,7 +32,9 @@ Without the secret, releases still publish; the Homebrew job just skips. Users t
 ## Cutting a release
 
 1. Bump `version` in the root `Cargo.toml` (workspace version), run `cargo build` so
-   `Cargo.lock` follows, and run `./scripts/check.sh`.
+   `Cargo.lock` follows, and run `./scripts/check.sh`. Update the `.deb` file name in the
+   README's install section (it carries the version) and move `CHANGELOG.md`'s *Unreleased*
+   entries under the new version.
 2. Commit, then tag and push:
    ```bash
    git tag v0.1.0 && git push origin main v0.1.0

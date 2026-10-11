@@ -9,7 +9,8 @@
 <p align="center">
   <a href="https://github.com/snehal96/anchorleg/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/snehal96/anchorleg/actions/workflows/ci.yml/badge.svg"></a>
   <a href="#license"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue"></a>
-  <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-lightgrey">
+  <img alt="Platform: macOS | Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey">
+  <a href="https://github.com/snehal96/anchorleg/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/snehal96/anchorleg"></a>
   <img alt="Status: early" src="https://img.shields.io/badge/status-early-orange">
 </p>
 
@@ -93,31 +94,44 @@ in [`fixtures/`](fixtures) and the tests replay it. Command and JSON reference:
 
 Requirements:
 
-- macOS (Linux support is in progress)
-- [Rust](https://rustup.rs) (stable), to build it: `curl https://sh.rustup.rs -sSf | sh`
+- macOS (Apple silicon or Intel) or Linux (x86_64 or arm64, glibc 2.35+, e.g. Ubuntu 22.04+).
+  Linux is newer and less tested with real accounts.
 - At least one agent CLI, signed in on each account you want to use:
-  [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`),
-  Codex (`codex`, or the copy inside the ChatGPT desktop app) or Antigravity (`agy`, under development)
+  [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) or
+  Codex (`codex`, or the copy inside the ChatGPT desktop app). Antigravity (`agy`) is under
+  development.
 
-Install the latest version from GitHub (builds in about a minute):
+**Install script** (macOS and Linux): downloads the latest release for your machine, checks its
+SHA-256 and puts `anchorleg` in `~/.local/bin`:
 
 ```bash
-cargo install --git https://github.com/snehal96/anchorleg anchorleg
+curl -fsSL https://raw.githubusercontent.com/snehal96/anchorleg/main/install.sh | bash
 anchorleg --version
 ```
 
-Or from a clone:
+Set `ANCHORLEG_INSTALL_DIR` to install somewhere else, or `ANCHORLEG_VERSION=v0.1.0` to pin a
+version. Run it again to update; delete the binary to remove it.
+
+**Debian / Ubuntu** (`.deb`):
 
 ```bash
-git clone https://github.com/snehal96/anchorleg && cd anchorleg
-cargo install --path crates/anchorleg
+arch=$(dpkg --print-architecture)   # amd64 or arm64
+curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.1.0-1_${arch}.deb"
+sudo apt install "./anchorleg_0.1.0-1_${arch}.deb"
 ```
 
-To update, run the same `cargo install` command again with `--force`; to remove it,
-`cargo uninstall anchorleg`.
+**Prebuilt binaries:** every [release](https://github.com/snehal96/anchorleg/releases/latest)
+has `anchorleg-<target>.tar.gz` for `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`, with `.sha256` files and
+`SHA256SUMS`.
 
-**Coming soon:** prebuilt binaries, Homebrew (`brew install snehal96/tap/anchorleg`), an install
-script and `.deb` packages for Linux.
+**From source** (needs [Rust](https://rustup.rs) stable):
+
+```bash
+cargo install --git https://github.com/snehal96/anchorleg anchorleg
+```
+
+**Homebrew** (`brew install snehal96/tap/anchorleg`) is coming soon.
 
 ## Set up your accounts
 
