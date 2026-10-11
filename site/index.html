@@ -3,9 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>anchorleg</title>
+<title>anchorleg: keep coding agents working when an account hits its limit</title>
 <meta name="description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314202b'/%3E%3Crect x='8' y='7' width='7' height='18' rx='2' fill='%23f0a52b'/%3E%3Crect x='17' y='7' width='7' height='18' rx='2' fill='%234fc19a'/%3E%3C/svg%3E">
+<link rel="canonical" href="https://snehal96.github.io/anchorleg/">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#14202B">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="anchorleg">
+<meta property="og:title" content="anchorleg: keep coding agents working when an account hits its limit">
+<meta property="og:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<meta property="og:url" content="https://snehal96.github.io/anchorleg/">
+<meta property="og:image" content="https://snehal96.github.io/anchorleg/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="anchorleg: a task line switching lanes from amber to green, with the tagline">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="anchorleg">
+<meta name="twitter:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<meta name="twitter:image" content="https://snehal96.github.io/anchorleg/og.png">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"anchorleg","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.","url":"https://snehal96.github.io/anchorleg/","downloadUrl":"https://github.com/snehal96/anchorleg/releases/latest","softwareVersion":"0.1.0","license":"https://github.com/snehal96/anchorleg#license","codeRepository":"https://github.com/snehal96/anchorleg","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+</script>
 <!-- GoatCounter: cookieless page views and clicks (data-goatcounter-click). Dashboard: https://anchorleg.goatcounter.com -->
 <script data-goatcounter="https://anchorleg.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -71,9 +92,7 @@ p { margin: 0; max-width: 62ch; }
 /* top bar */
 .top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-block: 1.25rem; flex-wrap: wrap; }
 .brand { font: 800 1.15rem/1 var(--display); display: flex; align-items: center; gap: 0.6rem; }
-.brand .baton { display: inline-flex; gap: 2px; }
-.brand .baton i { width: 6px; height: 16px; border-radius: 2px; background: var(--signal-fill); display: block; }
-.brand .baton i:nth-child(2) { background: var(--ok); }
+.brand img { width: 28px; height: 28px; display: block; }
 .top nav { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: 0.95rem; }
 .top nav a { text-decoration: none; color: var(--muted); }
 .top nav a:hover { color: var(--ink); }
@@ -182,7 +201,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
 <div class="wrap">
 
 <header class="top">
-  <div class="brand"><span class="baton" aria-hidden="true"><i></i><i></i></span>anchorleg</div>
+  <div class="brand"><img src="icon.svg" alt="" width="28" height="28">anchorleg</div>
   <nav aria-label="Page">
     <a href="#how">How it works</a>
     <a href="#features">Features</a>

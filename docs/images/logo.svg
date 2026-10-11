@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 240" width="540" height="120" role="img" aria-labelledby="t">
+  <title id="t">anchorleg</title>
+  <style>
+    .word { fill: #14202B; font: 700 132px "Helvetica Neue", Helvetica, Arial, sans-serif; letter-spacing: -3px; }
+    @media (prefers-color-scheme: dark) { .word { fill: #DCE3EA; } }
+  </style>
+  <g transform="translate(0 0) scale(0.46875)"><defs><linearGradient id="lg" gradientUnits="userSpaceOnUse" x1="214" y1="0" x2="298" y2="0"><stop offset="0" stop-color="#F2A93B"/><stop offset="1" stop-color="#2FB383"/></linearGradient></defs><rect width="512" height="512" rx="114" fill="#14202B"/><path d="M112 312 H400 M112 200 H400" stroke="#243241" stroke-width="44" stroke-linecap="round"/><path d="M128 312 H206 C256 312 256 200 306 200 H352" fill="none" stroke="url(#lg)" stroke-width="44" stroke-linecap="round"/><path d="M346 164 L392 200 L346 236" fill="none" stroke="#2FB383" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/><circle cx="128" cy="312" r="34" fill="#14202B" stroke="#F2A93B" stroke-width="20"/></g>
+  <text class="word" x="276" y="166">anchorleg</text>
+</svg>

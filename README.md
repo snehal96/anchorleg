@@ -1,4 +1,4 @@
-<h1 align="center">anchorleg</h1>
+<h1 align="center"><img src="docs/images/logo.svg" alt="anchorleg" width="400"></h1>
 
 <p align="center">
   <b>Keep your coding agents working when an account hits its limit.</b><br>
