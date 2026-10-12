@@ -199,8 +199,8 @@ pub struct RunArgs {
           conflicts_with_all = ["follow_up", "fork"])]
     pub worktree: Option<String>,
     /// How long a question or approval waits for you before the agent goes on without an answer
-    /// (it decides itself; a tool call is refused): e.g. 90s, 10m, 2h. Default 30m. Follow-ups
-    /// keep their session's.
+    /// (it decides itself; a tool call is refused): e.g. 90s, 10m, 2h. Default: questions wait
+    /// until you answer, tool calls 30m. Follow-ups keep their session's.
     #[arg(long, value_name = "DURATION", value_parser = parse_wait)]
     pub answer_wait: Option<i64>,
     /// The session's permission mode: `ask` (every question comes to you) or `edits` (file edits

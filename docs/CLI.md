@@ -351,9 +351,11 @@ When the agent needs a decision only you can make, it asks, and the run waits fo
   `ask_user` tool with the same input (the model sees it as `mcp__anchorleg-mod__ask_user`).
   Where the CLI does offer `AskUserQuestion`, that is answered the same way.
 
-How long a question (or approval) waits is 30 minutes unless the session says otherwise:
-`anchorleg run --answer-wait 10m` (follow-ups keep it). With no answer by then the agent decides
-itself (Codex gets no answers; Claude is told to decide), and a tool call is refused.
+A question waits until you answer it, however long that takes (the run shows as waiting, and
+you get a notification). If you'd rather the agent went on alone after a while, give the session
+a limit: `anchorleg run --answer-wait 10m` (follow-ups keep it); with no answer by then the agent
+decides itself (Codex gets no answers; Claude is told to decide). Tool-call approvals are refused
+after 30 minutes without an answer unless `--answer-wait` says otherwise.
 
 In `anchorleg ui` the conversation shows the question and its numbered options: press a number to
 pick (several, then Enter, when more than one may be picked), type your own answer in the

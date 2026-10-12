@@ -18,8 +18,8 @@ All notable changes are listed here. The format follows
   `anchorleg permission answer <id> <answer>…`. Secret answers are never passed or stored.
 - `anchorleg ui`: `@` completes the task folder's file paths; Ctrl+P / Ctrl+N (↑) bring back
   earlier messages.
-- `anchorleg run --answer-wait 10m`: how long questions and approvals wait before the agent goes
-  on without an answer (default 30m).
+- Questions wait until you answer them. `anchorleg run --answer-wait 10m` lets the agent go on
+  alone after a while instead (tool-call approvals: 30m unless set).
 - Fork a session (`anchorleg run --fork RUN`, `/fork` in the UI) and run a task in its own git
   worktree (`--worktree [NAME]`, `/worktree`).
 

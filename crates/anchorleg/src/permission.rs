@@ -265,11 +265,13 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
         bail!("no run {}", req.run_id);
     }
     let question = req.tool == questions::TOOL;
-    // The session's own wait (`run --answer-wait`), else anchorleg's default.
-    let give_up = store
-        .run(req.run_id)?
-        .and_then(|r| r.answer_wait)
-        .unwrap_or(GIVE_UP_SECS);
+    // The session's own wait (`run --answer-wait`). Without one a question waits for the person
+    // as long as the run lives (D44); a tool call is refused after GIVE_UP_SECS, as the CLI would.
+    let give_up = match store.run(req.run_id)?.and_then(|r| r.answer_wait) {
+        Some(secs) => Some(secs),
+        None if question => None,
+        None => Some(GIVE_UP_SECS),
+    };
     let what = if question {
         let qs = questions::from_input(&req.input);
         match qs.as_slice() {
@@ -348,7 +350,7 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
                 let ended = run.is_none_or(|r| {
                     !matches!(r.state, RunState::Running | RunState::Waiting) || r.pid.is_none()
                 });
-                if ended || now() - p.asked_at > give_up {
+                if ended || give_up.is_some_and(|g| now() - p.asked_at > g) {
                     store.answer_permission(id, PermissionState::Expired, now())?;
                     continue;
                 }
@@ -388,5 +390,42 @@ fn note(run_id: i64, text: &str) {
         .open(dir.join(format!("run-{run_id}.jsonl")))
     {
         let _ = writeln!(f, "{}", json!({ "type": "anchorleg", "text": text }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_question_waits_for_ever_a_tool_call_does_not() {
+        let store = Store::open_in_memory().unwrap();
+        let run = store.start_run("task", "/repo", None, 100).unwrap();
+        store.set_run_state(run, RunState::Running, 100).unwrap();
+        store
+            .set_run_pid(run, Some(i64::from(std::process::id())))
+            .unwrap();
+        let long_ago = now() - 2 * GIVE_UP_SECS;
+        let q = questions::to_input(&[questions::plan_question()]);
+        let asked = |tool: &str, input: &Value| {
+            let id = store
+                .ask_permission(run, tool, input, None, long_ago)
+                .unwrap();
+            let req = AskInput {
+                run_id: run,
+                tool: tool.to_owned(),
+                input: input.clone(),
+                reason: None,
+                id: Some(id),
+            };
+            ask(&store, &req, Duration::from_millis(200))
+                .unwrap()
+                .decision
+        };
+        assert_eq!(asked(questions::TOOL, &q), "pending");
+        assert_eq!(asked("Bash", &json!({ "command": "ls" })), "deny");
+        // With a wait set for the session, a question expires too.
+        store.set_run_answer_wait(run, Some(60)).unwrap();
+        assert_ne!(asked(questions::TOOL, &q), "pending");
     }
 }
