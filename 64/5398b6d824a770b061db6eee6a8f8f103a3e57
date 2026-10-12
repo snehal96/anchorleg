@@ -1,0 +1,44 @@
+crates/anchorleg/src/main.rs
+  s_3c59a91d489536::t_48f98aa3795ea5 226-230
+README.md
+  s_3c59a91d489536::t_e68f4a1dae94d5 86-87
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_2f40ff3ef741bd 1754-1778
+  s_3c59a91d489536::t_0c33dc65b6e823 1753
+CHANGELOG.md
+  s_3c59a91d489536::t_e68f4a1dae94d5 16-18
+crates/anchorleg-core/src/supervisor.rs
+  s_3c59a91d489536::t_48f98aa3795ea5 111-113,117,123,135,1258
+crates/anchorleg/src/ui.rs
+  s_3c59a91d489536::t_48f98aa3795ea5 1837,2869,4199
+crates/anchorleg-core/src/conversation.rs
+  s_3c59a91d489536::t_48f98aa3795ea5 220-237
+crates/anchorleg/tests/fake/fake-codex.py
+  s_3c59a91d489536::t_2f40ff3ef741bd 141-143
+fixtures/codex-0.153.4-auto-review-20261012/auto-review.jsonl
+  s_3c59a91d489536::t_2b797f48b203bf 1-27
+docs/CLI.md
+  s_3c59a91d489536::t_8e92aaeeda3962 36,329-337
+  s_3c59a91d489536::t_fafcf5898be012 338
+fixtures/codex-0.153.4-auto-review-20261012/README.md
+  s_3c59a91d489536::t_2f40ff3ef741bd 1-18
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_3c59a91d489536::t_48f98aa3795ea5 58-60,139-141,310-311,318-334
+  s_3c59a91d489536::t_2f40ff3ef741bd 312-317,1125-1148,1459,1466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "645398b6d824a770b061db6eee6a8f8f103a3e57",
+  "prompts": {},
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
