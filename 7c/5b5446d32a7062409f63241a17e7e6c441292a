@@ -1,0 +1,69 @@
+crates/anchorleg-core/src/supervisor.rs
+  s_3c59a91d489536::t_8bd98e1851b9a0 1110-1116
+  s_3c59a91d489536::t_7f1f0afe8ad549 94-95,188,412-413
+  s_3c59a91d489536::t_8d2dce230d05c8 91-93,96-99,187,189-190,446,529-545,548-550,1091-1092,1126,1160-1162,1181,1226,1251
+  s_3c59a91d489536::t_5d0beceac4fc08 286
+  s_3c59a91d489536::t_f55526b535088f 283-285,287,1094-1100,1108-1109,1117
+  s_3c59a91d489536::t_dae127ed664f8d 414,1118
+fixtures/codex-0.153.4-review-20261012/README.md
+  s_3c59a91d489536::t_023fc900d146f9 13
+  s_3c59a91d489536::t_11775fb00eadec 1-12
+crates/anchorleg/src/ui.rs
+  s_3c59a91d489536::t_b9cd23c6734504 764-767,1236,1264-1295,2202-2203,2873,3021-3024,3425-3435,3444-3447
+  s_3c59a91d489536::t_574a74772af673 3436-3443
+  s_3c59a91d489536::t_28a9d7f6a9cc60 3448-3449
+CHANGELOG.md
+  s_3c59a91d489536::t_132107edabbdf8 13-15
+crates/anchorleg/src/main.rs
+  s_3c59a91d489536::t_5513a910af9f96 27,383,392
+  s_3c59a91d489536::t_7f1f0afe8ad549 238-249,251
+  s_3c59a91d489536::t_244354577c44b9 28-47,351-382,384-390
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_8bd98e1851b9a0 891,893,896
+  s_3c59a91d489536::t_574a74772af673 830-833,856-860,862-867,882-886,892,894-895
+  s_3c59a91d489536::t_adcfb65077cf98 816-829,834-855,861,868-881,887-890,897-898
+  s_3c59a91d489536::t_23ec80968ef21a 815
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_3c59a91d489536::t_11775fb00eadec 164-176,805-808
+  s_3c59a91d489536::t_8d2dce230d05c8 53-55,1402
+  s_3c59a91d489536::t_76dc729cd8890e 809
+fixtures/codex-0.153.4-review-20261012/review.jsonl
+  s_3c59a91d489536::t_023fc900d146f9 27-28
+  s_3c59a91d489536::t_11775fb00eadec 1-26,29-44
+crates/anchorleg-core/src/adapters/agy.rs
+  s_3c59a91d489536::t_8d2dce230d05c8 111-112,124,132,138-141,213
+docs/CLI.md
+  s_3c59a91d489536::t_132107edabbdf8 35-36,353-370
+  s_3c59a91d489536::t_a8fbb3cf0e2874 371
+README.md
+  s_3c59a91d489536::t_132107edabbdf8 77-79,235
+crates/anchorleg/tests/fake/fake-codex.py
+  s_3c59a91d489536::t_adcfb65077cf98 23,130,133-135
+crates/anchorleg-core/src/store.rs
+  s_3c59a91d489536::t_7f1f0afe8ad549 252-253,256,274,392-394,719-722
+  s_3c59a91d489536::t_12591863547cf1 723-726
+crates/anchorleg/src/run.rs
+  s_3c59a91d489536::t_31deddb5c4929e 11
+  s_3c59a91d489536::t_2d16a7c739d41e 77-78
+  s_3c59a91d489536::t_f9c9f9150e64b5 102,147
+  s_3c59a91d489536::t_574a74772af673 142-144,318-321,324-334
+  s_3c59a91d489536::t_cf2309d3d79a92 50-75,79-85,136-141,145-146,148-168,172-181,310-317,323,335-343
+  s_3c59a91d489536::t_f55526b535088f 76
+  s_3c59a91d489536::t_7fb795c1e85fc1 322,344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c5b5446d32a7062409f63241a17e7e6c441292a",
+  "prompts": {},
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
