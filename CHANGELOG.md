@@ -16,6 +16,15 @@ All notable changes are listed here. The format follows
   `ask_user` tool added by anchorleg-mod (headless runs drop Claude's own question tool). Answer
   in `anchorleg ui` (number keys, your own words, `0` to skip) or with
   `anchorleg permission answer <id> <answer>…`. Secret answers are never passed or stored.
+- `anchorleg ui`: the conversation shows tool output and the model's reasoning, and the call a
+  working session is in, with Codex's command output live.
+- `anchorleg ui`: `!cmd` runs a shell command in the task folder; its output goes with your next
+  message.
+- `anchorleg ui`: `/clear` (a new session in the same folder) and `/compact`, which now works for
+  Codex too (`thread/compact/start`); the conversation notes the compaction.
+- `anchorleg ui`: a working session lists its subagents (Claude Code's Agent calls, Codex's
+  `multi_agent` subagents, Antigravity's `invoke_subagent`) with how many tool calls each has made
+  and the one it's on. Their own steps no longer show as the session's.
 - `anchorleg ui`: `@` completes the task folder's file paths; Ctrl+P / Ctrl+N (↑) bring back
   earlier messages.
 - Questions wait until you answer them. `anchorleg run --answer-wait 10m` lets the agent go on
@@ -49,6 +58,10 @@ All notable changes are listed here. The format follows
 ### Changed
 - Follow-ups stay on the account their session ran on while it has room, instead of following
   the switch policy to another CLI, which could only continue from a handoff.
+
+### Fixed
+- Codex: a run ended as soon as a subagent of the task finished, losing the agent's answer.
+  A subagent's thread is now told apart from the session's, and its tokens count toward the run.
 
 ## [0.3.0] — 2026-10-12
 

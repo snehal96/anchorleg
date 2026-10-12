@@ -228,6 +228,90 @@ pub struct DiffView {
     scroll: usize,
 }
 
+/// A `!` command from the message box, run in the task folder.
+struct Shell {
+    cmd: String,
+    folder: String,
+    /// Its output (stdout and stderr), once it's done.
+    output: Option<String>,
+    done: Option<std::sync::mpsc::Receiver<String>>,
+}
+
+/// How long a `!` command may run, and how much of its output is kept.
+const SHELL_LIMIT: Duration = Duration::from_secs(60);
+const SHELL_CAP: usize = 8 * 1024;
+
+/// Run `cmd` with `sh` in `folder` on a thread of its own; its output (capped) arrives on the
+/// receiver. A command still running after [`SHELL_LIMIT`] is killed.
+fn spawn_shell(cmd: &str, folder: &str) -> std::sync::mpsc::Receiver<String> {
+    use std::io::Read as _;
+    use std::process::{Command, Stdio};
+    let (tx, rx) = std::sync::mpsc::channel();
+    let script = format!("{{ {cmd}\n}} 2>&1");
+    let folder = folder.to_owned();
+    std::thread::spawn(move || {
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .current_dir(&folder)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(format!("couldn't run it: {e}"));
+                return;
+            }
+        };
+        let (out_tx, out_rx) = std::sync::mpsc::channel();
+        if let Some(mut stdout) = child.stdout.take() {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                let _ = stdout.read_to_end(&mut buf);
+                let _ = out_tx.send(buf);
+            });
+        }
+        let start = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if start.elapsed() < SHELL_LIMIT => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+            }
+        };
+        // A background job may keep the pipe open; don't wait for it long.
+        let buf = out_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        let mut out = String::from_utf8_lossy(&buf).trim_end().to_owned();
+        if out.len() > SHELL_CAP {
+            let mut cut = SHELL_CAP;
+            while !out.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            out.truncate(cut);
+            out.push_str("\n… (cut)");
+        }
+        match status {
+            None => out.push_str(&format!("\n(stopped after {}s)", SHELL_LIMIT.as_secs())),
+            Some(s) if !s.success() => {
+                out.push_str(&format!("\n(exit {})", s.code().unwrap_or(-1)));
+            }
+            Some(_) => {}
+        }
+        let _ = tx.send(out.trim_start_matches('\n').to_owned());
+    });
+    rx
+}
+
 pub struct App {
     pub focus: Focus,
     pub help: bool,
@@ -264,6 +348,13 @@ pub struct App {
     steps: Vec<anchorleg_core::handoff::Step>,
     /// The selected session's context at its last model request, and the model's window.
     context: Option<(u64, Option<u64>)>,
+    /// The tool call the selected session is in right now, and since when it's been seen.
+    running: Option<(conversation::Running, std::time::Instant)>,
+    /// The selected session's subagents (its newest run's), shown while it works.
+    subagents: Vec<conversation::Subagent>,
+    /// `!` commands run from the message box, oldest first. Their output goes with the next
+    /// message sent in the same folder.
+    shell: Vec<Shell>,
     pub diff_view: Option<DiffView>,
     /// The terminal's height at the last draw (a page for scrolling).
     last_height: u16,
@@ -337,6 +428,9 @@ impl App {
             conversation: Vec::new(),
             steps: Vec::new(),
             context: None,
+            running: None,
+            shell: Vec::new(),
+            subagents: Vec::new(),
             diff_view: None,
             last_height: 24,
             scroll_up: 0,
@@ -484,6 +578,17 @@ impl App {
             messages.extend(part);
         }
         self.conversation = messages;
+        // The call running now, and the subagents: from the newest run's log.
+        let newest = std::fs::read_to_string(self.log_dir.join(format!("run-{}.jsonl", chain[0])))
+            .unwrap_or_default();
+        let now_running = conversation::running(&newest);
+        self.subagents = conversation::subagents(&newest);
+        conversation::read_transcripts(&mut self.subagents);
+        self.running = match (now_running, self.running.take()) {
+            (Some(r), Some((old, since))) if old.what == r.what => Some((r, since)),
+            (Some(r), _) => Some((r, std::time::Instant::now())),
+            (None, _) => None,
+        };
         let t = anchorleg_core::handoff::extract(&whole);
         self.context = t.context_tokens.map(|n| (n, t.context_window));
         self.steps = t.steps;
@@ -644,13 +749,21 @@ impl App {
         let own = [
             ("model", format!("anchorleg: model for every {v} account")),
             ("effort", format!("anchorleg: effort for every {v} account")),
+            (
+                "clear",
+                "anchorleg: a new session in this folder".to_owned(),
+            ),
+            (
+                "compact",
+                "summarise the session to free context".to_owned(),
+            ),
         ];
         own.into_iter()
             .map(|(n, d)| (n.to_owned(), d))
             .chain(
                 self.slash
                     .iter()
-                    .filter(|c| *c != "model" && *c != "effort")
+                    .filter(|c| !own_command(c))
                     .map(|c| (c.clone(), String::new())),
             )
             .filter(|(n, _)| n.starts_with(typed))
@@ -663,10 +776,70 @@ impl App {
             .collect()
     }
 
-    /// The files `@` completes: the selected session's folder (or the new task's), as git sees
-    /// it (tracked and untracked, not ignored), else a shallow walk.
-    fn task_files(&self) -> Vec<String> {
-        let folder = match self.selected_run() {
+    fn run_shell(&mut self, cmd: &str) -> anyhow::Result<()> {
+        if cmd.is_empty() {
+            self.message = "type a command after !".to_owned();
+            return Ok(());
+        }
+        let folder = self.task_cwd();
+        if !Path::new(&folder).is_dir() {
+            self.message = format!("no such folder: {folder}");
+            return Ok(());
+        }
+        self.shell.push(Shell {
+            cmd: cmd.to_owned(),
+            done: Some(spawn_shell(cmd, &folder)),
+            folder,
+            output: None,
+        });
+        self.message_box = TextBox::default();
+        self.message = "running; its output goes with your next message".to_owned();
+        Ok(())
+    }
+
+    /// Pick up the output of `!` commands that finished.
+    fn poll_shell(&mut self) {
+        for sh in &mut self.shell {
+            if let Some(rx) = &sh.done {
+                match rx.try_recv() {
+                    Ok(out) => {
+                        sh.output = Some(out);
+                        sh.done = None;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        sh.output = Some("(no output)".to_owned());
+                        sh.done = None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The finished `!` commands run in `folder`, as a note for the agent, and forget them.
+    fn take_shell_notes(&mut self, folder: &str) -> String {
+        self.poll_shell();
+        let mut notes = String::new();
+        self.shell.retain(|sh| {
+            if sh.folder != folder {
+                return true;
+            }
+            let Some(out) = &sh.output else {
+                return true;
+            };
+            notes.push_str(&format!(
+                "I ran `{}` in the task folder:\n```\n{}\n```\n\n",
+                sh.cmd,
+                if out.is_empty() { "(no output)" } else { out }
+            ));
+            false
+        });
+        notes
+    }
+
+    /// The selected session's folder, or the one the new task will run in (as typed, expanded).
+    fn task_cwd(&self) -> String {
+        match self.selected_run() {
             Some(r) => r.cwd.clone(),
             None => {
                 let home = std::env::var_os("HOME")
@@ -674,7 +847,13 @@ impl App {
                     .unwrap_or_default();
                 anchorleg_core::registry::expand_tilde(self.folder.text.trim(), &home)
             }
-        };
+        }
+    }
+
+    /// The files `@` completes: the selected session's folder (or the new task's), as git sees
+    /// it (tracked and untracked, not ignored), else a shallow walk.
+    fn task_files(&self) -> Vec<String> {
+        let folder = self.task_cwd();
         if let Some((f, files)) = &*self.files.borrow()
             && *f == folder
         {
@@ -778,7 +957,9 @@ impl App {
         } else {
             text.trim().to_owned()
         };
-        (text, files)
+        let folder = self.task_cwd();
+        let notes = self.take_shell_notes(&folder);
+        (notes + &text, files)
     }
 
     /// The message box, sent to the selected session while it works (`anchorleg send`): Codex
@@ -1004,11 +1185,43 @@ impl App {
             self.message = "type a message first".to_owned();
             return Ok(());
         }
+        // `!cmd`: run it in the task folder; its output goes with your next message.
+        if let Some(cmd) = text.strip_prefix('!') {
+            return self.run_shell(cmd.trim());
+        }
         if let Some(rest) = text.strip_prefix('/')
             && let Some((cmd, arg)) = Some(rest.split_once(' ').unwrap_or((rest, "")))
             && matches!(cmd, "model" | "effort")
         {
             return self.provider_setting(cmd, arg.trim());
+        }
+        // `/clear`: what Claude Code's does, a fresh session; here, a new task in the same folder.
+        if text == "/clear" {
+            let Some(run) = self.selected_run() else {
+                self.message_box = TextBox::default();
+                return Ok(());
+            };
+            let cwd = run.cwd.clone();
+            self.folder.set(&cwd);
+            self.select_session(0);
+            self.focus = Focus::Composer;
+            self.field = Field::Message;
+            self.message_box = TextBox::default();
+            self.message = format!("new session in {cwd}");
+            return Ok(());
+        }
+        if text == "/compact" {
+            match self.selected_run() {
+                None => {
+                    self.message = "select the session to compact first".to_owned();
+                    return Ok(());
+                }
+                Some(r) if Self::is_running(r) && self.is_alive(r) => {
+                    self.message = format!("#{} is working; /compact once it's done", r.id);
+                    return Ok(());
+                }
+                Some(_) => {}
+            }
         }
         if let Some(arg) = text
             .strip_prefix("/mode")
@@ -2020,10 +2233,81 @@ impl App {
                 }
             }
             lines.push(Line::default());
-            lines.push(Line::from(Span::styled(
-                "✻ Working…",
-                Style::new().fg(Color::DarkGray),
-            )));
+            let dim = Style::new().fg(Color::DarkGray);
+            if let Some((r, since)) = &self.running {
+                let (name, detail) = r.what.split_once("  ").unwrap_or((r.what.as_str(), ""));
+                let secs = since.elapsed().as_secs();
+                lines.push(Line::from(vec![
+                    Span::styled("⏺ ", dim),
+                    Span::styled(name.to_owned(), Style::new().add_modifier(Modifier::BOLD)),
+                    Span::raw(if detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "({})",
+                            truncate(detail, width.saturating_sub(name.len() + 20).max(10))
+                        )
+                    }),
+                    Span::styled(format!("  running {secs}s"), dim),
+                ]));
+                if !r.output.is_empty() {
+                    lines.extend(output_lines(&r.output, width, dim));
+                }
+            }
+            // Subagents, as Claude Code lists them under the Agent call.
+            for a in &self.subagents {
+                let (mark, style) = if a.done {
+                    ("  ✔ ", dim)
+                } else {
+                    ("  ▸ ", Style::new().add_modifier(Modifier::BOLD))
+                };
+                let steps = match a.steps {
+                    0 => String::new(),
+                    1 => " · 1 tool use".to_owned(),
+                    n => format!(" · {n} tool uses"),
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(mark, style),
+                    Span::styled(truncate(&a.name, width.saturating_sub(24).max(10)), style),
+                    Span::styled(steps, dim),
+                ]));
+                if !a.done
+                    && let Some(d) = &a.doing
+                {
+                    let (name, detail) = d.split_once("  ").unwrap_or((d.as_str(), ""));
+                    let call = if detail.is_empty() {
+                        name.to_owned()
+                    } else {
+                        format!("{name}({detail})")
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "      ⎿  {}",
+                            truncate(&call, width.saturating_sub(10).max(10))
+                        ),
+                        dim,
+                    )));
+                }
+            }
+            lines.push(Line::from(Span::styled("✻ Working…", dim)));
+        }
+        // `!` commands, until their output goes with the next message.
+        self.poll_shell();
+        let folder = self.task_cwd();
+        for sh in self.shell.iter().filter(|sh| sh.folder == folder) {
+            let dim = Style::new().fg(Color::DarkGray);
+            lines.push(Line::default());
+            lines.push(Line::from(vec![
+                Span::styled("! ", Style::new().fg(Color::Magenta)),
+                Span::raw(truncate(&sh.cmd, width.saturating_sub(4).max(10))),
+            ]));
+            let shown = match &sh.output {
+                None => "running…".to_owned(),
+                Some(out) => {
+                    conversation::output_excerpt(out).unwrap_or_else(|| "(no output)".to_owned())
+                }
+            };
+            lines.extend(output_lines(&shown, width, dim));
         }
         let height = usize::from(inner.height);
         let max_up = lines.len().saturating_sub(height);
@@ -2501,9 +2785,11 @@ fn draw_help(f: &mut Frame) {
         "                    /plan <task>  new task, plan first: approve the plan, then it runs",
         "                    /mode ask|edits  the session's permission mode (no session: new tasks')",
         "                    /worktree <task>  new task in its own git worktree · /fork <msg>  branch the session",
+        "                    /clear  new session in this folder · /compact  free the session's context",
         "                    /other  the CLI's own commands; Tab completes, ↑↓ choose",
         "                    Ctrl+A/E start/end · Ctrl+U clear",
         "                    @file  complete a file of the task folder (Tab) · Ctrl+P/N or ↑ earlier messages",
+        "                    !cmd  run it in the task folder; its output goes with your next message",
         "Agents              ↑↓ select · Shift+↑↓ (K/J) reorder · space on/off",
         "                    i import aliases · d d remove",
         "                    p switch policy: drain → balance → save-weekly",
@@ -2627,6 +2913,16 @@ fn message_lines(m: &Message, width: usize) -> Vec<Line<'static>> {
             bulleted("⏺ ", &text, width, Style::new())
         }
         Role::ToolError => bulleted("  ⎿ ", &m.text, width, red),
+        Role::Output => output_lines(&m.text, width, dim),
+        Role::Thinking => {
+            // A few lines at most: the gist, not the whole chain of thought.
+            let mut lines = bulleted("✻ ", &m.text, width, dim.add_modifier(Modifier::ITALIC));
+            if lines.len() > 3 {
+                lines.truncate(3);
+                lines.push(Line::from(Span::styled("  …", dim)));
+            }
+            lines
+        }
         Role::Anchorleg => bulleted("· ", &format!("anchorleg: {}", m.text), width, dim),
         Role::Error => bulleted("✗ ", &m.text, width, red.add_modifier(Modifier::BOLD)),
     }
@@ -2634,6 +2930,25 @@ fn message_lines(m: &Message, width: usize) -> Vec<Line<'static>> {
 
 /// Wrapped text after a marker, continuation lines indented under the text; `**bold**` shown
 /// bold.
+/// A tool's output under its call: `⎿` before the first line, each line cut to the width.
+/// Slash commands anchorleg lists itself, ahead of the CLI's.
+fn own_command(name: &str) -> bool {
+    matches!(name, "model" | "effort" | "clear" | "compact")
+}
+
+fn output_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
+    text.lines()
+        .enumerate()
+        .map(|(i, l)| {
+            let head = if i == 0 { "  ⎿  " } else { "     " };
+            Line::from(vec![
+                Span::styled(head, style),
+                Span::styled(truncate(l, width.saturating_sub(6).max(10)), style),
+            ])
+        })
+        .collect()
+}
+
 fn bulleted(marker: &str, text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
     let indent = marker.chars().count();
     let mut bold = false;
@@ -2939,6 +3254,55 @@ mod tests {
     }
 
     #[test]
+    fn bang_runs_a_command_and_its_output_goes_with_the_next_message() {
+        let mut fx = fixture(&[("sm", 1)], &[]);
+        std::fs::write(fx.dir.path().join("marker.txt"), "x").unwrap();
+        key(&mut fx.app, KeyCode::Char('n'));
+        typed(&mut fx.app, "!ls marker.txt; echo oops >&2; false");
+        key(&mut fx.app, KeyCode::Enter);
+        assert!(fx.calls.borrow().started.is_empty());
+        for _ in 0..200 {
+            fx.app.poll_shell();
+            if fx.app.shell[0].output.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let s = screen(&mut fx.app);
+        assert!(s.contains("! ls marker.txt"), "{s}");
+        assert!(s.contains("marker.txt") && s.contains("oops"), "{s}");
+        typed(&mut fx.app, "why did it fail?");
+        key(&mut fx.app, KeyCode::Enter);
+        let started = fx.calls.borrow().started.clone();
+        assert_eq!(
+            started[0].last().unwrap(),
+            "I ran `ls marker.txt; echo oops >&2; false` in the task folder:\n```\nmarker.txt\noops\n(exit 1)\n```\n\nwhy did it fail?"
+        );
+        // Sent once.
+        assert!(fx.app.shell.is_empty());
+    }
+
+    #[test]
+    fn clear_starts_a_new_session_in_the_same_folder() {
+        let mut fx = fixture(
+            &[("sm", 1)],
+            &[("fix the tests", RunState::Done, Some("s1"))],
+        );
+        let cwd = fx.app.selected_run().unwrap().cwd.clone();
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/clear");
+        key(&mut fx.app, KeyCode::Enter);
+        assert!(fx.app.selected_run().is_none());
+        assert_eq!(fx.app.folder.text, cwd);
+        assert_eq!(fx.app.focus, Focus::Composer);
+        // The new task goes to that folder (`/repo`, which the test machine doesn't have).
+        typed(&mut fx.app, "next thing");
+        key(&mut fx.app, KeyCode::Enter);
+        assert!(fx.calls.borrow().started.is_empty());
+        assert_eq!(fx.app.message, "no such folder: /repo");
+    }
+
+    #[test]
     fn new_task_checks_the_folder() {
         let mut fx = fixture(&[("sm", 1)], &[]);
         key(&mut fx.app, KeyCode::Char('n'));
@@ -2980,6 +3344,32 @@ mod tests {
         let started = &fx.calls.borrow().started;
         assert_eq!(started[0][..4], ["run", "--json", "--follow-up", "1"]);
         assert_eq!(started[0].last().unwrap(), "now add docs");
+    }
+
+    #[test]
+    fn a_working_session_lists_its_subagents() {
+        let mut fx = fixture(
+            &[("sm", 1)],
+            &[("list the files", RunState::Running, Some("s1"))],
+        );
+        // A real Claude run, cut while its subagent was on its Bash call.
+        let log: String =
+            include_str!("../../../fixtures/claude-2.1.296-subagent-20261012/subagent.jsonl")
+                .lines()
+                .take_while(|l| !l.contains("task_updated"))
+                .map(|l| format!("{l}\n"))
+                .collect();
+        std::fs::write(fx.dir.path().join("runs/run-1.jsonl"), log).unwrap();
+        fx.app.refresh().unwrap();
+        let s = screen(&mut fx.app);
+        assert!(s.contains("⏺ Agent(List files in working folder)"), "{s}");
+        assert!(
+            s.contains("▸ List files in working folder · 1 tool use"),
+            "{s}"
+        );
+        assert!(s.contains("⎿  Bash(ls -la"), "{s}");
+        // The subagent's own call isn't shown as the session's.
+        assert!(!s.contains("⏺ Bash"), "{s}");
     }
 
     #[test]

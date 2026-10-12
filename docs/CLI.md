@@ -56,8 +56,15 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
   with a session selected, Enter sends a reply into it (`anchorleg run --follow-up`). A session
   that is still working can't take a reply until it finishes or is stopped.
 - **Slash commands**: `/model` and `/effort` are anchorleg's (above). Any other `/command` is sent to
-  the CLI, which runs skills, custom commands and built-ins like `/compact` in `-p`; typing `/`
+  the CLI, which runs skills, custom commands and built-ins in `-p`; typing `/`
   lists what the session's CLI offers (Tab completes, ↑↓ choose).
+  - `/clear` starts a new session in the selected session's folder (the old one stays in the list).
+  - `/compact` summarises a finished session to free its context: Claude Code runs its own
+    `/compact`, Codex gets `thread/compact/start`, Antigravity expands its own `/compact`. The
+    conversation notes it (with the token counts Claude reports).
+- **Shell commands**: `!cmd` runs `cmd` with `sh` in the task folder (up to 60 s) and shows its
+  output in the conversation. Nothing goes to the agent yet: the output (up to 8 KB) is put in
+  front of the next message you send in that folder, as Claude Code does with `!`.
 - **Agents**: accounts in the order they're used, with the fullest quota window; other agent
   CLIs shown as installed or not; Codex and Antigravity can be added as accounts, the others
   aren't usable yet.
@@ -283,6 +290,21 @@ with `git worktree remove`. In the UI: `/worktree <task>` as a new task.
 Follow-ups and forks stay on the account their session ran on while it has room (unless
 `--prefer`/`--account` say otherwise): on another CLI the session couldn't be resumed, only
 continued from a handoff.
+
+### What the agent is doing
+
+The conversation shows each tool call with the first lines of its output (`⎿`), and the model's
+reasoning dimmed (`✻`): Claude's thinking text when the CLI includes it, Codex's reasoning
+summaries, and for Antigravity, which doesn't stream its thinking, how many tokens it thought for.
+While a session works, the call it's in shows above **Working…** with how long it has been running;
+Codex streams command output as it comes, Claude Code and Antigravity send it when the command ends.
+
+Subagents the session started are listed under it, each with how many tool calls it has made and,
+while it works, the call it's on: Claude Code's Agent calls (their steps come in the session's
+stream), Codex's subagents (each runs in a thread of its own, on the same connection) and
+Antigravity's `invoke_subagent` (anchorleg reads the subagent's own transcript, which Antigravity
+keeps on disk; its steps never reach the session's stream). A subagent's steps aren't shown as the
+session's; its answer is shown as the output of the call that started or waited for it.
 
 ### Typing in `anchorleg ui`
 

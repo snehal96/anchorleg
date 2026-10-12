@@ -149,11 +149,18 @@ pub fn turn_request(id: i64, thread: &str, text: &str, effort: Option<&str>) -> 
     let mut params = json!({
         "threadId": thread,
         "input": [{ "type": "text", "text": text }],
+        // Short reasoning summaries, shown dimmed in the conversation.
+        "summary": "auto",
     });
     if let Some(e) = effort {
         params["effort"] = e.into();
     }
     json!({ "id": id, "method": "turn/start", "params": params })
+}
+
+/// `thread/compact/start`: Codex summarises the thread so far to free its context.
+pub fn compact_request(id: i64, thread: &str) -> Value {
+    json!({ "id": id, "method": "thread/compact/start", "params": { "threadId": thread } })
 }
 
 /// A `turn/start` request in Codex's plan collaboration mode: the agent investigates and ends
@@ -196,6 +203,9 @@ pub struct Approval {
 /// are asked under.
 pub const PERMISSIONS_TOOL: &str = "Permissions";
 
+/// How much of one command's output is passed on live; the rest arrives with the finished item.
+const LIVE_OUTPUT_CAP: usize = 16 * 1024;
+
 /// Translates app-server messages for one launch.
 #[derive(Debug, Default)]
 pub struct Translator {
@@ -204,6 +214,8 @@ pub struct Translator {
     last_usage: Option<Value>,
     /// The model's context window, as Codex reports it with token usage.
     context_window: Option<u64>,
+    /// Command output already passed on, per item: live output is capped (D45).
+    output_sent: HashMap<String, usize>,
     /// This turn's tokens: the sum of every model call's `last`.
     turn_usage: HashMap<&'static str, u64>,
     /// Files of each file change, from `item/started`, for its approval request.
@@ -229,13 +241,43 @@ impl Translator {
         match method {
             "turn/started" => vec![json!({ "type": "turn.started" })],
             "item/started" => {
-                if let Some(item) = params.get("item")
-                    && item.get("type").and_then(Value::as_str) == Some("fileChange")
-                    && let Some(id) = item.get("id").and_then(Value::as_str)
-                {
-                    self.changes.insert(id.to_owned(), change_paths(item));
+                let Some(item) = params.get("item") else {
+                    return Vec::new();
+                };
+                match item.get("type").and_then(Value::as_str) {
+                    Some("fileChange") => {
+                        if let Some(id) = item.get("id").and_then(Value::as_str) {
+                            self.changes.insert(id.to_owned(), change_paths(item));
+                        }
+                        Vec::new()
+                    }
+                    // A command starting, or subagents started or waited on: shown as running
+                    // until it completes.
+                    Some("commandExecution" | "collabAgentToolCall") => exec_item(item)
+                        .map(|i| json!({ "type": "item.started", "item": i }))
+                        .into_iter()
+                        .collect(),
+                    _ => Vec::new(),
                 }
-                Vec::new()
+            }
+            "item/commandExecution/outputDelta" => {
+                let (Some(id), Some(delta)) = (
+                    params.get("itemId").and_then(Value::as_str),
+                    params.get("delta").and_then(Value::as_str),
+                ) else {
+                    return Vec::new();
+                };
+                let sent = self.output_sent.entry(id.to_owned()).or_default();
+                if *sent >= LIVE_OUTPUT_CAP {
+                    return Vec::new();
+                }
+                let room = LIVE_OUTPUT_CAP - *sent;
+                let mut cut = delta.len().min(room);
+                while !delta.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                *sent += cut;
+                vec![json!({ "type": "item.output_delta", "item_id": id, "delta": &delta[..cut] })]
             }
             "item/completed" => params
                 .get("item")
@@ -296,6 +338,65 @@ impl Translator {
                 } else {
                     Vec::new() // `turn/completed` reports it as the turn's error.
                 }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The thread a message is about, when it isn't this session's: a subagent's.
+    pub fn other_thread(&self, msg: &Value) -> Option<String> {
+        let thread = msg.pointer("/params/threadId").and_then(Value::as_str)?;
+        let main = self.thread_id.as_deref()?;
+        (thread != main).then(|| thread.to_owned())
+    }
+
+    /// A notification from a subagent's thread, as `{"type":"subagent","agent":<thread>,…}`:
+    /// its items as `event`, its end as `status`. Its tokens count toward this turn's.
+    pub fn subagent_notification(
+        &mut self,
+        thread: &str,
+        method: &str,
+        params: &Value,
+    ) -> Vec<Value> {
+        let wrap = |event: Value| json!({ "type": "subagent", "agent": thread, "event": event });
+        match method {
+            "item/started" => params
+                .get("item")
+                .filter(|i| i["type"] == "commandExecution")
+                .and_then(exec_item)
+                .map(|item| wrap(json!({ "type": "item.started", "item": item })))
+                .into_iter()
+                .collect(),
+            "item/completed" => params
+                .get("item")
+                .filter(|i| i["type"] != "userMessage")
+                .and_then(exec_item)
+                .map(|item| wrap(json!({ "type": "item.completed", "item": item })))
+                .into_iter()
+                .collect(),
+            "thread/tokenUsage/updated" => {
+                let last = params.pointer("/tokenUsage/last");
+                for (from, to) in [
+                    ("inputTokens", "input_tokens"),
+                    ("cachedInputTokens", "cached_input_tokens"),
+                    ("cacheWriteInputTokens", "cache_write_input_tokens"),
+                    ("outputTokens", "output_tokens"),
+                ] {
+                    let n = last
+                        .and_then(|u| u.get(from))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    *self.turn_usage.entry(to).or_default() += n;
+                }
+                Vec::new()
+            }
+            "turn/completed" => {
+                let status = match params.pointer("/turn/status").and_then(Value::as_str) {
+                    Some("completed") => "completed",
+                    Some("interrupted") => "interrupted",
+                    _ => "failed",
+                };
+                vec![json!({ "type": "subagent", "agent": thread, "status": status })]
             }
             _ => Vec::new(),
         }
@@ -459,12 +560,49 @@ fn exec_item(item: &Value) -> Option<Value> {
     let id = item.get("id").cloned().unwrap_or(Value::Null);
     let status = item.get("status").cloned().unwrap_or(Value::Null);
     match item.get("type").and_then(Value::as_str)? {
+        // The model's reasoning summary, when it wrote one.
+        "reasoning" => {
+            let text = item
+                .get("summary")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.trim().is_empty())
+                .then(|| json!({ "id": id, "type": "reasoning", "text": text.trim() }))
+        }
         // Plan mode's result: shown and kept like the agent's final message.
         "plan" => Some(json!({
             "id": id,
             "type": "agent_message",
             "text": item.get("text").cloned().unwrap_or_default(),
         })),
+        // Subagents (`multi_agent`): started (`spawnAgent`) or waited on (`wait`, whose
+        // `agentsStates` carry their final messages). Their own threads arrive as `subagent`.
+        "collabAgentToolCall" => {
+            let agents = item.get("receiverThreadIds").cloned().unwrap_or(json!([]));
+            match item.get("tool").and_then(Value::as_str)? {
+                "spawnAgent" => Some(json!({
+                    "id": id,
+                    "type": "agent_spawn",
+                    "prompt": item.get("prompt").cloned().unwrap_or_default(),
+                    "agents": agents,
+                    "status": status,
+                })),
+                "wait" => Some(json!({
+                    "id": id,
+                    "type": "agent_wait",
+                    "agents": agents,
+                    "states": item.get("agentsStates").cloned().unwrap_or(json!({})),
+                    "status": status,
+                })),
+                _ => None,
+            }
+        }
+        // `/compact` (`thread/compact/start`) finished.
+        "contextCompaction" => Some(json!({ "id": id, "type": "context_compaction" })),
         "agentMessage" => Some(json!({
             "id": id,
             "type": "agent_message",
@@ -644,6 +782,10 @@ where
     // The model plan mode needs: anchorleg's setting, else the one Codex picked for the thread.
     let mut plan_model = turn.model.clone();
     let start_turn = |id: i64, thread: &str, text: &str, model: Option<&str>| {
+        if text.trim() == "/compact" {
+            // Codex's own `/compact`: summarise the thread to free context, as a turn.
+            return compact_request(id, thread);
+        }
         let r = turn_request(id, thread, text, turn.effort.as_deref());
         match (turn.plan, model) {
             (true, Some(m)) => with_plan_mode(r, m, turn.effort.as_deref()),
@@ -694,6 +836,17 @@ where
         };
         let method = msg.get("method").and_then(Value::as_str);
         let id = msg.get("id").cloned();
+        // A subagent's own thread (Codex's `multi_agent`) streams on this connection too: its
+        // events are progress to show, never this turn's (its `turn/completed` isn't ours).
+        if let (Some(m), None) = (method, &id)
+            && let Some(thread) = t.other_thread(&msg)
+        {
+            let params = msg.get("params").unwrap_or(&Value::Null);
+            t.subagent_notification(&thread, m, params)
+                .into_iter()
+                .for_each(emit);
+            continue;
+        }
         match (method, id) {
             // Our requests' answers.
             (None, Some(id)) => {
@@ -911,6 +1064,9 @@ mod tests {
         "../../../../fixtures/codex-0.153.4-app-server-turn-20261011/resume-cancel.jsonl"
     );
 
+    const SUBAGENT: &str =
+        include_str!("../../../../fixtures/codex-0.153.4-subagent-20261012/subagent.jsonl");
+
     const MCP: &str =
         include_str!("../../../../fixtures/codex-0.153.4-mcp-elicitation-20261012/requests.jsonl");
 
@@ -982,6 +1138,14 @@ mod tests {
         let mut t = Translator::default();
         let mut out = Vec::new();
         for m in incoming(capture) {
+            if let (Some(method), None, Some(thread)) = (
+                m.get("method").and_then(Value::as_str),
+                m.get("id"),
+                t.other_thread(&m),
+            ) {
+                out.extend(t.subagent_notification(&thread, method, &m["params"]));
+                continue;
+            }
             match (m.get("method").and_then(Value::as_str), m.get("id")) {
                 (None, Some(id)) if id == THREAD => out.extend(t.thread_started(&m["result"])),
                 (Some("turn/completed"), None) => out.push(t.turn_completed(&m["params"])),
@@ -1025,8 +1189,15 @@ mod tests {
         );
         let kinds: Vec<&str> = events
             .iter()
+            .filter(|e| e["type"] == "item.completed")
             .filter_map(|e| e.pointer("/item/type").and_then(Value::as_str))
             .collect();
+        // The command was also shown as running while it ran.
+        assert!(
+            events
+                .iter()
+                .any(|e| e["type"] == "item.started" && e["item"]["type"] == "command_execution")
+        );
         assert_eq!(
             kinds,
             [
@@ -1045,6 +1216,58 @@ mod tests {
             events.last().unwrap().pointer("/usage/input_tokens"),
             Some(&16892.into())
         );
+    }
+
+    #[test]
+    fn a_subagents_thread_is_its_progress_not_the_turn() {
+        // A real `multi_agent` turn: the subagent's thread streams on the same connection,
+        // with its own `turn/completed` before the session's.
+        let events = translate(SUBAGENT);
+        let finished: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["type"] == "turn.completed")
+            .collect();
+        assert_eq!(finished.len(), 1);
+        let child = "01a13025-d58e-7162-863a-2fdcf55e0020";
+        let spawn = events
+            .iter()
+            .find(|e| e["type"] == "item.completed" && e["item"]["type"] == "agent_spawn")
+            .unwrap();
+        assert_eq!(spawn["item"]["agents"], json!([child]));
+        assert_eq!(
+            events.iter().rfind(|e| e["type"] == "subagent").unwrap(),
+            &json!({ "type": "subagent", "agent": child, "status": "completed" })
+        );
+        // Its messages aren't the session's: only the parent's answer is.
+        let mut stream = Stream::default();
+        let signals: Vec<_> = events
+            .iter()
+            .flat_map(|e| stream.feed(&e.to_string()))
+            .collect();
+        let Some(AgentSignal::Finished { text, .. }) = signals.last() else {
+            panic!("{signals:?}");
+        };
+        assert_eq!(
+            text.as_deref(),
+            Some("a.txt  \nb.txt  \nprobe.err  \nsubagent.jsonl")
+        );
+        // Its tokens count toward the turn's: three parent calls and two of the subagent's.
+        let Some(AgentSignal::Usage(u)) =
+            signals.iter().rfind(|s| matches!(s, AgentSignal::Usage(_)))
+        else {
+            panic!("{signals:?}");
+        };
+        assert!(u.input_tokens + u.cache_read_tokens > 56_664, "{u:?}");
+
+        let log: String = events.iter().map(|e| format!("{e}\n")).collect();
+        let subs = crate::conversation::subagents(&log);
+        assert_eq!(subs.len(), 1);
+        assert_eq!(
+            subs[0].name,
+            "List the files in the current folder and return the filenames only."
+        );
+        assert!(subs[0].done);
+        assert_eq!(subs[0].steps, 1);
     }
 
     #[test]

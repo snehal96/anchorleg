@@ -434,7 +434,12 @@ pub fn tool_step(v: &Value) -> Option<(&'static str, String)> {
         return None;
     }
     let name = step.pointer("/tool_info/name").and_then(Value::as_str)?;
-    let params = step.pointer("/tool_info/parameters")?;
+    tool_call(name, step.pointer("/tool_info/parameters")?)
+}
+
+/// An agy tool call as Claude's tool and its main argument: `("Bash", "ls")`. `None` for tools
+/// anchorleg doesn't show.
+pub fn tool_call(name: &str, params: &Value) -> Option<(&'static str, String)> {
     let param = |keys: &[&str]| {
         keys.iter()
             .find_map(|k| params.get(*k).and_then(Value::as_str))
