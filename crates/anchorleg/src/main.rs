@@ -223,9 +223,11 @@ pub struct RunArgs {
     /// until you answer, tool calls 30m. Follow-ups keep their session's.
     #[arg(long, value_name = "DURATION", value_parser = parse_wait)]
     pub answer_wait: Option<i64>,
-    /// The session's permission mode: `ask` (every question comes to you) or `edits` (file edits
-    /// go ahead). Follow-ups keep their session's mode unless given.
-    #[arg(long, value_parser = ["ask", "edits"])]
+    /// The session's permission mode: `ask` (every question comes to you), `edits` (file edits
+    /// go ahead) or `auto` (the CLI's own reviewer approves or refuses instead of asking you;
+    /// Claude Code's auto mode, Codex's auto-review). Follow-ups keep their session's mode
+    /// unless given.
+    #[arg(long, value_parser = ["ask", "edits", "auto"])]
     pub mode: Option<String>,
     /// Keep the session working until this condition holds (e.g. "cargo test passes"), across
     /// turns, accounts and CLIs. Each turn ends with the agent's GOAL: MET / NOT MET line.

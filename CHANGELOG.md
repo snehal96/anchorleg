@@ -13,6 +13,9 @@ All notable changes are listed here. The format follows
 - `anchorleg review <run> [--cli C] [--fix]` (`/review` in `anchorleg ui`): a read-only session,
   preferably on another account or CLI, reviews what a session changed and lists findings with a
   verdict; `--fix` sends them back to the session to fix.
+- `--mode auto` (`/mode auto` in `anchorleg ui`): the CLI's own reviewer approves or refuses
+  tool calls instead of asking you (Claude Code's auto mode, Codex's auto-review); Codex's
+  decisions show in the conversation. agy runs it as `edits`.
 - Homebrew tap (in progress).
 
 ## [0.4.0] — 2026-10-12

@@ -83,7 +83,8 @@ watches every account's quota, and when one gets close to its limit it:
   show up in `anchorleg ui` (or `anchorleg permission list`) and the run waits for your answer.
 - **You approve what the agent may do.** A background run can't show the CLI's permission
   prompt, so anchorleg asks you: the session waits until you press **1** yes, **2** yes for this
-  session or **3** no. Works for Claude Code and Codex.
+  session or **3** no. Works for Claude Code and Codex. Nobody watching? `--mode auto` lets
+  Claude Code's auto mode or Codex's auto-review decide instead, and shows what it decided.
 - **See what you're using.** `anchorleg usage` (and `u` in `anchorleg ui`) shows tokens and
   cost per account and model, tokens per day, quota bars and each account's usage credits.
   Cost is the API list price of the same tokens, so you can see what your subscriptions save.

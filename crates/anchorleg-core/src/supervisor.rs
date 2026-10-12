@@ -108,15 +108,19 @@ pub enum Mode {
     Ask,
     /// File edits go ahead; commands and the rest are asked.
     Edits,
+    /// The CLI's own reviewer approves or refuses what it would ask about, so nobody has to be
+    /// there: Claude Code's auto mode, Codex's `auto_review`. agy has none and runs as `edits`.
+    Auto,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 2] = [Mode::Ask, Mode::Edits];
+    pub const ALL: [Mode; 3] = [Mode::Ask, Mode::Edits, Mode::Auto];
 
     pub fn name(self) -> &'static str {
         match self {
             Mode::Ask => "ask",
             Mode::Edits => "edits",
+            Mode::Auto => "auto",
         }
     }
 
@@ -128,6 +132,7 @@ impl Mode {
         match self {
             Mode::Ask => "default",
             Mode::Edits => "acceptEdits",
+            Mode::Auto => "auto",
         }
     }
 }
@@ -1250,6 +1255,7 @@ impl Supervisor<'_> {
                 plan,
                 review: opts.review,
                 fork,
+                auto_review: !read_only && opts.mode == Some(Mode::Auto),
             });
         } else {
             if let Some(dir) = &opts.mod_dir {

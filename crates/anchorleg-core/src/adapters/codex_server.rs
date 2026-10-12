@@ -55,6 +55,9 @@ pub struct Turn {
     pub review: bool,
     /// Fork `resume` into a new thread (`thread/fork`) instead of continuing it.
     pub fork: bool,
+    /// Approval requests go to Codex's own reviewer (`approvalsReviewer: auto_review`), not to
+    /// the person (`--mode auto`).
+    pub auto_review: bool,
 }
 
 /// What the driver passes back to the supervisor.
@@ -132,6 +135,9 @@ pub fn thread_request(turn: &Turn) -> Value {
     }
     if let Some(a) = &turn.approval {
         params["approvalPolicy"] = a.as_str().into();
+    }
+    if turn.auto_review {
+        params["approvalsReviewer"] = "auto_review".into();
     }
     match &turn.resume {
         Some(id) => {
@@ -301,6 +307,31 @@ impl Translator {
                 .map(|item| json!({ "type": "item.completed", "item": item }))
                 .into_iter()
                 .collect(),
+            // Codex's reviewer decided on something it would have asked about (`--mode auto`).
+            "item/autoApprovalReview/completed" => {
+                let field = |k: &str| {
+                    params
+                        .pointer(k)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                };
+                let action = match field("/action/type") {
+                    "command" => codex::unwrap_command(field("/action/command")).to_owned(),
+                    "execve" => field("/action/program").to_owned(),
+                    other => other.replace('_', " "),
+                };
+                vec![json!({
+                    "type": "item.completed",
+                    "item": {
+                        "id": field("/reviewId"),
+                        "type": "auto_review",
+                        "status": field("/review/status"),
+                        "risk": params.pointer("/review/riskLevel"),
+                        "action": action,
+                        "rationale": field("/review/rationale"),
+                    },
+                })]
+            }
             "turn/plan/updated" => {
                 let items: Vec<Value> = params
                     .get("plan")
@@ -1091,6 +1122,30 @@ mod tests {
     const MCP: &str =
         include_str!("../../../../fixtures/codex-0.153.4-mcp-elicitation-20261012/requests.jsonl");
 
+    const AUTO_REVIEW: &str =
+        include_str!("../../../../fixtures/codex-0.153.4-auto-review-20261012/auto-review.jsonl");
+
+    #[test]
+    fn codex_reviewer_decisions_show_in_the_conversation() {
+        let log: String = translate(AUTO_REVIEW)
+            .iter()
+            .map(|e| e.to_string() + "\n")
+            .collect();
+        let messages = crate::conversation::from_log(&log);
+        let review = messages
+            .iter()
+            .find(|m| m.text.starts_with("auto-review"))
+            .expect("the reviewer's decision");
+        assert_eq!(review.role, crate::conversation::Role::Thinking);
+        assert!(
+            review
+                .text
+                .starts_with("auto-review approved `curl -sI https://example.com | head -1` (low risk): The user explicitly authorized"),
+            "{}",
+            review.text
+        );
+    }
+
     #[test]
     fn plan_mode_turns() {
         // Codex 0.153.4 ends a plan-mode turn with a `plan` item (seen on a real run).
@@ -1401,12 +1456,14 @@ mod tests {
             plan: false,
             review: false,
             fork: false,
+            auto_review: true,
         };
         let r = thread_request(&turn);
         assert_eq!(r["method"], "thread/resume");
         assert_eq!(r["params"]["threadId"], "t1");
         assert_eq!(r["params"]["approvalPolicy"], "on-request");
         assert_eq!(r["params"]["sandbox"], "workspace-write");
+        assert_eq!(r["params"]["approvalsReviewer"], "auto_review");
         let r = turn_request(3, "t1", "hi", Some("low"));
         assert_eq!(r["params"]["effort"], "low");
         assert_eq!(r["params"]["input"][0]["text"], "hi");

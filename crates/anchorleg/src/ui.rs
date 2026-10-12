@@ -1834,7 +1834,7 @@ impl App {
         }
     }
 
-    /// `/mode [ask|edits]`: the selected session's permission mode (its follow-ups use it), or
+    /// `/mode [ask|edits|auto]`: the selected session's permission mode (its follow-ups use it), or
     /// the next new task's.
     fn set_mode(&mut self, value: &str) -> anyhow::Result<()> {
         use anchorleg_core::supervisor::Mode;
@@ -2866,7 +2866,7 @@ fn draw_help(f: &mut Frame) {
         "Message box         Enter send · Esc leave · ↑↓ folder/message (new task)",
         "                    /model x · /effort x  set it for every account of the provider",
         "                    /plan <task>  new task, plan first: approve the plan, then it runs",
-        "                    /mode ask|edits  the session's permission mode (no session: new tasks')",
+        "                    /mode ask|edits|auto  the session's permission mode (no session: new tasks')",
         "                    /worktree <task>  new task in its own git worktree · /fork <msg>  branch the session",
         "                    /clear  new session in this folder · /compact  free the session's context",
         "                    /goal <condition>  keep working until it holds (new task or the session)",
@@ -4196,7 +4196,7 @@ mod tests {
         assert!(screen(&mut fx.app).contains("· mode ask"));
         typed(&mut fx.app, "/mode yolo");
         key(&mut fx.app, KeyCode::Enter);
-        assert_eq!(fx.app.message, "yolo: one of ask, edits");
+        assert_eq!(fx.app.message, "yolo: one of ask, edits, auto");
     }
 
     #[test]

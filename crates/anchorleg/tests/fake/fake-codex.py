@@ -138,7 +138,9 @@ while True:
         line = (
             f"{account} {' '.join(pre_args)} {what} model={tp.get('model')} "
             f"effort={params.get('effort')} sandbox={tp.get('sandbox')} "
-            f"approval={tp.get('approvalPolicy')} -- {text}"
+            f"approval={tp.get('approvalPolicy')}"
+            + (f" reviewer={tp['approvalsReviewer']}" if tp.get("approvalsReviewer") else "")
+            + f" -- {text}"
         ).replace("  ", " ")
         images = [i["path"] for i in params.get("input", []) if i.get("type") == "localImage"]
         if images:

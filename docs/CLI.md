@@ -33,7 +33,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
-| `anchorleg run [--follow-up RUN \| --fork RUN \| --review RUN [--cli C] [--fix]] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--mode ask\|edits] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN \| --review RUN [--cli C] [--fix]] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -325,6 +325,16 @@ are the same there. On an Antigravity account with its own `HOME`, `--mode ask` 
 anchorleg's hook ask before every change to the task's files; on your own `HOME` (no hook) agy
 accepts edits either way. In `anchorleg ui`, `/mode edits` sets the selected session's mode (from its next
 message) or, with no session selected, the mode new tasks start in; the conversation title shows it.
+
+`--mode auto` is for sessions nobody watches: the CLI's own reviewer approves or refuses what it
+would otherwise ask you about. Claude Code runs with `--permission-mode auto` (its classifier
+decides each tool call; works with Haiku in `-p`). Codex gets `approvalsReviewer: "auto_review"`:
+a reviewer subagent weighs each request (network access, commands outside the sandbox, MCP
+calls) and its decision shows in the conversation as `auto-review approved \`<command>\` (low
+risk): <why>`, or `refused` in red. agy has no reviewer: `auto` works like `edits` there, so its
+shell commands still wait for you. A plan or a review keeps its own read-only mode.
+Questions the agent asks you (not tool approvals) still come to you; pair `auto` with
+`--answer-wait` so an unanswered one doesn't hold the session.
 
 ### Work toward a goal: `--goal`
 

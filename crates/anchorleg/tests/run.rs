@@ -1751,6 +1751,32 @@ fn a_session_keeps_its_mode() {
 }
 
 #[test]
+fn auto_mode_lets_the_clis_own_reviewer_decide() {
+    let env = Env::new(&["a"]);
+    env.script("a.1.jsonl", &ok("s1", "first"));
+    env.script("a.2.jsonl", &ok("s1", "second"));
+    let (code, r) = env.run(&["--mode", "auto"]);
+    assert_eq!(code, 0, "{r}");
+    let (code, r) = env.run(&["--follow-up", "1"]);
+    assert_eq!(code, 0, "{r}");
+    let launches = env.launches();
+    for l in &launches {
+        assert!(l.contains("--permission-mode auto"), "{launches:?}");
+    }
+
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.1.jsonl", &codex_ok("t1", "first"));
+    env.script("c.2.jsonl", &codex_ok("t2", "planned"));
+    let (code, r) = env.run(&["--mode", "auto"]);
+    assert_eq!(code, 0, "{r}");
+    let launches = env.launches();
+    assert!(
+        launches[0].contains("approval=on-request reviewer=auto_review --"),
+        "{launches:?}"
+    );
+}
+
+#[test]
 fn a_fork_starts_a_new_session_from_the_old_one() {
     let env = Env::new(&["a"]);
     env.script("a.1.jsonl", &ok("s1", "first"));

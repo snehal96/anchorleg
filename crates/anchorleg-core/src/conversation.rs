@@ -217,6 +217,24 @@ fn codex_item(v: &Value, out: &mut Vec<Message>) {
             out.push(msg(Role::Thinking, field("text").trim()));
         }
         "context_compaction" => out.push(msg(Role::Anchorleg, COMPACTED)),
+        "auto_review" => {
+            let risk = item
+                .get("risk")
+                .and_then(Value::as_str)
+                .map(|r| format!(" ({r} risk)"))
+                .unwrap_or_default();
+            let (role, verdict) = match field("status") {
+                "approved" => (Role::Thinking, "approved"),
+                "denied" => (Role::ToolError, "refused"),
+                "timedOut" => (Role::ToolError, "timed out on"),
+                _ => return,
+            };
+            let why = first_line(field("rationale"), 200);
+            out.push(msg(
+                role,
+                format!("auto-review {verdict} `{}`{risk}: {why}", field("action")),
+            ));
+        }
         "agent_spawn" => out.push(msg(
             Role::Tool,
             describe_tool(
