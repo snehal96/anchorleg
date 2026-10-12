@@ -7,6 +7,11 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Homebrew tap (in progress).
+
+## [0.5.0] — 2026-10-12
+
+### Added
 - `anchorleg run --goal "<condition>" [--goal-turns N]` (`/goal` in `anchorleg ui`): the session
   keeps working, turn after turn, until the agent shows the condition holds, across accounts and
   CLIs. The JSON report and `sessions --json` show the goal and its status.
@@ -19,7 +24,6 @@ All notable changes are listed here. The format follows
 - Per-account limit: `anchorleg accounts set <name> --stop-at 0.4` (`stop_at` in `config.toml`).
   A session on that account stops softly at that use and moves on; past it, the account goes
   after every account with room.
-- Homebrew tap (in progress).
 
 ### Fixed
 - `--mode auto` on Claude Code: anchorleg-mod sent Claude's permission asks to the person

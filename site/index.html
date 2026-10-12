@@ -25,7 +25,7 @@
 <meta name="twitter:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
 <meta name="twitter:image" content="https://snehal96.github.io/anchorleg/og.png">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"anchorleg","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.","url":"https://snehal96.github.io/anchorleg/","downloadUrl":"https://github.com/snehal96/anchorleg/releases/latest","softwareVersion":"0.4.0","license":"https://github.com/snehal96/anchorleg#license","codeRepository":"https://github.com/snehal96/anchorleg","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"anchorleg","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.","url":"https://snehal96.github.io/anchorleg/","downloadUrl":"https://github.com/snehal96/anchorleg/releases/latest","softwareVersion":"0.5.0","license":"https://github.com/snehal96/anchorleg#license","codeRepository":"https://github.com/snehal96/anchorleg","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
 </script>
 <!-- GoatCounter: cookieless page views and clicks (data-goatcounter-click). Dashboard: https://anchorleg.goatcounter.com -->
 <script data-goatcounter="https://anchorleg.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
@@ -303,6 +303,15 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
 <span class="a">Allow Write(src/auth/session.rs)?</span>
 Claude requested permissions to write to src/auth/session.rs
  1 Yes    2 Yes, for this session    3 No</pre>
+    </div>
+    <div class="feature">
+      <h3>Plan, goal, review</h3>
+      <p><code>--plan</code>: approve a plan before anything changes. <code>--goal "cargo test
+        passes"</code>: keep going, turn after turn, until it holds, even across accounts.
+        <code>anchorleg review 12 --cli codex --fix</code>: another account or CLI reviews a
+        session's changes and sends the findings back.</p>
+      <p>Nobody watching? <code>--mode auto</code> lets the CLI's own reviewer approve instead of
+        you. <code>accounts set work --stop-at 0.4</code> moves off an account at 40%.</p>
     </div>
     <div class="feature">
       <h3>Same model and effort on every account</h3>
