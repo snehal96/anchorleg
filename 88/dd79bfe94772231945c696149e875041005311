@@ -1,0 +1,55 @@
+README.md
+  s_3c59a91d489536::t_e3f5768a6e6693 74-76,231
+crates/anchorleg-core/src/supervisor.rs
+  s_3c59a91d489536::t_7c060a9a370ba9 1593
+  s_3c59a91d489536::t_b0ab35a1d9a727 23,27
+  s_3c59a91d489536::t_6872105e6acfe3 88-90,176-177,390-393,407-412,755-817,838-846,1067-1069
+  s_3c59a91d489536::t_9cdbfd191b4e2c 1070
+crates/anchorleg/src/main.rs
+  s_3c59a91d489536::t_8c7b4fa29ab1be 216
+  s_3c59a91d489536::t_fa1cb65acb5122 210-215,217,219
+crates/anchorleg-core/src/lib.rs
+  s_3c59a91d489536::t_a78a74267954de 11
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_4d7fa9b82f32a7 757-759,764-772,782-804,809-818,823-826,831-833
+  s_3c59a91d489536::t_d85006e6c7a8ba 760-763,773-781,805-808,819-822,827-830
+CHANGELOG.md
+  s_3c59a91d489536::t_e3f5768a6e6693 10-12
+crates/anchorleg-core/src/goal.rs
+  s_3c59a91d489536::t_a78a74267954de 1-131
+crates/anchorleg/src/run.rs
+  s_3c59a91d489536::t_fa1cb65acb5122 87-107
+  s_3c59a91d489536::t_7c060a9a370ba9 325
+docs/CLI.md
+  s_3c59a91d489536::t_e3f5768a6e6693 35,328-350
+  s_3c59a91d489536::t_69a7a9d916db7f 351
+crates/anchorleg-core/src/output.rs
+  s_3c59a91d489536::t_a78a74267954de 177-189
+crates/anchorleg-core/src/handoff.rs
+  s_3c59a91d489536::t_7c060a9a370ba9 420-421,454-462,780,806
+crates/anchorleg/src/ui.rs
+  s_3c59a91d489536::t_a85f65b0c0c634 760-763,2162-2164,2833,2981
+  s_3c59a91d489536::t_9fab45c8b6020a 1223-1231,1324-1328
+  s_3c59a91d489536::t_d85006e6c7a8ba 3369-3378
+  s_3c59a91d489536::t_b28b2a27066de5 1283-1290,1329,3350-3368,3379
+  s_3c59a91d489536::t_ce6fda499338ea 3380-3381
+crates/anchorleg-core/src/store.rs
+  s_3c59a91d489536::t_a78a74267954de 248-251,254,270-271,385-388,705-708
+  s_3c59a91d489536::t_7ac19fd919a1b4 709-712
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88dd79bfe94772231945c696149e875041005311",
+  "prompts": {},
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "unknown"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
