@@ -11,7 +11,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{AgentSignal, EpochSecs, QuotaReading, QuotaStatus, Window};
+use super::{
+    AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus, Usage, Window,
+};
 
 /// One line of Claude's stream-json output.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -78,6 +80,14 @@ pub struct RateLimitInfo {
     /// Per-window detail, keyed by window name (`five_hour`, `seven_day`).
     #[serde(default)]
     pub unified_windows: Option<std::collections::BTreeMap<String, WindowInfo>>,
+    /// Extra usage (paid credits past the plan's limits): `allowed`, `allowed_warning`, `rejected`.
+    #[serde(default)]
+    pub overage_status: Option<String>,
+    /// Why extra usage is off, e.g. `out_of_credits`, `org_level_disabled`.
+    #[serde(default)]
+    pub overage_disabled_reason: Option<String>,
+    #[serde(default)]
+    pub is_using_overage: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
@@ -137,6 +147,13 @@ pub struct RunResult {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub total_cost_usd: Option<f64>,
+    /// Token counts for the whole run (`input_tokens`, `output_tokens`, `cache_*`).
+    #[serde(default)]
+    pub usage: Option<Value>,
+    /// Per-model totals: `{ "<model>": { inputTokens, outputTokens, cacheReadInputTokens,
+    /// cacheCreationInputTokens, costUSD, … } }`.
+    #[serde(default, rename = "modelUsage")]
+    pub model_usage: Option<std::collections::BTreeMap<String, Value>>,
     /// Set instead of `result` when the run failed before a turn, e.g. a bad `--resume` id.
     #[serde(default)]
     pub errors: Vec<String>,
@@ -253,6 +270,10 @@ fn rate_limit_signals(info: &RateLimitInfo) -> Vec<AgentSignal> {
         );
     }
 
+    // Before any limit hit, so the supervisor knows whether the account can go on paying.
+    if let Some(credits) = credits(info) {
+        out.push(AgentSignal::Credits(credits));
+    }
     if status == Some(QuotaStatus::Rejected) {
         out.push(AgentSignal::LimitHit {
             window: top_window,
@@ -262,8 +283,65 @@ fn rate_limit_signals(info: &RateLimitInfo) -> Vec<AgentSignal> {
     out
 }
 
+/// Extra-usage state from a rate limit event, when it says anything about it.
+fn credits(info: &RateLimitInfo) -> Option<Credits> {
+    let state = if info.is_using_overage == Some(true) {
+        CreditState::InUse
+    } else {
+        match info.overage_status.as_deref()? {
+            "allowed" | "allowed_warning" => CreditState::Available,
+            _ => CreditState::Off,
+        }
+    };
+    Some(Credits {
+        state,
+        balance: None,
+        reason: (state == CreditState::Off)
+            .then(|| info.overage_disabled_reason.clone())
+            .flatten(),
+    })
+}
+
+/// Tokens and list-price cost per model, from a `result` event.
+fn usage_signals(result: &RunResult) -> Vec<AgentSignal> {
+    let n = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let per_model: Vec<AgentSignal> = result
+        .model_usage
+        .iter()
+        .flatten()
+        .map(|(model, u)| Usage {
+            model: Some(model.clone()),
+            input_tokens: n(u, "inputTokens"),
+            output_tokens: n(u, "outputTokens"),
+            cache_read_tokens: n(u, "cacheReadInputTokens"),
+            cache_write_tokens: n(u, "cacheCreationInputTokens"),
+            cost_usd: u.get("costUSD").and_then(Value::as_f64),
+        })
+        .filter(|u| !u.is_empty())
+        .map(AgentSignal::Usage)
+        .collect();
+    if !per_model.is_empty() {
+        return per_model;
+    }
+    result
+        .usage
+        .as_ref()
+        .map(|u| Usage {
+            model: None,
+            input_tokens: n(u, "input_tokens"),
+            output_tokens: n(u, "output_tokens"),
+            cache_read_tokens: n(u, "cache_read_input_tokens"),
+            cache_write_tokens: n(u, "cache_creation_input_tokens"),
+            cost_usd: result.total_cost_usd,
+        })
+        .filter(|u| !u.is_empty())
+        .map(AgentSignal::Usage)
+        .into_iter()
+        .collect()
+}
+
 fn result_signals(result: &RunResult) -> Vec<AgentSignal> {
-    let mut out = Vec::new();
+    let mut out = usage_signals(result);
     let text = result
         .result
         .clone()
@@ -389,6 +467,67 @@ fn merge_dir(from: &Path, to: &Path) -> std::io::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn credits_of(line: &str) -> Vec<Credits> {
+        signals(&parse_line(line))
+            .into_iter()
+            .filter_map(|s| match s {
+                AgentSignal::Credits(c) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn extra_usage_state_from_rate_limit_events() {
+        // Real (2.1.294): extra usage off because the account has no credits.
+        let off = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1791468600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"out_of_credits","isUsingOverage":false}}"#;
+        assert_eq!(
+            credits_of(off),
+            [Credits {
+                state: CreditState::Off,
+                balance: None,
+                reason: Some("out_of_credits".into())
+            }]
+        );
+        let available = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","overageStatus":"allowed","isUsingOverage":false}}"#;
+        assert_eq!(credits_of(available)[0].state, CreditState::Available);
+        // Past the window, paying from credits: the credit signal comes before the limit hit.
+        let paying = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":900,"rateLimitType":"five_hour","overageStatus":"allowed","isUsingOverage":true}}"#;
+        let sig = signals(&parse_line(paying));
+        let credit = sig
+            .iter()
+            .position(|s| matches!(s, AgentSignal::Credits(c) if c.state == CreditState::InUse));
+        let hit = sig
+            .iter()
+            .position(|s| matches!(s, AgentSignal::LimitHit { .. }));
+        assert!(credit.unwrap() < hit.unwrap(), "{sig:?}");
+        // Older events without overage fields say nothing about credits.
+        let plain = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}"#;
+        assert!(credits_of(plain).is_empty());
+    }
+
+    #[test]
+    fn usage_per_model_from_the_result() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s","total_cost_usd":0.0033,"usage":{"input_tokens":2,"output_tokens":4},"modelUsage":{"claude-haiku-5-5":{"inputTokens":2,"outputTokens":4,"cacheReadInputTokens":11113,"cacheCreationInputTokens":16157,"costUSD":0.0033}}}"#;
+        let sig = signals(&parse_line(line));
+        assert_eq!(
+            sig[0],
+            AgentSignal::Usage(Usage {
+                model: Some("claude-haiku-5-5".into()),
+                input_tokens: 2,
+                output_tokens: 4,
+                cache_read_tokens: 11113,
+                cache_write_tokens: 16157,
+                cost_usd: Some(0.0033),
+            })
+        );
+        assert!(matches!(sig[1], AgentSignal::Finished { ok: true, .. }));
+        // No modelUsage: the run's totals, unnamed.
+        let line = r#"{"type":"result","is_error":false,"result":"ok","total_cost_usd":0.5,"usage":{"input_tokens":10,"output_tokens":3,"cache_read_input_tokens":7}}"#;
+        assert!(matches!(&signals(&parse_line(line))[0],
+            AgentSignal::Usage(u) if u.model.is_none() && u.cache_read_tokens == 7 && u.cost_usd == Some(0.5)));
+    }
 
     #[test]
     fn syncs_session_and_memory_between_config_dirs() {

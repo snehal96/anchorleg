@@ -63,6 +63,55 @@ impl std::str::FromStr for Policy {
     }
 }
 
+/// Whether an account may keep working on paid usage credits (Claude "extra usage", Codex
+/// credits) once its plan's windows run out. Spending money is never the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CreditsUse {
+    /// Stop as soon as the CLI starts paying from credits, and switch or wait instead.
+    #[default]
+    Never,
+    /// Only when every other account is out: better to pay than to wait for a reset.
+    LastResort,
+    /// Keep going on credits instead of switching mid-task.
+    Allow,
+}
+
+impl CreditsUse {
+    pub const ALL: [CreditsUse; 3] = [Self::Never, Self::LastResort, Self::Allow];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::LastResort => "last-resort",
+            Self::Allow => "allow",
+        }
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Never => "never spend credits; switch or wait instead",
+            Self::LastResort => "spend credits only when every other account is out",
+            Self::Allow => "keep going on credits instead of switching",
+        }
+    }
+}
+
+impl std::str::FromStr for CreditsUse {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "never" | "off" => Ok(Self::Never),
+            "last-resort" | "last_resort" => Ok(Self::LastResort),
+            "allow" | "on" => Ok(Self::Allow),
+            other => Err(format!(
+                "unknown credits setting {other:?} (never, last-resort or allow)"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PickOptions {
     /// Not eligible right now (e.g. the account that just hit its limit).
@@ -79,6 +128,9 @@ pub struct PickOptions {
     pub prefer: Option<String>,
     /// Only ever use this account (`--account`).
     pub only: Option<String>,
+    /// Accounts the CLI last reported as able to pay from usage credits. A blocked one among them
+    /// is used (if its `credits` setting allows) before waiting for a reset.
+    pub has_credits: Vec<String>,
 }
 
 impl Default for PickOptions {
@@ -91,6 +143,7 @@ impl Default for PickOptions {
             policy: Policy::Drain,
             prefer: None,
             only: None,
+            has_credits: Vec::new(),
         }
     }
 }
@@ -102,6 +155,8 @@ pub enum PickReason {
     Available,
     /// Every unblocked account is near its limit; this is the best of them.
     NearLimit,
+    /// Every account is out; this one can go on paying from usage credits.
+    Credits,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,6 +209,8 @@ pub fn pick<'a>(
     }
 
     let mut near: Option<(&Account, f64)> = None;
+    // First blocked account (priority order) that may pay from credits.
+    let mut on_credits: Option<&Account> = None;
     let mut earliest: Option<(&Account, EpochSecs)> = None;
     // Healthy accounts, in priority order, with (max used, weekly used).
     let mut healthy: Vec<(&Account, f64, f64)> = Vec::new();
@@ -169,6 +226,12 @@ pub fn pick<'a>(
             .get(account.name.as_str())
             .map_or(&[][..], Vec::as_slice);
         if let Some(until) = blocked_until(account_rows, now, opts) {
+            if on_credits.is_none()
+                && account.credits != CreditsUse::Never
+                && opts.has_credits.contains(&account.name)
+            {
+                on_credits = Some(account);
+            }
             if earliest.is_none_or(|(_, t)| until < t) {
                 earliest = Some((account, until));
             }
@@ -210,13 +273,17 @@ pub fn pick<'a>(
         };
     }
 
-    match (near, earliest) {
-        (Some((account, _)), _) => Pick::Use {
+    match (near, on_credits, earliest) {
+        (Some((account, _)), ..) => Pick::Use {
             account,
             reason: PickReason::NearLimit,
         },
-        (None, Some((account, at))) => Pick::WaitUntil { at, account },
-        (None, None) => Pick::NoAccounts,
+        (None, Some(account), _) => Pick::Use {
+            account,
+            reason: PickReason::Credits,
+        },
+        (None, None, Some((account, at))) => Pick::WaitUntil { at, account },
+        (None, None, None) => Pick::NoAccounts,
     }
 }
 
@@ -511,6 +578,42 @@ mod tests {
         assert_eq!(
             pick(&[], &[], NOW, &PickOptions::default()),
             Pick::NoAccounts
+        );
+    }
+
+    #[test]
+    fn credits_are_a_fallback_before_waiting() {
+        let mut a = acct("a", Vendor::Claude);
+        let b = acct("b", Vendor::Claude);
+        let quota = vec![
+            row("a", "five_hour", Some("rejected"), None, Some(NOW + 50)),
+            row("b", "five_hour", Some("rejected"), None, Some(NOW + 20)),
+        ];
+        let opts = PickOptions {
+            has_credits: vec!["a".into()],
+            ..PickOptions::default()
+        };
+        // Default `never`: credits aren't touched, wait for b.
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &opts)),
+            format!("wait b until {}", NOW + 20)
+        );
+        a.credits = CreditsUse::LastResort;
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &opts)),
+            "use a (Credits)"
+        );
+        // An account with room still comes first.
+        let room = vec![quota[0].clone()];
+        assert_eq!(
+            name(&pick(&[&a, &b], &room, NOW, &opts)),
+            "use b (Available)"
+        );
+        // Credits the CLI hasn't reported as available don't count.
+        let none = PickOptions::default();
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &none)),
+            format!("wait b until {}", NOW + 20)
         );
     }
 }

@@ -3,6 +3,7 @@
 use std::io::{BufRead, IsTerminal};
 use std::path::{Path, PathBuf};
 
+use anchorleg_core::policy::CreditsUse;
 use anchorleg_core::registry::{
     Account, Config, Keychain, Secret, SecretStore, TokenFrom, Vendor, accounts_from_aliases,
     parse_command,
@@ -52,6 +53,13 @@ pub struct SetArgs {
     /// Use the account (`true`) or keep it configured but never pick it (`false`).
     #[arg(long)]
     enabled: Option<bool>,
+    /// Paid usage credits past the plan's limits: never (default), last-resort or allow.
+    #[arg(long, value_parser = parse_credits)]
+    credits: Option<CreditsUse>,
+}
+
+fn parse_credits(s: &str) -> Result<CreditsUse, String> {
+    s.parse()
 }
 
 fn parse_reserve(s: &str) -> Result<f64, String> {
@@ -139,6 +147,9 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             if let Some(e) = args.enabled {
                 account.enabled = e;
             }
+            if let Some(c) = args.credits {
+                account.credits = c;
+            }
             let line = describe_use(account);
             config.save(&path)?;
             println!("{}: {line}", args.name);
@@ -176,6 +187,7 @@ fn list(config: &Config, json: bool) -> anyhow::Result<()> {
             a.pinned.then(|| "pinned".to_owned()),
             a.reserve_7d
                 .map(|r| format!("weekly reserve {:.0}%", r * 100.0)),
+            (a.credits != CreditsUse::Never).then(|| format!("credits: {}", a.credits.name())),
         ]
         .into_iter()
         .flatten()
@@ -207,6 +219,7 @@ fn describe_use(a: &anchorleg_core::registry::Account) -> String {
     if let Some(r) = a.reserve_7d {
         parts.push(format!("weekly reserve {:.0}%", r * 100.0));
     }
+    parts.push(format!("credits {}", a.credits.name()));
     parts.join(", ")
 }
 

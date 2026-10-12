@@ -81,6 +81,78 @@ pub struct QuotaReading {
     pub resets_at: Option<EpochSecs>,
 }
 
+/// Whether an account can keep working past its plan limits on paid usage credits (Claude's
+/// "extra usage", Codex credits).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CreditState {
+    /// Not enabled, out of credits, or turned off by an admin (`reason` says which).
+    Off,
+    /// Credits would be used once a window runs out.
+    Available,
+    /// Requests are being paid from credits right now.
+    InUse,
+    /// The plan has no limit to run past.
+    Unlimited,
+}
+
+impl CreditState {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Available => "available",
+            Self::InUse => "in_use",
+            Self::Unlimited => "unlimited",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "available" => Self::Available,
+            "in_use" => Self::InUse,
+            "unlimited" => Self::Unlimited,
+            _ => Self::Off,
+        }
+    }
+
+    /// Requests can go on past the plan's limits.
+    pub fn spendable(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
+/// An account's usage-credit state, as the CLI last reported it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Credits {
+    pub state: CreditState,
+    /// Remaining balance when the CLI gives one (Codex), in the vendor's unit.
+    pub balance: Option<f64>,
+    /// Why credits are off, verbatim (e.g. `out_of_credits`, `org_level_disabled`).
+    pub reason: Option<String>,
+}
+
+/// Tokens (and, when the CLI reports it, list-price cost) used by one launch, per model.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Usage {
+    pub model: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// What the tokens would cost at API list prices (Claude reports it; others don't).
+    pub cost_usd: Option<f64>,
+}
+
+impl Usage {
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens == 0
+            && self.output_tokens == 0
+            && self.cache_read_tokens == 0
+            && self.cache_write_tokens == 0
+            && self.cost_usd.is_none_or(|c| c == 0.0)
+    }
+}
+
 /// What the supervisor needs to know from a running CLI, independent of vendor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "signal", rename_all = "snake_case")]
@@ -90,6 +162,9 @@ pub enum AgentSignal {
         model: Option<String>,
     },
     Quota(QuotaReading),
+    Credits(Credits),
+    /// Sent once a launch's totals are known (usually with its result).
+    Usage(Usage),
     /// The CLI is retrying a failed request; `category` is e.g. `rate_limit`.
     Retrying {
         category: Option<String>,

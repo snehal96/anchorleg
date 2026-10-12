@@ -125,6 +125,9 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
   {
     "event": {
       "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "org_level_disabled",
+      "overageStatus": "rejected",
       "rateLimitType": "five_hour",
       "resetsAt": 1791466800,
       "status": "allowed",
@@ -157,6 +160,12 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
         "status": null,
         "used": 0.67,
         "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "org_level_disabled",
+        "signal": "credits",
+        "state": "off"
       }
     ]
   },
@@ -173,13 +182,72 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
       "errors": [],
       "event": "result",
       "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 17143,
+          "cacheReadInputTokens": 8503,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00376283,
+          "inputTokens": 2,
+          "maxOutputTokens": 128000,
+          "outputTokens": 498,
+          "provider": "firstParty",
+          "thinkingTokens": 200,
+          "webSearchRequests": 0
+        }
+      },
       "num_turns": 3,
       "result": "",
       "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907",
       "subtype": "success",
-      "total_cost_usd": 0.00376283
+      "total_cost_usd": 0.00376283,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 17143,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 17143,
+        "cache_read_input_tokens": 8503,
+        "fallback_credit": null,
+        "inference_geo": "not_available",
+        "input_tokens": 2,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 17143,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 17143,
+            "cache_read_input_tokens": 8503,
+            "input_tokens": 2,
+            "output_tokens": 498,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 498,
+        "output_tokens_details": {
+          "thinking_tokens": 200
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
     },
     "signals": [
+      {
+        "cache_read_tokens": 8503,
+        "cache_write_tokens": 17143,
+        "cost_usd": 0.00376283,
+        "input_tokens": 2,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 498,
+        "signal": "usage"
+      },
       {
         "ok": true,
         "session_id": "9906cae0-abc6-4394-a09a-f5a3852f9907",
@@ -331,6 +399,9 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
   {
     "event": {
       "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "out_of_credits",
+      "overageStatus": "rejected",
       "rateLimitType": "five_hour",
       "resetsAt": 1791468600,
       "status": "allowed",
@@ -363,6 +434,12 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
         "status": null,
         "used": 0.44,
         "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "out_of_credits",
+        "signal": "credits",
+        "state": "off"
       }
     ]
   },
@@ -472,6 +549,9 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
   {
     "event": {
       "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "out_of_credits",
+      "overageStatus": "rejected",
       "rateLimitType": "five_hour",
       "resetsAt": 1791468600,
       "status": "allowed",
@@ -504,6 +584,12 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
         "status": null,
         "used": 0.44,
         "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "out_of_credits",
+        "signal": "credits",
+        "state": "off"
       }
     ]
   },
@@ -585,13 +671,72 @@ input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.json
       "errors": [],
       "event": "result",
       "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 17903,
+          "cacheReadInputTokens": 91353,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00535793,
+          "inputTokens": 8,
+          "maxOutputTokens": 128000,
+          "outputTokens": 1726,
+          "provider": "firstParty",
+          "thinkingTokens": 563,
+          "webSearchRequests": 0
+        }
+      },
       "num_turns": 6,
       "result": "KIWI-1",
       "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6",
       "subtype": "success",
-      "total_cost_usd": 0.00535793
+      "total_cost_usd": 0.00535793,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 17903,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 17903,
+        "cache_read_input_tokens": 91353,
+        "fallback_credit": null,
+        "inference_geo": "not_available",
+        "input_tokens": 8,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 787,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 787,
+            "cache_read_input_tokens": 28459,
+            "input_tokens": 2,
+            "output_tokens": 8,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 1726,
+        "output_tokens_details": {
+          "thinking_tokens": 563
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
     },
     "signals": [
+      {
+        "cache_read_tokens": 91353,
+        "cache_write_tokens": 17903,
+        "cost_usd": 0.00535793,
+        "input_tokens": 8,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 1726,
+        "signal": "usage"
+      },
       {
         "ok": true,
         "session_id": "991d5af9-edec-494e-9000-02ac5d1486a6",

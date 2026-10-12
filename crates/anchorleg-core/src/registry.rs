@@ -215,6 +215,13 @@ pub struct Account {
     /// Use this account first whenever it's healthy, whatever the policy.
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
+    /// Whether anchorleg may let this account run on paid usage credits past its plan limits.
+    #[serde(default, skip_serializing_if = "is_default_credits")]
+    pub credits: crate::policy::CreditsUse,
+}
+
+fn is_default_credits(c: &crate::policy::CreditsUse) -> bool {
+    *c == crate::policy::CreditsUse::default()
 }
 
 impl Account {
@@ -232,6 +239,7 @@ impl Account {
             reserve_7d: None,
             roles: Vec::new(),
             pinned: false,
+            credits: crate::policy::CreditsUse::default(),
         }
     }
 

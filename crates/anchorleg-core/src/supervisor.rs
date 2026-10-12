@@ -18,7 +18,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::claude::{self, sync_context};
 use crate::adapters::codex_server::{self, Asker, Event};
-use crate::adapters::{AgentSignal, EpochSecs, QuotaReading, QuotaStatus};
+use crate::adapters::{AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus};
 use crate::adapters::{agy, codex};
 use crate::output::{Outcome, RunReport, SCHEMA, Switch};
 use crate::policy::{self, Pick, PickOptions};
@@ -159,10 +159,14 @@ pub async fn refresh_codex_quota(
     while let Some(done) = probes.join_next().await {
         let Ok((name, result)) = done else { continue };
         match result {
-            Ok(readings) if !readings.is_empty() => {
-                store.replace_quota(&name, &readings, Source::Probe, now)?;
+            Ok((readings, credits)) => {
+                if !readings.is_empty() {
+                    store.replace_quota(&name, &readings, Source::Probe, now)?;
+                }
+                if let Some(c) = credits {
+                    store.record_credits(&name, &c, Source::Probe, now)?;
+                }
             }
-            Ok(_) => {}
             Err(e) => failed.push((name, e)),
         }
     }
@@ -234,6 +238,23 @@ struct Attempt {
     exit_status: Option<std::process::ExitStatus>,
     /// anchorleg stopped a Codex turn at `--stop-at` (the mod records Claude's in the store).
     soft_stop: Option<String>,
+    /// This launch may run on usage credits (the account allows it, or it was picked for them).
+    may_spend: bool,
+    /// The credit state the CLI last reported during this launch.
+    credits: Option<CreditState>,
+    /// Requests are being paid from credits.
+    on_credits: bool,
+    /// A limit hit that credits cover; it counts only if the run then fails.
+    limit_deferred: bool,
+    /// Stopped because the CLI began paying from credits it may not use: stop at once.
+    stop_now: bool,
+}
+
+/// How far a launch may go: where the soft stop sits, and whether it may run on usage credits.
+#[derive(Debug, Clone, Copy)]
+struct Spend {
+    stop_at: f64,
+    may_spend: bool,
 }
 
 /// How the next launch continues the task.
@@ -269,7 +290,7 @@ impl Supervisor<'_> {
         };
         let mut ordered = self.config.by_priority();
         ordered.retain(|a| DRIVEN.contains(&a.vendor));
-        let pick_opts = PickOptions {
+        let mut pick_opts = PickOptions {
             policy: opts.policy,
             prefer: opts.prefer.clone(),
             only: opts.only.clone(),
@@ -299,6 +320,14 @@ impl Supervisor<'_> {
         loop {
             self.refresh_codex(&ordered, opts, run_id).await?;
             let quota = self.store.quota(None)?;
+            pick_opts.has_credits = self
+                .store
+                .credits(None)?
+                .into_iter()
+                .filter(|c| c.state.spendable())
+                .map(|c| c.account)
+                .collect();
+            let mut picked_for_credits = false;
 
             // After a soft stop, only an account with real room left is worth switching to;
             // otherwise keep going where we are, with the stop off, until the hard limit.
@@ -348,7 +377,25 @@ impl Supervisor<'_> {
             let account = match soft_choice {
                 Some(account) => account,
                 None => match policy::pick(&ordered, &quota, self.now(), &pick_opts) {
-                    Pick::Use { account, .. } => {
+                    Pick::Use { account, reason } => {
+                        if reason == policy::PickReason::Credits {
+                            picked_for_credits = true;
+                            self.decide(
+                                run_id,
+                                current,
+                                Some(account),
+                                "credits",
+                                json!({ "setting": account.credits.name() }),
+                            )?;
+                            self.note(
+                                opts,
+                                run_id,
+                                &format!(
+                                    "every account is out; continuing on {} with usage credits",
+                                    account.name
+                                ),
+                            );
+                        }
                         if let Some(prev) = current.filter(|p| p.name != account.name) {
                             if report.switches.len() >= opts.max_switches {
                                 self.decide(run_id, Some(prev), None, "max_switches", json!({}))?;
@@ -444,8 +491,16 @@ impl Supervisor<'_> {
             } else {
                 opts.stop_at
             };
+            let may_spend = picked_for_credits || account.credits == policy::CreditsUse::Allow;
             let attempt = self
-                .attempt(run_id, account, &prompt, resume, stop_at, opts)
+                .attempt(
+                    run_id,
+                    account,
+                    &prompt,
+                    resume,
+                    Spend { stop_at, may_spend },
+                    opts,
+                )
                 .await?;
             if let Some(sid) = &attempt.session_id {
                 report.session_id = Some(sid.clone());
@@ -454,7 +509,12 @@ impl Supervisor<'_> {
             }
 
             if attempt.limit_hit {
-                self.note(opts, run_id, &format!("{} hit its limit", account.name));
+                let why = if attempt.stop_now {
+                    "started paying from usage credits; stopped (credits: never)"
+                } else {
+                    "hit its limit"
+                };
+                self.note(opts, run_id, &format!("{} {why}", account.name));
                 handoffs += 1;
                 written = self.write_handoff(
                     run_id,
@@ -727,7 +787,7 @@ impl Supervisor<'_> {
         account: &Account,
         prompt: &str,
         resume: Option<&str>,
-        stop_at: f64,
+        Spend { stop_at, may_spend }: Spend,
         opts: &RunOptions,
     ) -> Result<Attempt, RunError> {
         let mut launch = self.config.launch(account, self.secrets, &self.home)?;
@@ -872,7 +932,10 @@ impl Supervisor<'_> {
             None => Feed::Lines(BufReader::new(stdout).lines()),
         };
         let mut raw_log = self.open_log(opts.log_dir.as_deref(), run_id);
-        let mut attempt = Attempt::default();
+        let mut attempt = Attempt {
+            may_spend,
+            ..Attempt::default()
+        };
         let mut deadline: Option<tokio::time::Instant> = None;
         let mut codex_stream = codex::Stream::default();
 
@@ -901,6 +964,10 @@ impl Supervisor<'_> {
                     )?;
                     continue;
                 }
+                Some(Event::Credits(c)) => {
+                    self.on_signal(run_id, account, AgentSignal::Credits(c), &mut attempt)?;
+                    continue;
+                }
                 Some(Event::NotFound) => {
                     attempt.session_not_found = true;
                     continue;
@@ -925,7 +992,14 @@ impl Supervisor<'_> {
                 self.on_signal(run_id, account, signal, &mut attempt)?;
             }
             if attempt.limit_hit && deadline.is_none() {
-                deadline = Some(tokio::time::Instant::now() + opts.limit_grace);
+                // Every extra second on unpermitted credits costs money; otherwise give the CLI
+                // time to wrap up.
+                let grace = if attempt.stop_now {
+                    Duration::ZERO
+                } else {
+                    opts.limit_grace
+                };
+                deadline = Some(tokio::time::Instant::now() + grace);
             }
         }
         if matches!(source, Feed::Codex(_)) {
@@ -963,6 +1037,10 @@ impl Supervisor<'_> {
         else {
             return Ok(());
         };
+        if let Some(c) = codex::rollout_credits(&text) {
+            self.store
+                .record_credits(&account.name, &c, Source::Stream, self.now())?;
+        }
         let mut rejected = false;
         for reading in codex::rollout_quota(&text) {
             rejected |= reading.status == Some(QuotaStatus::Rejected);
@@ -993,8 +1071,27 @@ impl Supervisor<'_> {
                 self.store
                     .record_quota(&account.name, &reading, Source::Stream, self.now())?;
             }
+            AgentSignal::Credits(c) => self.on_credits(account, c, attempt)?,
+            AgentSignal::Usage(u) => {
+                self.store.record_usage(
+                    Some(run_id),
+                    &account.name,
+                    &u,
+                    attempt.on_credits,
+                    self.now(),
+                )?;
+            }
             AgentSignal::LimitHit { window, resets_at } => {
-                attempt.limit_hit = true;
+                // Credits the account may spend cover the limit: let the CLI go on. If it then
+                // fails anyway, the limit counts after all.
+                if attempt.may_spend
+                    && attempt.credits.is_some_and(CreditState::spendable)
+                    && attempt.finished.is_none()
+                {
+                    attempt.limit_deferred = true;
+                } else {
+                    attempt.limit_hit = true;
+                }
                 let reading = QuotaReading {
                     window,
                     status: Some(QuotaStatus::Rejected),
@@ -1005,8 +1102,45 @@ impl Supervisor<'_> {
                     .record_quota(&account.name, &reading, Source::Stream, self.now())?;
             }
             AgentSignal::SessionNotFound => attempt.session_not_found = true,
-            AgentSignal::Finished { ok, text, .. } => attempt.finished = Some((ok, text)),
+            AgentSignal::Finished { ok, text, .. } => {
+                if !ok && attempt.limit_deferred {
+                    attempt.limit_hit = true;
+                }
+                attempt.finished = Some((ok, text));
+            }
             AgentSignal::Retrying { .. } => {}
+        }
+        Ok(())
+    }
+
+    /// A credit report: remember it, and stop a launch that began paying without permission.
+    fn on_credits(
+        &self,
+        account: &Account,
+        credits: Credits,
+        attempt: &mut Attempt,
+    ) -> Result<(), RunError> {
+        self.store
+            .record_credits(&account.name, &credits, Source::Stream, self.now())?;
+        attempt.credits = Some(credits.state);
+        if credits.state == CreditState::InUse {
+            if attempt.may_spend {
+                attempt.on_credits = true;
+            } else if !attempt.limit_hit {
+                tracing::info!(account = %account.name, "CLI is paying from usage credits; stopping");
+                attempt.limit_hit = true;
+                attempt.stop_now = true;
+                // The plan's windows are spent even if the CLI still says "allowed": block the
+                // account so the next pick doesn't come straight back to it.
+                let reading = QuotaReading {
+                    window: None,
+                    status: Some(QuotaStatus::Rejected),
+                    used: None,
+                    resets_at: None,
+                };
+                self.store
+                    .record_quota(&account.name, &reading, Source::Stream, self.now())?;
+            }
         }
         Ok(())
     }

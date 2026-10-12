@@ -28,6 +28,11 @@ watches every account's quota, and when one gets close to its limit it:
 3. **continues** the same session on your next account, with its transcript and project memory.
 
 <p align="center">
+  <img src="docs/images/demo.gif" width="880" alt="Terminal demo: anchorleg status shows claude-pro at 86% and codex-plus at 12%; anchorleg run pauses the task on claude-pro at 92%, writes .handoff/TASK.md, switches to codex-plus and finishes; then the handoff file and anchorleg usage are shown">
+  <br><sub>Recorded with <a href="scripts/demo/demo.tape">vhs</a> against stand-in CLIs, so no quota was spent.</sub>
+</p>
+
+<p align="center">
   <img src="docs/images/handoff.svg" width="880" alt="Pause at a clean step when an account reaches 92%, hand off with .handoff/TASK.md and a local checkpoint, continue the same session on the next account with room">
 </p>
 
@@ -62,6 +67,11 @@ watches every account's quota, and when one gets close to its limit it:
 - **You approve what the agent may do.** A background run can't show the CLI's permission
   prompt, so anchorleg asks you: the session waits until you press **1** yes, **2** yes for this
   session or **3** no. Works for Claude Code and Codex.
+- **See what you're using.** `anchorleg usage` (and `u` in `anchorleg ui`) shows tokens and
+  cost per account and model, tokens per day, quota bars and each account's usage credits.
+  Cost is the API list price of the same tokens, so you can see what your subscriptions save.
+- **Never spends money behind your back.** Usage credits (Claude extra usage, Codex credits)
+  are off limits unless you allow them per account: as a last resort, or always.
 - **Same model and effort on every account.** One setting per provider (`/model opus`,
   `/effort high`), so a task keeps the same strength when it moves. Your own slash commands and
   skills pass straight through.
@@ -116,8 +126,8 @@ version. Run it again to update; delete the binary to remove it.
 
 ```bash
 arch=$(dpkg --print-architecture)   # amd64 or arm64
-curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.2.0-1_${arch}.deb"
-sudo apt install "./anchorleg_0.2.0-1_${arch}.deb"
+curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.3.0-1_${arch}.deb"
+sudo apt install "./anchorleg_0.3.0-1_${arch}.deb"
 ```
 
 **Prebuilt binaries:** every [release](https://github.com/snehal96/anchorleg/releases/latest)
@@ -198,6 +208,7 @@ anchorleg run --cwd ~/code/app -- "fix the failing auth tests"
 anchorleg run --follow-up 12 -- "now add a test for the expired-token case"
 anchorleg sessions                  # recent sessions
 anchorleg status                    # quota per account, and who runs next
+anchorleg usage                     # tokens and API-price cost per account and model, last 7 days
 anchorleg stop 12                   # stop a session and its CLI
 anchorleg permission list           # tool calls waiting for you
 anchorleg permission answer 3 yes   # yes | always | no
@@ -260,7 +271,13 @@ anchorleg run --account work -- "…"             # only this account, no switch
 anchorleg accounts set work --pinned true       # always first while it has room
 anchorleg accounts set home --reserve-7d 0.2    # keep its last 20% of the week for emergencies
 anchorleg accounts set side --priority 3 --enabled false
+anchorleg accounts set home --credits last-resort  # pay from extra usage only when all are out
 ```
+
+**Usage credits** (Claude's extra usage, Codex credits) are never spent by default: if a CLI
+starts paying past its plan's limit, anchorleg stops it and moves the task on. Set `--credits
+last-resort` to pay only when every account is out instead of waiting, or `allow` to keep going
+on credits. `anchorleg status`, `anchorleg usage` and `anchorleg ui` show each account's credits.
 
 In `anchorleg ui`, press `p` in the Agents pane to change the policy.
 
@@ -324,6 +341,16 @@ You are responsible for using your accounts within each provider's terms.
 
 **Does anchorleg raise my limits?** No. It uses the accounts you already have, one after another,
 and stops each at a clean point.
+
+**Is this allowed?** anchorleg only runs the official CLIs, logged in the way you log in to them
+yourself; it doesn't share, pool or resell anything. The clearest use is across providers: a
+Claude subscription and a ChatGPT one are separate products, and continuing a task on Codex
+when Claude runs low is just using both. Several accounts of the same provider are your call:
+read that provider's terms (Anthropic's, for example, forbid sharing an account with anyone
+else). Don't use anchorleg to share accounts.
+
+**What about usage credits / extra usage?** Never spent unless you allow it per account
+(`--credits last-resort` or `allow`); by default anchorleg stops a launch that starts paying.
 
 **Does it work with one account?** Yes, as a session manager with approvals. With one account
 it can only wait for the reset (or exit 75 with `--no-wait`).

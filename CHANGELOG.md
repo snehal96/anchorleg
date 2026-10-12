@@ -9,6 +9,24 @@ All notable changes are listed here. The format follows
 ### Added
 - Homebrew tap (in progress).
 
+## [0.3.0] — 2026-10-12
+
+### Added
+- Usage credits (Claude extra usage, Codex credits): anchorleg reads each account's credit state
+  and, by default, stops a launch the moment it starts paying past the plan's limit and moves the
+  task on. Per account, `anchorleg accounts set A --credits last-resort|allow` lets it pay when
+  every account is out, or keep going on credits.
+- `anchorleg usage [--since 24h|7d|30d|all] [--json]`: tokens and API-price cost per account and
+  model, tokens per day, quota bars and credits.
+- `anchorleg ui`: 24-hour usage in the top bar, `u` opens a usage panel, and accounts paying from
+  credits are marked.
+- `anchorleg status` shows each account's credits (JSON: `credits`, `credits_use`).
+- A demo GIF in the README, recorded with vhs against stand-in CLIs (`scripts/demo/`).
+
+### Fixed
+- An older anchorleg no longer writes to a database a newer version has upgraded; it stops and
+  says to update.
+
 ## [0.2.0] — 2026-10-11
 
 ### Added

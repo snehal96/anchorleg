@@ -19,7 +19,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--pinned true\|false] [--enabled true\|false]` · `import-aliases [--yes] [--from-file F]` | works |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly]` | works |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` | works |
@@ -27,6 +27,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
 | `anchorleg stop <run>` | works |
 | `anchorleg status [--json]` | works |
+| `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg run [--follow-up RUN] [--cwd DIR] [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
@@ -143,7 +144,49 @@ policy = "balance"
 name = "home"
 reserve_7d = 0.2
 pinned = false
+credits = "last-resort"
 ```
+
+### Usage credits
+
+Claude's "extra usage" and Codex credits let an account keep working past its plan's limits,
+billed to you. anchorleg reads their state from the CLI (Claude: `overageStatus`,
+`isUsingOverage` in `rate_limit_event`; Codex: `credits` in its rate limits) and shows it in
+`anchorleg status`, `anchorleg usage` and `anchorleg ui`. Each account's `credits` setting
+decides whether anchorleg lets it spend them:
+
+| `credits` | During a run | When picking an account |
+|---|---|---|
+| `never` (default) | the moment the CLI starts paying from credits, the launch is stopped (no grace period), the account is blocked for an hour and the task moves on | never picked for credits |
+| `last-resort` | stopped like `never` | when every account is blocked, an account that reported credits available is picked (reason `credits`) instead of waiting, and that launch may pay |
+| `allow` | keeps going on credits; a limit hit doesn't stop it unless the run then fails | as `last-resort` |
+
+Tokens a launch spends while paying are marked in `anchorleg usage` (`credits_cost_usd`).
+Not yet seen on a real account: the exact events Claude sends once extra usage kicks in, and
+whether Codex spends credits by itself. Today's handling is built from the fields above.
+
+## `anchorleg usage` → `UsageReport`
+
+Tokens per account and model, recorded from every launch's result (Claude: `modelUsage`, with
+its list-price `costUSD`; Codex: the turn's token usage; Antigravity: `result.usage`). The text
+version adds a tokens-per-day sparkline and each account's quota and credits. `cost_usd` is what
+the same tokens would cost at API list prices; on a subscription you don't pay it, and Codex and
+Antigravity don't report it (`null`).
+
+```json
+{
+  "schema": 1, "now": 1791442500, "since": 1790837700,
+  "totals": [
+    { "account": "claude-sm", "model": "claude-sonnet-5-5", "launches": 4,
+      "input_tokens": 1200, "output_tokens": 8400, "cache_read_tokens": 412000,
+      "cache_write_tokens": 36000, "cost_usd": 1.84, "credits_cost_usd": null }
+  ],
+  "by_day": [[1791417600, 457600, 1.84]]
+}
+```
+
+`input_tokens` excludes cached input everywhere (Codex and Antigravity count it inside; anchorleg
+splits it out). `by_day` is `[UTC day start, tokens, cost]`.
 
 ### Handoff and checkpoints
 
@@ -270,14 +313,18 @@ default for you.
       "windows": [
         { "window": "five_hour", "status": "rejected", "used": 1.0,
           "resets_at": 1791450000, "source": "stream", "updated_at": 1791442000 }
-      ]
+      ],
+      "credits": { "state": "off", "balance": null, "reason": "out_of_credits",
+                   "updated_at": 1791442000 },
+      "credits_use": "never"
     }
   ]
 }
 ```
 
-`next.action` is `use` (`reason`: `available` or `near_limit`), `wait` (`until`, `account`), or
-`no_accounts`. `used` is a fraction 0–1 and may be `null` (Claude often omits it).
+`next.action` is `use` (`reason`: `available`, `near_limit` or `credits`), `wait` (`until`,
+`account`), or `no_accounts`. `credits` is `null` until the CLI has reported it; `state` is `off`,
+`available`, `in_use` or `unlimited`. `used` is a fraction 0–1 and may be `null` (Claude often omits it).
 `source` is `stream` (CLI events), `mod` (exact, from anchorleg-mod) or `manual`.
 
 ## `anchorleg report --json` (stdin)

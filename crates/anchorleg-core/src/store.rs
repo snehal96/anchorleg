@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::adapters::{EpochSecs, QuotaReading};
+use crate::adapters::{CreditState, Credits, EpochSecs, QuotaReading, Usage};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -22,6 +22,11 @@ pub enum StoreError {
     },
     #[error("no home directory; set ANCHORLEG_HOME")]
     NoHome,
+    #[error(
+        "the database is from a newer anchorleg (schema {found}, this version knows {known}); \
+         update anchorleg, or use the one that upgraded it"
+    )]
+    Newer { found: i64, known: i64 },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -62,6 +67,34 @@ pub struct QuotaRow {
     pub resets_at: Option<EpochSecs>,
     pub source: String,
     pub updated_at: EpochSecs,
+}
+
+/// The latest known usage-credit state for one account.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CreditsRow {
+    pub account: String,
+    pub state: CreditState,
+    pub balance: Option<f64>,
+    pub reason: Option<String>,
+    pub updated_at: EpochSecs,
+}
+
+/// Tokens and cost added up over a span of time, for one account and model.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct UsageTotal {
+    pub account: String,
+    /// `None` when the CLI didn't name it.
+    pub model: Option<String>,
+    /// Launches that reported usage.
+    pub launches: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// List-price cost, summed over launches that reported one; `None` when none did.
+    pub cost_usd: Option<f64>,
+    /// The part of `cost_usd` that ran while the account was paying from credits.
+    pub credits_cost_usd: Option<f64>,
 }
 
 /// A tool call waiting for the person, and how they answered.
@@ -269,6 +302,30 @@ CREATE TABLE permissions (
 );
 CREATE INDEX permissions_run ON permissions(run_id);
 "#,
+    r#"
+CREATE TABLE credits (
+    account    TEXT PRIMARY KEY,
+    state      TEXT NOT NULL,
+    balance    REAL,
+    reason     TEXT,
+    source     TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE usage (
+    id                 INTEGER PRIMARY KEY,
+    run_id             INTEGER REFERENCES runs(id),
+    account            TEXT NOT NULL,
+    model              TEXT,
+    at                 INTEGER NOT NULL,
+    input_tokens       INTEGER NOT NULL,
+    output_tokens      INTEGER NOT NULL,
+    cache_read_tokens  INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL,
+    cost_usd           REAL,
+    on_credits         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX usage_at ON usage(at);
+"#,
 ];
 
 pub struct Store {
@@ -340,6 +397,15 @@ impl Store {
         // is read inside it, so two processes never run the same migration.
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        // An older binary (say a CLI next to the desktop app's newer one) must not write rows
+        // a newer schema doesn't expect.
+        let known = MIGRATIONS.len() as i64;
+        if version > known {
+            return Err(StoreError::Newer {
+                found: version,
+                known,
+            });
+        }
         let mut next = version;
         for sql in MIGRATIONS
             .get(usize::try_from(version).unwrap_or(0)..)
@@ -425,6 +491,123 @@ impl Store {
                 source: r.get(5)?,
                 updated_at: r.get(6)?,
             })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Replace what's known about an account's usage credits.
+    pub fn record_credits(
+        &self,
+        account: &str,
+        credits: &Credits,
+        source: Source,
+        now: EpochSecs,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO credits (account, state, balance, reason, source, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                account,
+                credits.state.name(),
+                credits.balance,
+                credits.reason,
+                source.as_str(),
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Usage-credit state, for every account when `account` is `None`.
+    pub fn credits(&self, account: Option<&str>) -> Result<Vec<CreditsRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account, state, balance, reason, updated_at FROM credits
+             WHERE ?1 IS NULL OR account = ?1 ORDER BY account",
+        )?;
+        let rows = stmt.query_map(params![account], |r| {
+            Ok(CreditsRow {
+                account: r.get(0)?,
+                state: CreditState::from_name(&r.get::<_, String>(1)?),
+                balance: r.get(2)?,
+                reason: r.get(3)?,
+                updated_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Add one launch's tokens and cost.
+    pub fn record_usage(
+        &self,
+        run_id: Option<RunId>,
+        account: &str,
+        usage: &Usage,
+        on_credits: bool,
+        now: EpochSecs,
+    ) -> Result<()> {
+        let n = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
+        self.conn.execute(
+            "INSERT INTO usage (run_id, account, model, at, input_tokens, output_tokens,
+               cache_read_tokens, cache_write_tokens, cost_usd, on_credits)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                run_id,
+                account,
+                usage.model,
+                now,
+                n(usage.input_tokens),
+                n(usage.output_tokens),
+                n(usage.cache_read_tokens),
+                n(usage.cache_write_tokens),
+                usage.cost_usd,
+                on_credits
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Usage since `since`, per account and model, most expensive (then most tokens) first.
+    pub fn usage_totals(&self, since: EpochSecs) -> Result<Vec<UsageTotal>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account, model, COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                    SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(cost_usd),
+                    SUM(CASE WHEN on_credits THEN cost_usd END)
+             FROM usage WHERE at >= ?1 GROUP BY account, model
+             ORDER BY COALESCE(SUM(cost_usd), 0) DESC,
+                      SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) DESC,
+                      account",
+        )?;
+        let n = |v: i64| u64::try_from(v).unwrap_or(0);
+        let rows = stmt.query_map(params![since], |r| {
+            Ok(UsageTotal {
+                account: r.get(0)?,
+                model: r.get(1)?,
+                launches: n(r.get(2)?),
+                input_tokens: n(r.get(3)?),
+                output_tokens: n(r.get(4)?),
+                cache_read_tokens: n(r.get(5)?),
+                cache_write_tokens: n(r.get(6)?),
+                cost_usd: r.get(7)?,
+                credits_cost_usd: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Tokens per day since `since` (UTC days, as epoch seconds of the day's start), for a chart.
+    pub fn usage_by_day(&self, since: EpochSecs) -> Result<Vec<(EpochSecs, u64, f64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT (at / 86400) * 86400 AS day,
+                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens),
+                    COALESCE(SUM(cost_usd), 0)
+             FROM usage WHERE at >= ?1 GROUP BY day ORDER BY day",
+        )?;
+        let rows = stmt.query_map(params![since], |r| {
+            Ok((
+                r.get(0)?,
+                u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
+                r.get(2)?,
+            ))
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -794,6 +977,23 @@ mod tests {
     }
 
     #[test]
+    fn a_newer_schema_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anchorleg.db");
+        drop(Store::open(&path).unwrap());
+        let newer = MIGRATIONS.len() as i64 + 1;
+        Connection::open(&path)
+            .unwrap()
+            .pragma_update(None, "user_version", newer)
+            .unwrap();
+        let err = Store::open(&path).err().expect("refused");
+        assert!(
+            matches!(err, StoreError::Newer { found, .. } if found == newer),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn many_processes_can_open_a_new_database_at_once() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("anchorleg.db");
@@ -851,5 +1051,53 @@ mod tests {
             !s.always_allowed(&s.session_runs(other).unwrap(), "Write")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn credits_and_usage_are_kept() {
+        let s = Store::open_in_memory().unwrap();
+        let c = Credits {
+            state: CreditState::Available,
+            balance: Some(12.5),
+            reason: None,
+        };
+        s.record_credits("a", &c, Source::Probe, 10).unwrap();
+        let off = Credits {
+            state: CreditState::Off,
+            balance: None,
+            reason: Some("out_of_credits".into()),
+        };
+        s.record_credits("a", &off, Source::Stream, 20).unwrap();
+        let rows = s.credits(None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, CreditState::Off);
+        assert_eq!(rows[0].reason.as_deref(), Some("out_of_credits"));
+
+        let run = s.start_run("t", "/w", None, 100).unwrap();
+        let u = |model: &str, cost: Option<f64>| Usage {
+            model: Some(model.into()),
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 100,
+            cache_write_tokens: 1,
+            cost_usd: cost,
+        };
+        s.record_usage(Some(run), "a", &u("haiku", Some(0.5)), false, 100)
+            .unwrap();
+        s.record_usage(Some(run), "a", &u("haiku", Some(0.25)), true, 200)
+            .unwrap();
+        s.record_usage(Some(run), "b", &u("gpt", None), false, 300)
+            .unwrap();
+        s.record_usage(Some(run), "a", &u("haiku", Some(9.0)), false, 10)
+            .unwrap(); // too old
+
+        let t = s.usage_totals(50).unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].account.as_str(), t[0].launches), ("a", 2));
+        assert_eq!(t[0].input_tokens, 20);
+        assert_eq!(t[0].cost_usd, Some(0.75));
+        assert_eq!(t[0].credits_cost_usd, Some(0.25));
+        assert_eq!((t[1].account.as_str(), t[1].cost_usd), ("b", None));
+        assert_eq!(s.usage_by_day(0).unwrap(), [(0, 4 * 116, 9.75)]);
     }
 }

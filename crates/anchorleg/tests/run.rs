@@ -1151,3 +1151,102 @@ fn policies_pick_among_accounts_with_room() {
     let (_, r) = env.run(&[]);
     assert_eq!(r["result"], "ran on c2");
 }
+
+/// A rate limit event with extra-usage fields (Claude's "usage credits").
+fn overage(status: &str, overage: &str, using: bool) -> String {
+    format!(
+        r#"{{"type":"rate_limit_event","rate_limit_info":{{"status":"{status}","resetsAt":{FAR},"rateLimitType":"five_hour","overageStatus":"{overage}","isUsingOverage":{using}}}}}"#
+    )
+}
+
+fn ok_with_cost(sid: &str, text: &str, cost: f64) -> String {
+    format!(
+        r#"{{"type":"result","subtype":"success","is_error":false,"result":"{text}","session_id":"{sid}","total_cost_usd":{cost},"modelUsage":{{"claude-haiku-5-5":{{"inputTokens":10,"outputTokens":20,"cacheReadInputTokens":300,"cacheCreationInputTokens":40,"costUSD":{cost}}}}}}}"#
+    )
+}
+
+#[test]
+fn paying_from_credits_without_permission_stops_and_switches() {
+    let env = Env::new(&["a", "b"]);
+    // a's plan is spent and the CLI carries on paying from extra usage: by default anchorleg
+    // never spends credits, so it stops a and moves on.
+    env.script(
+        "a.jsonl",
+        &format!(
+            "{}\n{}\n{}\n",
+            init("s1"),
+            overage("allowed", "allowed", true),
+            ok_with_cost("s1", "finished on a", 0.5)
+        ),
+    );
+    env.script("b.jsonl", &ok("s1", "finished on b"));
+
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["result"], "finished on b");
+    assert_eq!(r["accounts_used"], serde_json::json!(["a", "b"]));
+
+    let status = env.anchorleg().args(["status", "--json"]).output().unwrap();
+    let status: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert!(status["accounts"][0]["blocked_until"].is_i64(), "{status}");
+    assert_eq!(status["accounts"][0]["credits"]["state"], "in_use");
+    assert_eq!(status["accounts"][0]["credits_use"], "never");
+}
+
+#[test]
+fn last_resort_credits_carry_on_when_every_account_is_out() {
+    let env = Env::new(&["a", "b"]);
+    env.anchorleg()
+        .args(["accounts", "set", "a", "--credits", "last-resort"])
+        .assert()
+        .success();
+    // a runs out with extra usage available; anchorleg tries b first, which is out too, then
+    // comes back to a and lets it pay.
+    env.script(
+        "a.1.jsonl",
+        &format!(
+            "{}\n{}\n{}\n",
+            init("s1"),
+            overage("rejected", "allowed", false),
+            r#"{"type":"result","subtype":"success","is_error":true,"result":"Claude AI usage limit reached","session_id":"s1"}"#
+        ),
+    );
+    env.script("b.jsonl", &limit("s1", FAR));
+    env.script(
+        "a.2.jsonl",
+        &format!(
+            "{}\n{}\n{}\n",
+            init("s1"),
+            overage("rejected", "allowed", true),
+            ok_with_cost("s1", "finished on credits", 0.25)
+        ),
+    );
+
+    let (code, r) = env.run(&["--no-wait"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["result"], "finished on credits");
+    assert_eq!(r["accounts_used"], serde_json::json!(["a", "b", "a"]));
+
+    let usage = env
+        .anchorleg()
+        .args(["usage", "--json", "--since", "all"])
+        .output()
+        .unwrap();
+    let usage: Value = serde_json::from_slice(&usage.stdout).unwrap();
+    let a = &usage["totals"][0];
+    assert_eq!(a["account"], "a");
+    assert_eq!(a["model"], "claude-haiku-5-5");
+    assert_eq!(a["cost_usd"], 0.25);
+    assert_eq!(a["credits_cost_usd"], 0.25);
+    assert_eq!(a["cache_read_tokens"], 300);
+
+    // The text dashboard renders too.
+    let text = env
+        .anchorleg()
+        .args(["usage", "--since", "all"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(text.contains("claude-haiku-5-5"), "{text}");
+    assert!(text.contains("ran on paid credits: $0.25"), "{text}");
+}

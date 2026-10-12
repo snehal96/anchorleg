@@ -3,10 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::EpochSecs;
+use crate::adapters::{CreditState, EpochSecs};
 use crate::policy::{self, Pick, PickOptions, PickReason};
 use crate::registry::{Config, Vendor};
-use crate::store::{QuotaRow, RunId};
+use crate::store::{CreditsRow, QuotaRow, RunId, UsageTotal};
 
 pub const SCHEMA: u32 = 1;
 
@@ -55,6 +55,30 @@ pub struct AccountStatus {
     pub blocked_until: Option<EpochSecs>,
     /// Latest reading per window.
     pub windows: Vec<WindowStatus>,
+    /// Paid usage credits past the plan's limits, when the CLI has reported them.
+    pub credits: Option<CreditsStatus>,
+    /// Whether anchorleg may spend them: `never`, `last-resort` or `allow`.
+    pub credits_use: policy::CreditsUse,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreditsStatus {
+    pub state: CreditState,
+    pub balance: Option<f64>,
+    pub reason: Option<String>,
+    pub updated_at: EpochSecs,
+}
+
+/// `anchorleg usage --json`: tokens and cost recorded from runs since `since`.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageReport {
+    pub schema: u32,
+    pub now: EpochSecs,
+    pub since: EpochSecs,
+    /// Per account and model, most expensive first.
+    pub totals: Vec<UsageTotal>,
+    /// Per UTC day: `[day start, tokens, list-price cost]`.
+    pub by_day: Vec<(EpochSecs, u64, f64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -71,9 +95,17 @@ pub struct WindowStatus {
 pub fn status(
     config: &Config,
     quota: &[QuotaRow],
+    credits: &[CreditsRow],
     now: EpochSecs,
     opts: &PickOptions,
 ) -> StatusReport {
+    let mut opts = opts.clone();
+    opts.has_credits = credits
+        .iter()
+        .filter(|c| c.state.spendable())
+        .map(|c| c.account.clone())
+        .collect();
+    let opts = &opts;
     let ordered = config.by_priority();
     let next = match policy::pick(&ordered, quota, now, opts) {
         Pick::Use { account, reason } => Next::Use {
@@ -106,6 +138,16 @@ pub fn status(
                         updated_at: r.updated_at,
                     })
                     .collect(),
+                credits: credits
+                    .iter()
+                    .find(|c| c.account == a.name)
+                    .map(|c| CreditsStatus {
+                        state: c.state,
+                        balance: c.balance,
+                        reason: c.reason.clone(),
+                        updated_at: c.updated_at,
+                    }),
+                credits_use: a.credits,
             }
         })
         .collect();

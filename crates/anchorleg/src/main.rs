@@ -4,6 +4,7 @@ mod run;
 mod settings;
 mod status;
 mod ui;
+mod usage;
 
 use anchorleg_core::policy::Policy;
 use std::path::PathBuf;
@@ -63,6 +64,14 @@ enum Command {
     Policy {
         #[arg(value_parser = parse_policy)]
         policy: Option<Policy>,
+    },
+    /// Tokens and cost of anchorleg's runs, per account and model, plus credits and quota.
+    Usage {
+        /// How far back: e.g. 24h, 7d, 30d, or `all`.
+        #[arg(long, default_value = "7d", value_parser = usage::parse_since)]
+        since: i64,
+        #[arg(long)]
+        json: bool,
     },
     /// List recent sessions (runs), newest first.
     Sessions {
@@ -173,6 +182,7 @@ fn main() -> ExitCode {
         Command::Stop { run } => run::stop(run),
         Command::Policy { policy } => settings::policy(policy),
         Command::Sessions { json, limit } => status::sessions(json, limit),
+        Command::Usage { since, json } => usage::run(since, json),
         Command::Report { json: _ } => status::report(),
         Command::Run(args) => {
             return match run::run(args) {

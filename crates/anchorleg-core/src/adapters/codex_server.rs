@@ -15,8 +15,8 @@ use std::process::Stdio;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-use super::QuotaReading;
-use super::codex::live_quota;
+use super::codex::{self, live_quota};
+use super::{Credits, QuotaReading};
 
 /// `codex app-server` request ids anchorleg uses.
 const INITIALIZE: i64 = 1;
@@ -52,6 +52,8 @@ pub enum Event {
     Line(String),
     /// Current quota, pushed by Codex after model calls.
     Quota(Vec<QuotaReading>),
+    /// Usage-credit state, pushed with the quota.
+    Credits(Credits),
     /// `thread/resume` of a thread this login doesn't have.
     NotFound,
     /// anchorleg stopped the turn because quota reached `--stop-at` (why, for the run log).
@@ -134,6 +136,8 @@ pub struct Translator {
     thread_id: Option<String>,
     /// The latest model call's token usage (`last` of `thread/tokenUsage/updated`).
     last_usage: Option<Value>,
+    /// This turn's tokens: the sum of every model call's `last`.
+    turn_usage: HashMap<&'static str, u64>,
     /// Files of each file change, from `item/started`, for its approval request.
     changes: HashMap<String, Vec<String>>,
 }
@@ -190,6 +194,20 @@ impl Translator {
             }
             "thread/tokenUsage/updated" => {
                 self.last_usage = params.pointer("/tokenUsage/last").cloned();
+                for (from, to) in [
+                    ("inputTokens", "input_tokens"),
+                    ("cachedInputTokens", "cached_input_tokens"),
+                    ("cacheWriteInputTokens", "cache_write_input_tokens"),
+                    ("outputTokens", "output_tokens"),
+                ] {
+                    let n = self
+                        .last_usage
+                        .as_ref()
+                        .and_then(|u| u.get(from))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    *self.turn_usage.entry(to).or_default() += n;
+                }
                 Vec::new()
             }
             "error" => {
@@ -228,6 +246,7 @@ impl Translator {
                         "cached_input_tokens": n("cachedInputTokens"),
                         "output_tokens": n("outputTokens"),
                     },
+                    "turn_usage": self.turn_usage,
                 })
             }
             status => {
@@ -575,6 +594,9 @@ where
                     if !readings.is_empty() {
                         let _ = events.send(Event::Quota(readings));
                     }
+                    if let Some(c) = params.get("rateLimits").and_then(codex::credits) {
+                        let _ = events.send(Event::Credits(c));
+                    }
                 }
             }
             (Some(method), None) => {
@@ -646,6 +668,15 @@ mod tests {
                     session_id: "01a12ad3-384a-7890-b1fb-184383f3668f".into(),
                     model: None
                 },
+                // Three model calls, summed: cached input is counted apart from new input.
+                AgentSignal::Usage(crate::adapters::Usage {
+                    model: None,
+                    input_tokens: 12083,
+                    output_tokens: 239,
+                    cache_read_tokens: 38144,
+                    cache_write_tokens: 0,
+                    cost_usd: None,
+                }),
                 AgentSignal::Finished {
                     ok: true,
                     session_id: Some("01a12ad3-384a-7890-b1fb-184383f3668f".into()),

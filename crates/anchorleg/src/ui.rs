@@ -15,13 +15,16 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use anchorleg_core::adapters::CreditState;
 use anchorleg_core::conversation::{self, Message, Role};
 use anchorleg_core::policy::{self, PickOptions};
 use anchorleg_core::registry::{
     Account, Config, Keychain, SecretStore, TokenFrom, Vendor, VendorSettings,
     accounts_from_aliases,
 };
-use anchorleg_core::store::{Permission, PermissionState, QuotaRow, Run, RunState, Store};
+use anchorleg_core::store::{
+    CreditsRow, Permission, PermissionState, QuotaRow, Run, RunState, Store, UsageTotal,
+};
 use anyhow::Context;
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -191,12 +194,15 @@ pub enum Action {
     /// Next switch policy (drain → balance → save-weekly), saved as the default.
     CyclePolicy,
     Help,
+    /// Show or hide the usage panel: tokens, cost, credits.
+    Usage,
     Quit,
 }
 
 pub struct App {
     pub focus: Focus,
     pub help: bool,
+    pub usage_panel: bool,
     pub config: Config,
     config_path: PathBuf,
     store: Store,
@@ -205,6 +211,12 @@ pub struct App {
     /// Where `Import` reads `alias` output from; `None` runs `$SHELL -ic alias`.
     alias_source: Option<PathBuf>,
     quota: Vec<QuotaRow>,
+    credits: Vec<CreditsRow>,
+    /// Tokens and cost over the last day and week, for the top bar and the usage panel.
+    usage_day: Vec<UsageTotal>,
+    usage_week: Vec<UsageTotal>,
+    /// Tokens per day over the last two weeks.
+    usage_days: Vec<(i64, u64, f64)>,
     runs: Vec<Run>,
     /// Tool calls waiting for the person, oldest first.
     pending: Vec<Permission>,
@@ -252,6 +264,7 @@ impl App {
         let mut app = Self {
             focus: Focus::Sessions,
             help: false,
+            usage_panel: false,
             config: Config::default(),
             config_path,
             store,
@@ -259,6 +272,10 @@ impl App {
             launcher,
             alias_source: None,
             quota: Vec::new(),
+            credits: Vec::new(),
+            usage_day: Vec::new(),
+            usage_week: Vec::new(),
+            usage_days: Vec::new(),
             runs: Vec::new(),
             pending: Vec::new(),
             alive: Vec::new(),
@@ -312,6 +329,11 @@ impl App {
     pub fn refresh(&mut self) -> anyhow::Result<()> {
         self.config = Config::load(&self.config_path)?;
         self.quota = self.store.quota(None)?;
+        self.credits = self.store.credits(None)?;
+        let t = now();
+        self.usage_day = self.store.usage_totals(t - 86_400)?;
+        self.usage_week = self.store.usage_totals(t - 7 * 86_400)?;
+        self.usage_days = self.store.usage_by_day(t - 14 * 86_400)?;
         let selected_id = self.selected_run().map(|r| r.id);
         self.runs = self.store.recent_runs(200)?;
         self.pending = self.store.pending_permissions()?;
@@ -449,6 +471,7 @@ impl App {
             Action::Import => self.import()?,
             Action::Remove => self.remove_agent()?,
             Action::Help => self.help = !self.help,
+            Action::Usage => self.usage_panel = !self.usage_panel,
             Action::Quit => self.quit = true,
         }
         Ok(())
@@ -778,8 +801,9 @@ impl App {
         if ctrl && key.code == KeyCode::Char('c') {
             return self.apply(Action::Quit);
         }
-        if self.help {
+        if self.help || self.usage_panel {
             self.help = false;
+            self.usage_panel = false;
             return Ok(());
         }
         let suggestions = self.suggestions();
@@ -852,6 +876,7 @@ impl App {
         let action = match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char('?') => Some(Action::Help),
+            KeyCode::Char('u') => Some(Action::Usage),
             KeyCode::Char('n') => Some(Action::NewSession),
             KeyCode::Char('/') | KeyCode::Char('m') => Some(Action::Focus(Focus::Composer)),
             KeyCode::Char('s') => Some(Action::Stop),
@@ -925,8 +950,9 @@ impl App {
         let over = |r: Option<Rect>| r.is_some_and(|r| r.contains(pos));
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.help {
+                if self.help || self.usage_panel {
                     self.help = false;
+                    self.usage_panel = false;
                     return Ok(());
                 }
                 if let Some(action) = self.action_at(pos) {
@@ -1006,6 +1032,11 @@ impl App {
                     Style::new().fg(Color::DarkGray),
                 ),
                 Span::styled(waiting_note(&self.pending), Style::new().fg(Color::Yellow)),
+                Span::styled(
+                    usage_note(&self.usage_day),
+                    Style::new().fg(Color::DarkGray),
+                ),
+                Span::styled(paying_note(&self.credits), Style::new().fg(Color::Red)),
             ])),
             top,
         );
@@ -1017,6 +1048,9 @@ impl App {
         self.draw_footer(f, footer);
         if self.help {
             draw_help(f);
+        }
+        if self.usage_panel {
+            self.draw_usage(f);
         }
     }
 
@@ -1139,6 +1173,22 @@ impl App {
             ];
             if a.pinned {
                 spans.push(Span::styled(" pinned", Style::new().fg(Color::DarkGray)));
+            }
+            match self
+                .credits
+                .iter()
+                .find(|c| c.account == a.name)
+                .map(|c| c.state)
+            {
+                Some(CreditState::InUse) => {
+                    spans.push(Span::styled(" paying", Style::new().fg(Color::Red)));
+                }
+                Some(CreditState::Available | CreditState::Unlimited)
+                    if a.credits != policy::CreditsUse::Never =>
+                {
+                    spans.push(Span::styled(" +credits", Style::new().fg(Color::DarkGray)));
+                }
+                _ => {}
             }
             let mut line = Line::from(spans);
             if self.focus == Focus::Agents && i == self.agent {
@@ -1424,6 +1474,7 @@ impl App {
             ("New (n)", Action::NewSession),
             ("Send (⏎)", Action::Send),
             ("Stop (s)", Action::Stop),
+            ("Usage (u)", Action::Usage),
             ("Help (?)", Action::Help),
             ("Quit (q)", Action::Quit),
         ] {
@@ -1436,6 +1487,106 @@ impl App {
                 msg,
             );
         }
+    }
+
+    /// The usage panel: per account and model over a day and a week, tokens per day, and
+    /// each account's usage credits.
+    fn draw_usage(&self, f: &mut Frame) {
+        let dim = Style::new().fg(Color::DarkGray);
+        let bold = Style::new().add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = Vec::new();
+        for (title, totals) in [
+            ("Last 24 hours", &self.usage_day),
+            ("Last 7 days", &self.usage_week),
+        ] {
+            lines.push(Line::from(Span::styled(title, bold)));
+            if totals.is_empty() {
+                lines.push(Line::from(Span::styled("  no runs", dim)));
+            }
+            for t in totals {
+                lines.push(Line::from(vec![
+                    Span::raw(format!(
+                        "  {:<14} {:<20} {:>4} runs  {:>7} in  {:>7} out  {:>7} cached  ",
+                        truncate(&t.account, 14),
+                        truncate(t.model.as_deref().unwrap_or("-"), 20),
+                        t.launches,
+                        crate::usage::count(t.input_tokens),
+                        crate::usage::count(t.output_tokens),
+                        crate::usage::count(t.cache_read_tokens + t.cache_write_tokens),
+                    )),
+                    Span::styled(
+                        t.cost_usd.map_or("-".to_owned(), |c| format!("${c:.2}")),
+                        Style::new().fg(Color::Green),
+                    ),
+                    Span::styled(
+                        t.credits_cost_usd
+                            .filter(|c| *c > 0.0)
+                            .map_or(String::new(), |c| format!("  (${c:.2} on credits)")),
+                        Style::new().fg(Color::Red),
+                    ),
+                ]));
+            }
+            lines.push(Line::raw(""));
+        }
+        let tokens: Vec<u64> = self.usage_days.iter().map(|d| d.1).collect();
+        if !tokens.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("Tokens per day (14d)  ", bold),
+                Span::styled(crate::usage::spark(&tokens), Style::new().fg(Color::Cyan)),
+            ]));
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::from(Span::styled("Usage credits", bold)));
+        let owned: Vec<&Account> = self.config.by_priority();
+        for a in owned {
+            let state = self.credits.iter().find(|c| c.account == a.name);
+            let (text, style) = match state.map(|c| (c.state, c.reason.as_deref())) {
+                None => ("not reported yet".to_owned(), dim),
+                Some((CreditState::Off, Some(r))) => (format!("off ({r})"), dim),
+                Some((CreditState::Off, None)) => ("off".to_owned(), dim),
+                Some((CreditState::Available, _)) => ("available".to_owned(), Style::new()),
+                Some((CreditState::Unlimited, _)) => ("unlimited".to_owned(), Style::new()),
+                Some((CreditState::InUse, _)) => {
+                    ("IN USE, paying".to_owned(), Style::new().fg(Color::Red))
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {:<16} ", truncate(&a.name, 16))),
+                Span::styled(format!("{text:<28}"), style),
+                Span::styled(format!("anchorleg may use: {}", a.credits.name()), dim),
+            ]));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "$ = API list price of the same tokens (Claude only); a subscription doesn't pay it.",
+            dim,
+        )));
+        lines.push(Line::from(Span::styled(
+            "Change with: anchorleg accounts set <name> --credits never|last-resort|allow",
+            dim,
+        )));
+
+        let area = f.area();
+        let w = 104.min(area.width.saturating_sub(4));
+        let h = u16::try_from(lines.len() + 2)
+            .unwrap_or(u16::MAX)
+            .min(area.height.saturating_sub(2));
+        let rect = Rect::new(
+            area.x + (area.width.saturating_sub(w)) / 2,
+            area.y + (area.height.saturating_sub(h)) / 2,
+            w,
+            h,
+        );
+        f.render_widget(Clear, rect);
+        f.render_widget(
+            Paragraph::new(lines).block(
+                Block::new()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(Color::Cyan))
+                    .title(" Usage · any key closes "),
+            ),
+            rect,
+        );
     }
 
     /// Draw a clickable label at `x` in row `area`; returns the x after it.
@@ -1464,6 +1615,7 @@ fn draw_help(f: &mut Frame) {
         "  n                 new session",
         "  / or m            type a message (new task or reply)",
         "  s                 stop the selected session",
+        "  u                 usage: tokens, API price, credits",
         "  r                 refresh      ?  this help      q  quit",
         "",
         "Sessions            ↑↓ select · Enter reply",
@@ -1511,6 +1663,38 @@ fn tool_label(tool: &str, input: &serde_json::Value) -> String {
     match text.split_once("  ") {
         Some((name, detail)) => format!("{name}({detail})"),
         None => text,
+    }
+}
+
+/// "· today 1.2M tokens · $3.40 API price" for the top bar, or nothing.
+fn usage_note(day: &[UsageTotal]) -> String {
+    let tokens: u64 = day
+        .iter()
+        .map(|t| t.input_tokens + t.output_tokens + t.cache_read_tokens + t.cache_write_tokens)
+        .sum();
+    if tokens == 0 {
+        return String::new();
+    }
+    let cost: f64 = day.iter().filter_map(|t| t.cost_usd).sum();
+    let cost = if cost > 0.0 {
+        format!(" · ${cost:.2} API price")
+    } else {
+        String::new()
+    };
+    format!("  · 24h {} tokens{cost} (u)", crate::usage::count(tokens))
+}
+
+/// "· claude-sm paying from credits" for the top bar, or nothing.
+fn paying_note(credits: &[CreditsRow]) -> String {
+    let paying: Vec<&str> = credits
+        .iter()
+        .filter(|c| c.state == CreditState::InUse)
+        .map(|c| c.account.as_str())
+        .collect();
+    if paying.is_empty() {
+        String::new()
+    } else {
+        format!("  · {} paying from credits", paying.join(", "))
     }
 }
 
@@ -2178,6 +2362,49 @@ mod tests {
         assert_eq!(fx.app.focus, Focus::Conversation);
         click(&mut fx.app, "Quit (q)");
         assert!(fx.app.quit);
+    }
+
+    #[test]
+    fn usage_panel_shows_tokens_cost_and_credits() {
+        use anchorleg_core::adapters::{Credits, Usage};
+        let mut fx = fixture(&[("sm", 1), ("two", 2)], &[]);
+        let usage = Usage {
+            model: Some("claude-haiku-5-5".into()),
+            input_tokens: 1_000,
+            output_tokens: 2_000,
+            cache_read_tokens: 50_000,
+            cache_write_tokens: 0,
+            cost_usd: Some(1.25),
+        };
+        fx.app
+            .store
+            .record_usage(None, "sm", &usage, false, now())
+            .unwrap();
+        let paying = Credits {
+            state: CreditState::InUse,
+            balance: None,
+            reason: None,
+        };
+        fx.app
+            .store
+            .record_credits("sm", &paying, anchorleg_core::store::Source::Stream, now())
+            .unwrap();
+        fx.app.refresh().unwrap();
+
+        let top = screen(&mut fx.app);
+        assert!(top.contains("24h 53.0k tokens · $1.25 API price"), "{top}");
+        assert!(top.contains("sm paying from credits"), "{top}");
+        assert!(top.contains("paying"), "{top}");
+
+        key(&mut fx.app, KeyCode::Char('u'));
+        let panel = screen(&mut fx.app);
+        assert!(panel.contains("Last 7 days"), "{panel}");
+        assert!(panel.contains("claude-haiku-5-5"), "{panel}");
+        assert!(panel.contains("$1.25"), "{panel}");
+        assert!(panel.contains("IN USE, paying"), "{panel}");
+        assert!(panel.contains("not reported yet"), "{panel}");
+        key(&mut fx.app, KeyCode::Char('x'));
+        assert!(!fx.app.usage_panel);
     }
 
     #[test]

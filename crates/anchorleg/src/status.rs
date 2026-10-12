@@ -4,7 +4,7 @@ use std::io::Read;
 
 use anchorleg_core::adapters::{QuotaReading, QuotaStatus, Window};
 use anchorleg_core::output::{self, Next, Report, StatusReport};
-use anchorleg_core::policy::PickOptions;
+use anchorleg_core::policy::{CreditsUse, PickOptions};
 use anchorleg_core::registry::Config;
 use anchorleg_core::store::{Source, Store};
 use anyhow::Context;
@@ -38,7 +38,13 @@ pub fn status(json: bool, refresh: bool) -> anyhow::Result<()> {
         policy: config.policy,
         ..PickOptions::default()
     };
-    let report = output::status(&config, &store.quota(None)?, now(), &opts);
+    let report = output::status(
+        &config,
+        &store.quota(None)?,
+        &store.credits(None)?,
+        now(),
+        &opts,
+    );
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -79,6 +85,9 @@ fn print_status(r: &StatusReport) {
                 window_cell(w.used, w.resets_at, r.now)
             ));
         }
+        if let Some(c) = &a.credits {
+            state.push_str(&format!("  credits {}", credits_cell(c, a.credits_use)));
+        }
         println!(
             "{:>4}  {:<16} {:<14} {:<14} {state}",
             a.priority,
@@ -97,6 +106,27 @@ fn print_status(r: &StatusReport) {
     println!("\nnext run: {next}  (policy {})", r.policy.name());
 }
 
+/// `available (last-resort)`, `off: out_of_credits`, `in use, $12.50 left`.
+pub fn credits_cell(c: &output::CreditsStatus, setting: CreditsUse) -> String {
+    use anchorleg_core::adapters::CreditState;
+    let mut s = match c.state {
+        CreditState::Off => match &c.reason {
+            Some(r) => format!("off: {r}"),
+            None => "off".to_owned(),
+        },
+        CreditState::Available => "available".to_owned(),
+        CreditState::InUse => "IN USE".to_owned(),
+        CreditState::Unlimited => "unlimited".to_owned(),
+    };
+    if let Some(b) = c.balance {
+        s.push_str(&format!(", {b} left"));
+    }
+    if c.state.spendable() {
+        s.push_str(&format!(" (use: {})", setting.name()));
+    }
+    s
+}
+
 fn window_cell(used: Option<f64>, resets_at: Option<i64>, now: i64) -> String {
     let pct = used.map_or_else(|| "?".to_owned(), |u| format!("{:.0}%", u * 100.0));
     match resets_at {
@@ -106,7 +136,7 @@ fn window_cell(used: Option<f64>, resets_at: Option<i64>, now: i64) -> String {
 }
 
 /// `3h05m`, `12m`, `40s`.
-fn ago(secs: i64) -> String {
+pub fn ago(secs: i64) -> String {
     let secs = secs.max(0);
     let (d, h, m) = (secs / 86_400, secs % 86_400 / 3600, secs % 3600 / 60);
     match (d, h, m) {

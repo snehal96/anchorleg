@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::AgentSignal;
+use super::{AgentSignal, Usage};
 
 /// Where agy keeps its state, relative to `HOME`.
 pub const DATA_DIR: &str = ".gemini/antigravity-cli";
@@ -263,45 +263,71 @@ pub fn signals(line: &str) -> Vec<AgentSignal> {
             None => Vec::new(),
         },
         Some("result") => {
-            let session_id = text("/result/conversation_id");
-            if v.pointer("/result/status").and_then(Value::as_str) == Some("SUCCESS") {
-                let response = text("/result/response")
-                    .map(|t| t.trim().to_owned())
-                    .filter(|t| !t.is_empty());
-                return vec![match denied(&v) {
-                    // Headless mode refused a tool and the agent stopped without an answer.
-                    Some(note) if response.is_none() => AgentSignal::Finished {
-                        ok: false,
-                        session_id,
-                        text: Some(note),
-                    },
-                    Some(note) => AgentSignal::Finished {
-                        ok: true,
-                        session_id,
-                        text: response.map(|r| format!("{r}\n\n({note})")),
-                    },
-                    None => AgentSignal::Finished {
-                        ok: true,
-                        session_id,
-                        text: response,
-                    },
-                }];
-            }
-            let error = text("/result/error").unwrap_or_else(|| "the turn failed".to_owned());
-            if is_limit(&error) {
-                vec![AgentSignal::LimitHit {
-                    window: None,
-                    resets_at: None,
-                }]
-            } else {
-                vec![AgentSignal::Finished {
-                    ok: false,
-                    session_id,
-                    text: Some(error),
-                }]
-            }
+            let mut out = usage(&v)
+                .map(AgentSignal::Usage)
+                .into_iter()
+                .collect::<Vec<_>>();
+            out.extend(result_signals(&v, &text));
+            out
         }
         _ => Vec::new(),
+    }
+}
+
+/// The run's tokens from `result.usage`. agy counts cache reads inside `input_tokens`.
+fn usage(v: &Value) -> Option<Usage> {
+    let u = v.pointer("/result/usage")?;
+    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cached = n("cache_read_tokens");
+    Some(Usage {
+        model: None,
+        input_tokens: n("input_tokens").saturating_sub(cached),
+        output_tokens: n("output_tokens") + n("thinking_tokens"),
+        cache_read_tokens: cached,
+        cache_write_tokens: 0,
+        cost_usd: None,
+    })
+    .filter(|u| !u.is_empty())
+}
+
+/// `Finished` or `LimitHit` from a `result` event.
+fn result_signals(v: &Value, text: &dyn Fn(&str) -> Option<String>) -> Vec<AgentSignal> {
+    let session_id = text("/result/conversation_id");
+    if v.pointer("/result/status").and_then(Value::as_str) == Some("SUCCESS") {
+        let response = text("/result/response")
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty());
+        return vec![match denied(v) {
+            // Headless mode refused a tool and the agent stopped without an answer.
+            Some(note) if response.is_none() => AgentSignal::Finished {
+                ok: false,
+                session_id,
+                text: Some(note),
+            },
+            Some(note) => AgentSignal::Finished {
+                ok: true,
+                session_id,
+                text: response.map(|r| format!("{r}\n\n({note})")),
+            },
+            None => AgentSignal::Finished {
+                ok: true,
+                session_id,
+                text: response,
+            },
+        }];
+    }
+    let error = text("/result/error").unwrap_or_else(|| "the turn failed".to_owned());
+    if is_limit(&error) {
+        vec![AgentSignal::LimitHit {
+            window: None,
+            resets_at: None,
+        }]
+    } else {
+        vec![AgentSignal::Finished {
+            ok: false,
+            session_id,
+            text: Some(error),
+        }]
     }
 }
 
