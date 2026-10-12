@@ -64,6 +64,17 @@ watches every account's quota, and when one gets close to its limit it:
 - **A session manager in your terminal.** `anchorleg ui` lists every session with its live
   conversation (in Claude Code's style), takes new tasks and replies, and shows each account's
   quota. Keyboard first; the mouse works too.
+- **Send screenshots and files.** Paste an image (Ctrl+V) or drop a file into `anchorleg ui`, or
+  pass `--attach`; both Claude Code and Codex read it, also after a switch.
+- **See what it changed.** `v` in the UI (or `anchorleg diff`) shows the session's own changes
+  since it started, and the agent's task list shows under the conversation as it works.
+- **Tells you when it needs you.** A desktop notification when a session waits for an answer,
+  finishes, fails or switches accounts; `anchorleg notify --command …` sends the same to your own
+  script (a chat bot, a phone push).
+- **Plan first.** `--plan` (or `/plan` in the UI): the agent plans in Claude's or Codex's plan
+  mode, you approve or say what to change, then the same session carries it out.
+- **The agent can ask you.** When Claude or Codex needs a decision, the question and its options
+  show up in `anchorleg ui` (or `anchorleg permission list`) and the run waits for your answer.
 - **You approve what the agent may do.** A background run can't show the CLI's permission
   prompt, so anchorleg asks you: the session waits until you press **1** yes, **2** yes for this
   session or **3** no. Works for Claude Code and Codex.
@@ -196,6 +207,7 @@ anchorleg ui
 | `Enter` | Send |
 | `1` `2` `3` | Answer a waiting tool call: yes · yes for this session · no |
 | `s` | Stop the selected session |
+| `v` | What the selected session changed (a diff) |
 | `Tab` | Next pane (in the message box: complete a slash command) |
 | `?` | All keys |
 
@@ -209,9 +221,14 @@ anchorleg run --follow-up 12 -- "now add a test for the expired-token case"
 anchorleg sessions                  # recent sessions
 anchorleg status                    # quota per account, and who runs next
 anchorleg usage                     # tokens and API-price cost per account and model, last 7 days
+anchorleg send 12 -- "also update the docs"   # message a working session (--interrupt: now)
+anchorleg run --attach error.png -- "fix this crash"   # attach images or files (also on send)
+anchorleg run --plan -- "split the auth module"         # plan first; approve, then it runs
 anchorleg stop 12                   # stop a session and its CLI
+anchorleg diff 12 --stat            # what the session changed since it started
 anchorleg permission list           # tool calls waiting for you
 anchorleg permission answer 3 yes   # yes | always | no
+anchorleg permission answer 4 2     # an agent's question: option number, label or your own words
 ```
 
 ### From another program

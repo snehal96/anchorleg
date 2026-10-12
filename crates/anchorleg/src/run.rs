@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use anchorleg_core::attachments;
+use anchorleg_core::notify::{self, Kind, Notice, NotifySettings};
 use anchorleg_core::output::SCHEMA;
 use anchorleg_core::output::{Outcome, RunReport};
 use anchorleg_core::registry::{Config, Keychain};
@@ -17,6 +19,31 @@ struct Stderr;
 impl Progress for Stderr {
     fn event(&self, message: &str) {
         eprintln!("anchorleg: {message}");
+    }
+}
+
+/// Passes progress on, and notifies the person of the moments that matter while they're away:
+/// a switch to another account, every account out.
+struct Notifying<'a> {
+    inner: &'a dyn Progress,
+    settings: &'a NotifySettings,
+    title: String,
+}
+
+impl Progress for Notifying<'_> {
+    fn event(&self, message: &str) {
+        self.inner.event(message);
+        let kind = if message.starts_with("switching ") {
+            Kind::Switched
+        } else if message.starts_with("every account is") {
+            Kind::Blocked
+        } else {
+            return;
+        };
+        notify::send(
+            self.settings,
+            &Notice::new(kind, None, &self.title, message),
+        );
     }
 }
 
@@ -42,7 +69,17 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         (None, None) => std::env::current_dir()?,
     };
 
-    let mut opts = RunOptions::new(args.prompt.join(" "), cwd);
+    let staged = attachments::stage(&cwd, &args.attach, now())?;
+    let mut opts = RunOptions::new(
+        attachments::with_note(&args.prompt.join(" "), &staged),
+        &cwd,
+    );
+    opts.images = staged
+        .iter()
+        .filter(|p| attachments::is_image(p))
+        .map(|p| cwd.join(p))
+        .collect();
+    opts.plan = args.plan;
     if let Some(p) = &parent {
         let (Some(session_id), Some(account)) = (p.session_id.clone(), p.account.clone()) else {
             anyhow::bail!(
@@ -77,7 +114,13 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         opts.mod_dir = Some(anchorleg_core::anchorleg_mod::install(dir)?);
     }
 
-    let progress: &dyn Progress = if args.json { &Quiet } else { &Stderr };
+    let inner: &dyn Progress = if args.json { &Quiet } else { &Stderr };
+    let title = opts.prompt.clone();
+    let progress = &Notifying {
+        inner,
+        settings: &config.notify,
+        title: title.clone(),
+    };
     let supervisor = Supervisor {
         config: &config,
         store: &store,
@@ -109,6 +152,32 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         }
         Ok(report)
     })?;
+
+    let ended = match report.outcome {
+        Outcome::Done => Some((Kind::Done, report.result.clone().unwrap_or_default())),
+        Outcome::Failed => Some((
+            Kind::Failed,
+            report
+                .result
+                .clone()
+                .unwrap_or_else(|| "the task failed".to_owned()),
+        )),
+        Outcome::AllBlocked => Some((Kind::Blocked, "every account is blocked".to_owned())),
+        // The person stopped it, or there's nothing to run on: they know.
+        Outcome::Stopped | Outcome::NoAccounts => None,
+    };
+    if let Some((kind, text)) = ended {
+        let what = match kind {
+            Kind::Done => "done",
+            Kind::Failed => "failed",
+            _ => "blocked",
+        };
+        let id = report.run_id.map_or(String::new(), |r| format!("#{r} "));
+        notify::send(
+            &config.notify,
+            &Notice::new(kind, report.run_id, &title, &format!("{id}{what}: {text}")),
+        );
+    }
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -229,5 +298,63 @@ pub fn stop(id: i64) -> anyhow::Result<()> {
         }
     }
     println!("stopping run {id}");
+    Ok(())
+}
+
+/// `anchorleg send`: a message for a session that's still working. Codex takes it into the
+/// running turn; Claude gets it as soon as its turn ends (or, with `interrupt`, at its next
+/// clean point), in the same run.
+pub fn send(id: i64, text: &str, interrupt: bool, attach: &[PathBuf]) -> anyhow::Result<()> {
+    let store = Store::open(&Store::default_path()?)?;
+    let run = store
+        .run(id)?
+        .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+    if run.pid.is_none() || !matches!(run.state, RunState::Running | RunState::Waiting) {
+        anyhow::bail!("run {id} isn't working; reply with `anchorleg run --follow-up {id} -- …`");
+    }
+    if text.trim().is_empty() && attach.is_empty() {
+        anyhow::bail!("nothing to send");
+    }
+    let staged = attachments::stage(Path::new(&run.cwd), attach, now())?;
+    store.queue_message(
+        id,
+        attachments::with_note(text.trim(), &staged).trim(),
+        interrupt,
+        now(),
+    )?;
+    println!(
+        "{} for run {id}",
+        if interrupt {
+            "interrupting; sent"
+        } else {
+            "sent"
+        }
+    );
+    Ok(())
+}
+
+/// For anchorleg-mod, before each model request: exit 0 when the person asked this run to stop
+/// for a new message, 1 otherwise.
+pub fn interrupt_check(id: i64) -> anyhow::Result<bool> {
+    let store = Store::open(&Store::default_path()?)?;
+    Ok(store.interrupt_requested(id)?)
+}
+
+/// `anchorleg diff <run>`: the session's changes since it started.
+pub fn diff(id: i64, stat: bool) -> anyhow::Result<()> {
+    let store = Store::open(&Store::default_path()?)?;
+    let run = store
+        .run(id)?
+        .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+    let chain = store.session_runs(id)?;
+    match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, stat)? {
+        Some(d) if d.is_empty() => println!("no changes since #{id}'s session started"),
+        Some(d) => println!("{d}"),
+        None => anyhow::bail!(
+            "nothing to compare: {} isn't a git repository, or the session started before \
+             anchorleg recorded starts",
+            run.cwd
+        ),
+    }
     Ok(())
 }

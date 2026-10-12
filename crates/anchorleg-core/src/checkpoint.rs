@@ -55,24 +55,16 @@ pub fn status(cwd: &Path) -> Option<String> {
     git(cwd, &["status", "--short", "--untracked-files=all"], None).ok()
 }
 
-/// Save the working tree as `refs/anchorleg/run-<run_id>/<n>`. `Ok(None)`: not a repository, or
-/// nothing changed since `HEAD`.
-pub fn save(
-    cwd: &Path,
-    run_id: i64,
-    n: usize,
-    message: &str,
-) -> Result<Option<Checkpoint>, GitError> {
-    let Some(top) = toplevel(cwd) else {
-        return Ok(None);
-    };
+/// The working tree as a git tree id, built in a scratch index (`git add -A` into a copy of the
+/// real index): untracked files are in, ignored ones out, the real index is untouched.
+fn snapshot_tree(top: &Path) -> Result<String, GitError> {
     let real_index = PathBuf::from(git(
-        &top,
+        top,
         &["rev-parse", "--path-format=absolute", "--git-path", "index"],
         None,
     )?);
     let scratch = PathBuf::from(git(
-        &top,
+        top,
         &[
             "rev-parse",
             "--path-format=absolute",
@@ -87,31 +79,111 @@ pub fn save(
             message: e.to_string(),
         })?;
     }
-    let result = (|| {
-        git(&top, &["add", "-A", "--", "."], Some(&scratch))?;
-        let tree = git(&top, &["write-tree"], Some(&scratch))?;
-        let head = git(
-            &top,
-            &["rev-parse", "--verify", "-q", "HEAD^{commit}"],
-            None,
-        )
-        .ok();
-        if let Some(h) = &head
-            && git(&top, &["rev-parse", &format!("{h}^{{tree}}")], None)? == tree
-        {
-            return Ok(None);
-        }
-        let mut args = vec!["commit-tree", tree.as_str(), "-m", message];
-        if let Some(h) = &head {
-            args.extend(["-p", h.as_str()]);
-        }
-        let commit = git(&top, &args, None)?;
-        let refname = format!("refs/anchorleg/run-{run_id}/{n}");
-        git(&top, &["update-ref", &refname, &commit], None)?;
-        Ok(Some(Checkpoint { refname, commit }))
-    })();
+    let tree = git(top, &["add", "-A", "--", "."], Some(&scratch))
+        .and_then(|_| git(top, &["write-tree"], Some(&scratch)));
     let _ = std::fs::remove_file(&scratch);
-    result
+    tree
+}
+
+fn head(top: &Path) -> Option<String> {
+    git(top, &["rev-parse", "--verify", "-q", "HEAD^{commit}"], None).ok()
+}
+
+/// Save the working tree as `refs/anchorleg/run-<run_id>/<n>`. `Ok(None)`: not a repository, or
+/// nothing changed since `HEAD`.
+pub fn save(
+    cwd: &Path,
+    run_id: i64,
+    n: usize,
+    message: &str,
+) -> Result<Option<Checkpoint>, GitError> {
+    let Some(top) = toplevel(cwd) else {
+        return Ok(None);
+    };
+    let tree = snapshot_tree(&top)?;
+    let head = head(&top);
+    if let Some(h) = &head
+        && git(&top, &["rev-parse", &format!("{h}^{{tree}}")], None)? == tree
+    {
+        return Ok(None);
+    }
+    let refname = format!("refs/anchorleg/run-{run_id}/{n}");
+    commit_ref(&top, &tree, head.as_deref(), message, &refname).map(Some)
+}
+
+fn commit_ref(
+    top: &Path,
+    tree: &str,
+    parent: Option<&str>,
+    message: &str,
+    refname: &str,
+) -> Result<Checkpoint, GitError> {
+    let mut args = vec!["commit-tree", tree, "-m", message];
+    if let Some(h) = parent {
+        args.extend(["-p", h]);
+    }
+    let commit = git(top, &args, None)?;
+    git(top, &["update-ref", refname, &commit], None)?;
+    Ok(Checkpoint {
+        refname: refname.to_owned(),
+        commit,
+    })
+}
+
+/// The ref holding the working tree as a run found it.
+pub fn start_ref(run_id: i64) -> String {
+    format!("refs/anchorleg/run-{run_id}/start")
+}
+
+/// Save the working tree as the run starts (`refs/anchorleg/run-<id>/start`), even when it
+/// matches `HEAD`, so the session's own changes can be shown later ([`diff_since_start`]).
+/// `Ok(None)` outside a repository.
+pub fn save_start(cwd: &Path, run_id: i64) -> Result<Option<Checkpoint>, GitError> {
+    let Some(top) = toplevel(cwd) else {
+        return Ok(None);
+    };
+    let tree = snapshot_tree(&top)?;
+    let head = head(&top);
+    commit_ref(
+        &top,
+        &tree,
+        head.as_deref(),
+        &format!("anchorleg: run {run_id} started"),
+        &start_ref(run_id),
+    )
+    .map(Some)
+}
+
+/// What changed in a session: since the oldest of `runs` (a run and its follow-ups, any order of
+/// ids) that saved a start. `Ok(None)`: not a repository, or none did.
+pub fn session_diff(cwd: &Path, runs: &[i64], stat: bool) -> Result<Option<String>, GitError> {
+    let mut ids = runs.to_vec();
+    ids.sort_unstable();
+    for id in ids {
+        if let Some(d) = diff_since_start(cwd, id, stat)? {
+            return Ok(Some(d));
+        }
+    }
+    Ok(None)
+}
+
+/// What changed in the working tree since run `run_id` started: `git diff` (or `--stat`), new
+/// files included. `Ok(None)`: not a repository, or that run saved no start.
+pub fn diff_since_start(cwd: &Path, run_id: i64, stat: bool) -> Result<Option<String>, GitError> {
+    let Some(top) = toplevel(cwd) else {
+        return Ok(None);
+    };
+    let start = format!("{}^{{tree}}", start_ref(run_id));
+    if git(&top, &["rev-parse", "--verify", "-q", &start], None).is_err() {
+        return Ok(None);
+    }
+    let now = snapshot_tree(&top)?;
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
+    if stat {
+        args.push("--stat");
+    }
+    args.extend([start.as_str(), now.as_str()]);
+    git(&top, &args, None).map(Some)
 }
 
 #[cfg(test)]
@@ -125,6 +197,32 @@ mod tests {
         git(dir.path(), &["add", "a.txt"], None).unwrap();
         git(dir.path(), &["commit", "-q", "-m", "init"], None).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_session_diff_starts_where_the_run_did() {
+        let dir = repo();
+        let p = dir.path();
+        // The person's own uncommitted change before the run isn't the session's.
+        std::fs::write(p.join("a.txt"), "mine\n").unwrap();
+        save_start(p, 7).unwrap().unwrap();
+        assert_eq!(diff_since_start(p, 7, false).unwrap().unwrap(), "");
+        std::fs::write(p.join("a.txt"), "mine\nagent\n").unwrap();
+        std::fs::write(p.join("new.txt"), "hello\n").unwrap();
+        let diff = diff_since_start(p, 7, false).unwrap().unwrap();
+        assert!(diff.contains("+agent") && !diff.contains("+mine"), "{diff}");
+        assert!(
+            diff.contains("new file mode") && diff.contains("+hello"),
+            "{diff}"
+        );
+        let stat = diff_since_start(p, 7, true).unwrap().unwrap();
+        assert!(stat.contains("2 files changed"), "{stat}");
+        assert_eq!(diff_since_start(p, 8, false).unwrap(), None);
+        // Nothing staged by it.
+        assert_eq!(
+            git(p, &["diff", "--cached", "--name-only"], None).unwrap(),
+            ""
+        );
     }
 
     #[test]

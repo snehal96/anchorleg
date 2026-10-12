@@ -17,7 +17,9 @@ real app server (fixtures/codex-0.153.4-app-server-*).
   $FAKE_DIR/answers.log; a "cancel" ends the turn as interrupted, like the real CLI. After an
   `account/rateLimits/updated` it waits a moment for a `turn/interrupt` (anchorleg's soft stop),
   which ends the turn as interrupted and is appended to $FAKE_DIR/interrupts.log. A later turn
-  in the same launch plays $FAKE_DIR/X.followup.jsonl.
+  in the same launch plays $FAKE_DIR/X.followup.jsonl. A script line {"fake":"wait_steer"} holds
+  the turn until anchorleg sends `turn/steer` (appended to $FAKE_DIR/steers.log; the turn goes
+  on) or `turn/interrupt` (the turn ends interrupted), 10 s at most.
 """
 
 import glob
@@ -30,6 +32,14 @@ account = os.path.basename(os.environ["CODEX_HOME"].rstrip("/"))
 fake = os.environ["FAKE_DIR"]
 args = sys.argv[1:]
 pre_args = args[: args.index("app-server")] if "app-server" in args else args
+# Feature switches (`-c features.X=true`) go to their own log, so calls.log stays about turns.
+features = [pre_args[i + 1] for i, a in enumerate(pre_args[:-1]) if a == "-c" and pre_args[i + 1].startswith("features.")]
+for f in features:
+    i = pre_args.index(f)
+    pre_args = pre_args[: i - 1] + pre_args[i + 1 :]
+if features:
+    with open(f"{fake}/features.log", "a") as f:
+        f.write(f"{account} {' '.join(features)}\n")
 
 
 def send(msg):
@@ -48,6 +58,7 @@ def rollout(tid):
 
 
 thread = None  # (method, params, tid)
+experimental = False
 turns = 0
 script_lines = []
 while True:
@@ -57,6 +68,7 @@ while True:
     method = msg.get("method")
     params = msg.get("params") or {}
     if method == "initialize":
+        experimental = bool((params.get("capabilities") or {}).get("experimentalApi"))
         send({"id": msg["id"], "result": {"userAgent": "fake-codex"}})
     elif method == "account/rateLimits/read":
         with open(f"{fake}/probes.log", "a") as f:
@@ -95,7 +107,7 @@ while True:
             f.write('{"type":"session_meta"}\n')
             if os.path.exists(f"{fake}/{account}.rollout.jsonl"):
                 f.write(open(f"{fake}/{account}.rollout.jsonl").read())
-        send({"id": msg["id"], "result": {"thread": {"id": tid, "path": path}}})
+        send({"id": msg["id"], "result": {"thread": {"id": tid, "path": path}, "model": params.get("model") or "gpt-default"}})
     elif method == "turn/start":
         turns += 1
         how, tp, tid = thread
@@ -106,6 +118,12 @@ while True:
             f"effort={params.get('effort')} sandbox={tp.get('sandbox')} "
             f"approval={tp.get('approvalPolicy')} -- {text}"
         ).replace("  ", " ")
+        images = [i["path"] for i in params.get("input", []) if i.get("type") == "localImage"]
+        if images:
+            line += " [images: " + ", ".join(os.path.basename(i) for i in images) + "]"
+        mode = params.get("collaborationMode")
+        if mode:
+            line += f" [mode: {mode['mode']} model={mode['settings'].get('model')} experimental={experimental}]"
         with open(os.environ["FAKE_LOG"], "a") as f:
             f.write(line + "\n")
         send({"id": msg["id"], "result": {"turn": {"id": f"u{turns}", "status": "inProgress"}}})
@@ -117,6 +135,21 @@ while True:
             if not l.strip():
                 continue
             out = json.loads(l)
+            if out.get("fake") == "wait_steer":
+                # Hold the turn open until anchorleg steers or interrupts it (10 s at most).
+                ready, _, _ = select.select([sys.stdin], [], [], 10.0)
+                incoming = read() if ready else None
+                if incoming and incoming.get("method") == "turn/steer":
+                    with open(f"{fake}/steers.log", "a") as f:
+                        f.write(json.dumps(incoming) + "\n")
+                    send({"id": incoming["id"], "result": {"turnId": f"u{turns}"}})
+                elif incoming and incoming.get("method") == "turn/interrupt":
+                    with open(f"{fake}/interrupts.log", "a") as f:
+                        f.write(json.dumps(incoming) + "\n")
+                    send({"id": incoming["id"], "result": {}})
+                    send({"method": "turn/completed", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "interrupted", "error": None}}})
+                    break
+                continue
             send(out)
             if out.get("method") == "account/rateLimits/updated":
                 ready, _, _ = select.select([sys.stdin], [], [], 2.0)

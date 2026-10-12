@@ -17,7 +17,7 @@ use serde_json::json;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::claude::{self, sync_context};
-use crate::adapters::codex_server::{self, Asker, Event};
+use crate::adapters::codex_server::{self, Asker, Event, Steer};
 use crate::adapters::{AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus};
 use crate::adapters::{agy, codex};
 use crate::output::{Outcome, RunReport, SCHEMA, Switch};
@@ -75,6 +75,12 @@ pub struct RunOptions {
     pub prefer: Option<String>,
     /// Only ever use this account.
     pub only: Option<String>,
+    /// Attached images (absolute paths). Codex gets them as image input; every CLI also finds
+    /// them named in the prompt.
+    pub images: Vec<PathBuf>,
+    /// Plan first: the agent only plans (Claude's plan mode, Codex's plan collaboration mode)
+    /// until the person approves the plan; then the same session carries it out (D38).
+    pub plan: bool,
 }
 
 /// An existing session to continue with a new message.
@@ -105,6 +111,8 @@ impl RunOptions {
             policy: policy::Policy::Drain,
             prefer: None,
             only: None,
+            images: Vec::new(),
+            plan: false,
         }
     }
 }
@@ -121,6 +129,17 @@ impl Feed {
             Self::Lines(lines) => Ok(lines.next_line().await?.map(Event::Line)),
             Self::Codex(rx) => Ok(rx.recv().await),
         }
+    }
+}
+
+/// The next event, or `None` once `deadline` passes first.
+async fn next_item(
+    source: &mut Feed,
+    deadline: Option<tokio::time::Instant>,
+) -> Option<std::io::Result<Option<Event>>> {
+    match deadline {
+        Some(d) => tokio::time::timeout_at(d, source.next()).await.ok(),
+        None => Some(source.next().await),
     }
 }
 
@@ -179,6 +198,22 @@ const LIVE_QUOTA_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Prompt for a resumed session on the next account.
 pub const CONTINUE_PROMPT: &str = "Continue from where you stopped.";
+
+/// Added to the task when planning on a CLI without a plan hand-over of its own (Claude's
+/// ExitPlanMode isn't offered in `-p`; agy has no plan mode).
+const PLAN_NOTE: &str = "Plan only for now: don't change any files. Investigate as needed, \
+     then end your reply with the complete plan. anchorleg will ask me to approve it; you'll \
+     get my answer as the next message.";
+
+/// The message that ends planning.
+const PLAN_APPROVED: &str =
+    "The plan is approved. Plan mode is over: carry out the plan now, step by step.";
+
+/// The person's answer to a finished plan.
+enum PlanAnswer {
+    Approved,
+    Change(String),
+}
 
 /// Prompt for a fresh session that takes over from a stopped one.
 fn handoff_prompt(task_md: Option<&str>, task: &str) -> String {
@@ -255,6 +290,8 @@ struct Attempt {
 struct Spend {
     stop_at: f64,
     may_spend: bool,
+    /// Plan only: nothing may change yet.
+    plan: bool,
 }
 
 /// How the next launch continues the task.
@@ -262,6 +299,8 @@ enum Continue {
     Start,
     /// The user's message, sent into an existing session.
     Reply(String),
+    /// Messages the person sent while the session was working (session id, text).
+    Message(String, String),
     Resume(String),
     Fresh,
 }
@@ -278,6 +317,10 @@ impl Supervisor<'_> {
             opts.follow_up.as_ref().map(|f| f.parent),
             self.now(),
         )?;
+        // The folder as the run found it, so the session's own changes can be shown (D40).
+        if let Err(e) = crate::checkpoint::save_start(&opts.cwd, run_id) {
+            tracing::warn!(%e, "couldn't save the run's start");
+        }
         let mut report = RunReport {
             schema: SCHEMA,
             run_id: Some(run_id),
@@ -310,6 +353,8 @@ impl Supervisor<'_> {
         );
         let mut fresh_tries = 0;
         let mut launches = 0;
+        // Plan first (D38): only planning until the person approves the plan.
+        let mut planning = opts.plan;
         // Set when the mod stopped the last launch at a clean point (soft switch).
         let mut soft_stop_from: Option<&Account> = None;
         // An account that keeps running with the mod's stop off: nothing better to switch to.
@@ -471,6 +516,7 @@ impl Supervisor<'_> {
             let (prompt, resume) = match &next {
                 Continue::Start => (opts.prompt.clone(), None),
                 Continue::Reply(sid) => (opts.prompt.clone(), Some(sid.as_str())),
+                Continue::Message(sid, text) => (text.clone(), Some(sid.as_str())),
                 Continue::Resume(sid) => (CONTINUE_PROMPT.to_owned(), Some(sid.as_str())),
                 Continue::Fresh => (
                     handoff_prompt(written.as_ref().map(|w| w.task_md.as_str()), &opts.prompt),
@@ -498,7 +544,11 @@ impl Supervisor<'_> {
                     account,
                     &prompt,
                     resume,
-                    Spend { stop_at, may_spend },
+                    Spend {
+                        stop_at,
+                        may_spend,
+                        plan: planning,
+                    },
                     opts,
                 )
                 .await?;
@@ -584,6 +634,37 @@ impl Supervisor<'_> {
                 next = Continue::Fresh;
                 continue;
             }
+            // Messages the person sent while it worked continue the same session, here and now.
+            if let Some(sid) = report.session_id.clone()
+                && let Some(text) = self.take_queued(opts, run_id)?
+            {
+                launches = 0;
+                next = Continue::Message(sid, text);
+                continue;
+            }
+            // A finished plan waits for the person: approved → the same session carries it out;
+            // their words → it revises the plan. No answer: the run ends with the plan.
+            if planning
+                && let Some((true, Some(_))) = &attempt.finished
+                && let Some(sid) = report.session_id.clone()
+                && let Some(answer) = self.approve_plan(opts, run_id).await
+            {
+                launches = 0;
+                let text = match answer {
+                    PlanAnswer::Approved => {
+                        planning = false;
+                        PLAN_APPROVED.to_owned()
+                    }
+                    PlanAnswer::Change(words) => format!("Change the plan: {words}"),
+                };
+                self.log_line(
+                    opts,
+                    run_id,
+                    &json!({ "type": "anchorleg_user", "text": text }),
+                );
+                next = Continue::Message(sid, text);
+                continue;
+            }
             match attempt.finished {
                 Some((ok, text)) => {
                     report.result = text;
@@ -647,7 +728,12 @@ impl Supervisor<'_> {
         opts: &RunOptions,
     ) -> Result<(), RunError> {
         let at = self.now();
-        if from.vendor != to.vendor && matches!(next, Continue::Resume(_) | Continue::Reply(_)) {
+        if from.vendor != to.vendor
+            && matches!(
+                next,
+                Continue::Resume(_) | Continue::Reply(_) | Continue::Message(..)
+            )
+        {
             self.note(
                 opts,
                 run_id,
@@ -674,7 +760,9 @@ impl Supervisor<'_> {
             *next = Continue::Fresh;
         }
         let synced = match &*next {
-            Continue::Resume(sid) | Continue::Reply(sid) => self.sync_session(from, to, sid),
+            Continue::Resume(sid) | Continue::Reply(sid) | Continue::Message(sid, _) => {
+                self.sync_session(from, to, sid)
+            }
             _ => None,
         };
         self.decide(
@@ -787,7 +875,11 @@ impl Supervisor<'_> {
         account: &Account,
         prompt: &str,
         resume: Option<&str>,
-        Spend { stop_at, may_spend }: Spend,
+        Spend {
+            stop_at,
+            may_spend,
+            plan,
+        }: Spend,
         opts: &RunOptions,
     ) -> Result<Attempt, RunError> {
         let mut launch = self.config.launch(account, self.secrets, &self.home)?;
@@ -795,6 +887,29 @@ impl Supervisor<'_> {
             // An exec-only flag `codex app-server` rejects; anchorleg's defaults do the same.
             launch.args.retain(|a| a != "--full-auto");
         }
+        if plan && account.vendor == Vendor::Claude {
+            // Plan mode replaces the person's own permission mode for this launch.
+            let mut args = std::mem::take(&mut launch.args).into_iter();
+            while let Some(a) = args.next() {
+                if a == "--permission-mode" {
+                    args.next();
+                } else if !a.starts_with("--permission-mode=") {
+                    launch.args.push(a);
+                }
+            }
+            launch
+                .args
+                .extend(["--permission-mode".to_owned(), "plan".to_owned()]);
+        }
+        // Claude's plan mode can't end with its ExitPlanMode tool in `-p`, and agy has no plan
+        // mode: say how a plan is handed over.
+        let planned;
+        let prompt = if plan && account.vendor != Vendor::Codex {
+            planned = format!("{prompt}\n\n{PLAN_NOTE}");
+            planned.as_str()
+        } else {
+            prompt
+        };
         let mut cmd = launch.command();
         let mut codex_turn: Option<codex_server::Turn> = None;
         // The provider's model and effort, shared by all its accounts (D20); `--model` on
@@ -846,8 +961,14 @@ impl Supervisor<'_> {
             }
             // The app server can ask before a command or an edit; `exec` can't (D27). Model,
             // effort, sandbox and approvals go in the thread and turn requests.
-            cmd.arg("app-server");
             let args = &launch.args;
+            // Codex offers `request_user_input` outside plan mode only with this feature (D36).
+            // `-c`, not `--enable`: a Codex that doesn't know the feature ignores it.
+            if opts.relay_bin.is_some() && !args.iter().any(|a| a.contains(codex::ASK_FEATURE)) {
+                cmd.arg("-c")
+                    .arg(format!("features.{}=true", codex::ASK_FEATURE));
+            }
+            cmd.arg("app-server");
             let picks_approvals = args.iter().any(|a| {
                 a == "-a"
                     || a.starts_with("--ask-for-approval")
@@ -863,7 +984,11 @@ impl Supervisor<'_> {
                     .clone()
                     .or_else(|| shared.and_then(|s| s.model.clone())),
                 effort: shared.and_then(|s| s.effort.clone()),
-                sandbox: (!codex::sets_sandbox(args)).then(|| "workspace-write".to_owned()),
+                sandbox: if plan {
+                    Some("read-only".to_owned())
+                } else {
+                    (!codex::sets_sandbox(args)).then(|| "workspace-write".to_owned())
+                },
                 // Nobody to ask without anchorleg's binary: Codex then decides alone, as `exec` did.
                 approval: (!picks_approvals).then(|| {
                     if opts.relay_bin.is_some() {
@@ -874,6 +999,16 @@ impl Supervisor<'_> {
                     .to_owned()
                 }),
                 stop_at,
+                // Only the person's own message carries them, not a "continue" after a switch.
+                images: match resume {
+                    Some(_) if prompt == CONTINUE_PROMPT => Vec::new(),
+                    _ => opts
+                        .images
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect(),
+                },
+                plan,
             });
         } else {
             if let Some(dir) = &opts.mod_dir {
@@ -915,14 +1050,25 @@ impl Supervisor<'_> {
                 source,
             })?;
         let stdout = child.stdout.take().expect("stdout is piped");
+        // Messages the person sends while a Codex turn runs go straight into it (`turn/steer`).
+        let mut steer_tx: Option<tokio::sync::mpsc::UnboundedSender<Steer>> = None;
         let mut source = match codex_turn {
             Some(turn) => {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                let (stx, srx) = tokio::sync::mpsc::unbounded_channel();
+                steer_tx = Some(stx);
                 let stdin = child.stdin.take().expect("stdin is piped");
                 let asker = opts.relay_bin.clone().map(|bin| Asker { bin, run_id });
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        codex_server::drive(BufReader::new(stdout), stdin, turn, asker, tx).await
+                    if let Err(e) = codex_server::drive(
+                        BufReader::new(stdout),
+                        stdin,
+                        turn,
+                        asker,
+                        tx,
+                        Some(srx),
+                    )
+                    .await
                     {
                         tracing::warn!(%e, "talking to codex app-server");
                     }
@@ -938,18 +1084,36 @@ impl Supervisor<'_> {
         };
         let mut deadline: Option<tokio::time::Instant> = None;
         let mut codex_stream = codex::Stream::default();
+        let mut tick = tokio::time::interval(Duration::from_millis(500));
+        // Queued messages already handed to the Codex driver.
+        let mut forwarded: Vec<i64> = Vec::new();
 
         loop {
-            let item = match deadline {
-                Some(d) => match tokio::time::timeout_at(d, source.next()).await {
-                    Ok(item) => item?,
-                    Err(_) => {
+            let item = tokio::select! {
+                item = next_item(&mut source, deadline) => match item {
+                    Some(item) => item?,
+                    None => {
                         tracing::warn!(account = %account.name, "CLI still running after its limit hit; killing it");
                         child.start_kill()?;
                         break;
                     }
                 },
-                None => source.next().await?,
+                _ = tick.tick(), if steer_tx.is_some() => {
+                    if let Some(tx) = &steer_tx {
+                        for m in self.store.queued_messages(run_id)? {
+                            if forwarded.contains(&m.id) {
+                                continue;
+                            }
+                            forwarded.push(m.id);
+                            let _ = tx.send(if m.interrupt {
+                                Steer::Interrupt
+                            } else {
+                                Steer::Text { id: m.id, text: m.text }
+                            });
+                        }
+                    }
+                    continue;
+                }
             };
             let line = match item {
                 None => break,
@@ -974,6 +1138,22 @@ impl Supervisor<'_> {
                 }
                 Some(Event::Stopped(reason)) => {
                     attempt.soft_stop = Some(reason);
+                    continue;
+                }
+                Some(Event::Steered(id)) => {
+                    if let Some(m) = self
+                        .store
+                        .queued_messages(run_id)?
+                        .into_iter()
+                        .find(|m| m.id == id)
+                        && self.store.take_message(id, self.now())?
+                    {
+                        self.log_line(
+                            opts,
+                            run_id,
+                            &json!({ "type": "anchorleg_user", "text": m.text }),
+                        );
+                    }
                     continue;
                 }
             };
@@ -1111,6 +1291,40 @@ impl Supervisor<'_> {
             AgentSignal::Retrying { .. } => {}
         }
         Ok(())
+    }
+
+    /// Ask the person to approve the plan the agent just finished. `None`: nobody to ask, or
+    /// no answer (skipped, expired).
+    async fn approve_plan(&self, opts: &RunOptions, run_id: i64) -> Option<PlanAnswer> {
+        let bin = opts.relay_bin.as_ref()?;
+        self.note(opts, run_id, "plan ready; waiting for your approval");
+        let q = crate::questions::plan_question();
+        let answers = codex_server::ask_questions_of(bin, run_id, std::slice::from_ref(&q)).await?;
+        let answer = answers.get(&q.id)?.first()?.trim().to_owned();
+        match answer.as_str() {
+            "" => None,
+            crate::questions::PLAN_APPROVE => Some(PlanAnswer::Approved),
+            crate::questions::PLAN_REVISE => Some(PlanAnswer::Change(
+                "look again and improve it; ask me if anything is unclear.".to_owned(),
+            )),
+            _ => Some(PlanAnswer::Change(answer)),
+        }
+    }
+
+    /// Every message waiting for this run, marked delivered and logged as the person's words.
+    fn take_queued(&self, opts: &RunOptions, run_id: i64) -> Result<Option<String>, RunError> {
+        let mut texts = Vec::new();
+        for m in self.store.queued_messages(run_id)? {
+            if self.store.take_message(m.id, self.now())? {
+                self.log_line(
+                    opts,
+                    run_id,
+                    &json!({ "type": "anchorleg_user", "text": m.text }),
+                );
+                texts.push(m.text);
+            }
+        }
+        Ok((!texts.is_empty()).then(|| texts.join("\n\n")))
     }
 
     /// A credit report: remember it, and stop a launch that began paying without permission.

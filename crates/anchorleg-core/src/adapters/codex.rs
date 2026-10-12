@@ -17,6 +17,10 @@ use super::{
 /// Where the ChatGPT desktop app keeps its copy of the official CLI.
 pub const BUNDLED_BIN: &str = "/Applications/ChatGPT.app/Contents/Resources/codex";
 
+/// Codex feature that offers `request_user_input` outside plan mode (off by default in 0.153.4,
+/// "under development"). anchorleg turns it on when it can forward the questions (D36).
+pub const ASK_FEATURE: &str = "default_mode_request_user_input";
+
 /// `-c` value that lets `codex exec` edit the working folder (its default is read-only).
 pub const WORKSPACE_WRITE: &str = "sandbox_mode=\"workspace-write\"";
 

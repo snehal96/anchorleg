@@ -23,6 +23,10 @@ fn anchorleg(config: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("anchorleg").unwrap();
     let home = config.parent().unwrap().join("anchorleg-home");
     cmd.env("ANCHORLEG_CONFIG", config)
+        .env(
+            "ANCHORLEG_NOTIFY_LOG",
+            config.parent().unwrap().join("notify.log"),
+        )
         .env("ANCHORLEG_HOME", home)
         .env("HOME", "/Users/me");
     cmd
@@ -181,4 +185,42 @@ fn report_rejects_bad_input() {
             .assert()
             .failure();
     }
+}
+
+#[test]
+fn notify_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    anchorleg(&config)
+        .args(["notify"])
+        .assert()
+        .success()
+        .stdout("desktop  on\ncommand  (none)\n");
+    anchorleg(&config)
+        .args([
+            "notify",
+            "--desktop",
+            "off",
+            "--command",
+            "say done",
+            "--test",
+        ])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "desktop  off\ncommand  say done\nsent a test notice",
+        ));
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        saved.contains("[notify]") && saved.contains("desktop = false"),
+        "{saved}"
+    );
+    let log = std::fs::read_to_string(dir.path().join("notify.log")).unwrap();
+    assert!(log.contains(r#""event":"test""#), "{log}");
+    anchorleg(&config)
+        .args(["notify", "--desktop", "on", "--no-command"])
+        .assert()
+        .success();
+    // Back to the defaults: nothing left in the file.
+    assert!(!std::fs::read_to_string(&config).unwrap().contains("notify"));
 }

@@ -68,6 +68,43 @@ pub fn policy(new: Option<anchorleg_core::policy::Policy>) -> anyhow::Result<()>
     Ok(())
 }
 
+/// `anchorleg notify`: change what's given, then show the settings.
+pub fn notify(
+    desktop: Option<bool>,
+    command: Option<String>,
+    no_command: bool,
+    test: bool,
+) -> anyhow::Result<()> {
+    use anchorleg_core::notify::{self, Kind, Notice};
+    let path = Config::default_path()?;
+    let mut config = Config::load(&path)?;
+    if desktop.is_some() || command.is_some() || no_command {
+        if let Some(d) = desktop {
+            config.notify.desktop = d;
+        }
+        if let Some(c) = command {
+            config.notify.command = Some(c).filter(|c| !c.trim().is_empty());
+        }
+        if no_command {
+            config.notify.command = None;
+        }
+        config.save(&path)?;
+    }
+    let n = &config.notify;
+    println!("desktop  {}", if n.desktop { "on" } else { "off" });
+    println!("command  {}", n.command.as_deref().unwrap_or("(none)"));
+    if test {
+        notify::send(
+            n,
+            &Notice::new(Kind::Test, None, "anchorleg", "Notifications work."),
+        );
+        // The channels run on their own; give a command a moment before this process exits.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        println!("sent a test notice");
+    }
+    Ok(())
+}
+
 /// Change one CLI's settings; a section left empty is removed.
 pub fn update(config: &mut Config, v: Vendor, change: impl FnOnce(&mut VendorSettings)) {
     change(config.vendors.entry(v).or_default());

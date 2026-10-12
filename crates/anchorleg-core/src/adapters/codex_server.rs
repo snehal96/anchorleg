@@ -17,6 +17,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 use super::codex::{self, live_quota};
 use super::{Credits, QuotaReading};
+use crate::questions;
 
 /// `codex app-server` request ids anchorleg uses.
 const INITIALIZE: i64 = 1;
@@ -24,6 +25,8 @@ const THREAD: i64 = 2;
 const TURN: i64 = 3;
 /// `turn/interrupt` for a soft stop; far above the turn ids.
 const INTERRUPT: i64 = 1000;
+/// `turn/steer` requests count up from here.
+const STEER: i64 = 2000;
 
 /// How many times a turn stopped by a refusal is continued with a note about it.
 const MAX_REFUSAL_TURNS: usize = 3;
@@ -43,6 +46,10 @@ pub struct Turn {
     pub approval: Option<String>,
     /// Stop the turn once any quota window reaches this fraction (`--stop-at`); 0 is off.
     pub stop_at: f64,
+    /// Images attached to the prompt, sent as `localImage` input with the first turn.
+    pub images: Vec<String>,
+    /// Plan only: Codex's plan collaboration mode (experimental API), read-only sandbox.
+    pub plan: bool,
 }
 
 /// What the driver passes back to the supervisor.
@@ -58,6 +65,27 @@ pub enum Event {
     NotFound,
     /// anchorleg stopped the turn because quota reached `--stop-at` (why, for the run log).
     Stopped(String),
+    /// Codex took the person's message into the running turn (the queued message's id).
+    Steered(i64),
+}
+
+/// What the person sends a running Codex launch (`anchorleg send`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Steer {
+    /// Add this message to the running turn (`turn/steer`); `id` is the queued message's.
+    Text { id: i64, text: String },
+    /// Stop the turn now (`turn/interrupt`); the queued message follows as a new turn.
+    Interrupt,
+}
+
+async fn next_steer(rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<Steer>>) -> Steer {
+    match rx {
+        Some(rx) => match rx.recv().await {
+            Some(s) => s,
+            None => std::future::pending().await,
+        },
+        None => std::future::pending().await,
+    }
 }
 
 /// Why to stop, when a window has reached `stop_at` (e.g. "five_hour quota at 92%").
@@ -79,12 +107,14 @@ pub fn stop_reason(readings: &[QuotaReading], stop_at: f64) -> Option<String> {
 }
 
 /// The JSON-RPC messages anchorleg sends.
-pub fn initialize() -> Value {
-    json!({
-        "id": INITIALIZE,
-        "method": "initialize",
-        "params": { "clientInfo": { "name": "anchorleg", "version": env!("CARGO_PKG_VERSION") } },
-    })
+/// `experimental` opts in to Codex's experimental API (needed for plan mode).
+pub fn initialize(experimental: bool) -> Value {
+    let mut params =
+        json!({ "clientInfo": { "name": "anchorleg", "version": env!("CARGO_PKG_VERSION") } });
+    if experimental {
+        params["capabilities"] = json!({ "experimentalApi": true });
+    }
+    json!({ "id": INITIALIZE, "method": "initialize", "params": params })
 }
 
 pub fn thread_request(turn: &Turn) -> Value {
@@ -119,6 +149,31 @@ pub fn turn_request(id: i64, thread: &str, text: &str, effort: Option<&str>) -> 
     json!({ "id": id, "method": "turn/start", "params": params })
 }
 
+/// A `turn/start` request in Codex's plan collaboration mode: the agent investigates and ends
+/// the turn with a `plan` item instead of changing anything. `model` is required by Codex.
+pub fn with_plan_mode(mut request: Value, model: &str, effort: Option<&str>) -> Value {
+    request["params"]["collaborationMode"] = json!({
+        "mode": "plan",
+        "settings": { "model": model, "reasoning_effort": effort, "developer_instructions": null },
+    });
+    request
+}
+
+/// A `turn/start` request with images added to its input (`localImage`, by path).
+pub fn with_images(mut request: Value, images: &[String]) -> Value {
+    if let Some(input) = request
+        .pointer_mut("/params/input")
+        .and_then(Value::as_array_mut)
+    {
+        input.extend(
+            images
+                .iter()
+                .map(|p| json!({ "type": "localImage", "path": p })),
+        );
+    }
+    request
+}
+
 /// An approval request, as anchorleg shows it: Claude's tool names where one fits.
 #[derive(Debug, PartialEq)]
 pub struct Approval {
@@ -129,6 +184,10 @@ pub struct Approval {
     /// `decline`) stops it, and anchorleg continues it with a note.
     pub refuse: &'static str,
 }
+
+/// The tool name Codex's requests for more sandbox access (`item/permissions/requestApproval`)
+/// are asked under.
+pub const PERMISSIONS_TOOL: &str = "Permissions";
 
 /// Translates app-server messages for one launch.
 #[derive(Debug, Default)]
@@ -309,6 +368,43 @@ impl Translator {
                 }
                 ("Edit".to_owned(), input)
             }
+            // Codex asks before every MCP tool call through an MCP prompt with an empty form.
+            "mcpServer/elicitation/request"
+                if params
+                    .pointer("/_meta/codex_approval_kind")
+                    .and_then(Value::as_str)
+                    == Some("mcp_tool_call") =>
+            {
+                let server = params
+                    .get("serverName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("mcp");
+                let tool = params
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .and_then(|m| m.split('"').nth(1))
+                    .unwrap_or("tool");
+                let input = params
+                    .pointer("/_meta/tool_params")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                return Some(Approval {
+                    tool: format!("mcp__{server}__{tool}"),
+                    input,
+                    reason: params
+                        .pointer("/_meta/tool_description")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    refuse: "decline",
+                });
+            }
+            "item/permissions/requestApproval" => {
+                let mut input = json!({ "permissions": params.get("permissions").cloned().unwrap_or(Value::Null) });
+                if let Some(cwd) = params.get("cwd").and_then(Value::as_str) {
+                    input["cwd"] = cwd.into();
+                }
+                (PERMISSIONS_TOOL.to_owned(), input)
+            }
             _ => return None,
         };
         Some(Approval {
@@ -344,6 +440,12 @@ fn exec_item(item: &Value) -> Option<Value> {
     let id = item.get("id").cloned().unwrap_or(Value::Null);
     let status = item.get("status").cloned().unwrap_or(Value::Null);
     match item.get("type").and_then(Value::as_str)? {
+        // Plan mode's result: shown and kept like the agent's final message.
+        "plan" => Some(json!({
+            "id": id,
+            "type": "agent_message",
+            "text": item.get("text").cloned().unwrap_or_default(),
+        })),
         "agentMessage" => Some(json!({
             "id": id,
             "type": "agent_message",
@@ -381,39 +483,99 @@ fn exec_item(item: &Value) -> Option<Value> {
 /// Ask the person through `anchorleg permission ask` (the same queue as Claude runs) and wait.
 /// `false` when anchorleg can't be asked.
 async fn ask_person(bin: &Path, run_id: i64, approval: &Approval) -> bool {
+    let req = json!({
+        "run_id": run_id,
+        "tool": approval.tool,
+        "input": approval.input,
+        "reason": approval.reason,
+    });
+    ask(bin, req)
+        .await
+        .is_some_and(|a| a.get("decision").and_then(Value::as_str) == Some("allow"))
+}
+
+/// Codex's questions (`item/tool/requestUserInput`), asked the same way. Empty answers when
+/// the person skipped them or anchorleg can't be asked: Codex then goes on without.
+async fn ask_questions(bin: &Path, run_id: i64, params: &Value) -> Value {
+    let qs = questions::from_codex(params);
+    let req = json!({
+        "run_id": run_id,
+        "tool": questions::TOOL,
+        "input": questions::to_input(&qs),
+        "reason": null,
+    });
+    let answers: questions::Answers = ask(bin, req)
+        .await
+        .and_then(|a| a.get("answers").cloned())
+        .and_then(|a| serde_json::from_value(a).ok())
+        .unwrap_or_default();
+    questions::codex_response(&answers)
+}
+
+/// An MCP server's request for input (`mcpServer/elicitation/request`), asked as questions.
+/// Declined when the person skips it or anchorleg can't be asked.
+async fn ask_elicitation(bin: &Path, run_id: i64, params: &Value) -> Value {
+    let qs = questions::from_elicitation(params);
+    if qs.is_empty() {
+        return json!({ "action": "decline" });
+    }
+    let req = json!({
+        "run_id": run_id,
+        "tool": questions::TOOL,
+        "input": questions::to_input(&qs),
+        "reason": null,
+    });
+    let answers: questions::Answers = ask(bin, req)
+        .await
+        .and_then(|a| a.get("answers").cloned())
+        .and_then(|a| serde_json::from_value(a).ok())
+        .unwrap_or_default();
+    questions::elicitation_response(params, &answers)
+}
+
+/// Ask the person `qs` (through `anchorleg permission ask`). `None` when anchorleg can't be
+/// asked or the request expired; skipped questions have no answer.
+pub(crate) async fn ask_questions_of(
+    bin: &Path,
+    run_id: i64,
+    qs: &[questions::Question],
+) -> Option<questions::Answers> {
+    let req = json!({
+        "run_id": run_id,
+        "tool": questions::TOOL,
+        "input": questions::to_input(qs),
+        "reason": null,
+    });
+    ask(bin, req)
+        .await
+        .and_then(|a| a.get("answers").cloned())
+        .and_then(|a| serde_json::from_value(a).ok())
+}
+
+/// One `anchorleg permission ask --json` request, asked again while the answer is "pending".
+/// The final answer, or `None` when anchorleg can't be asked.
+async fn ask(bin: &Path, mut req: Value) -> Option<Value> {
     let mut id: Option<i64> = None;
     loop {
-        let mut req = json!({
-            "run_id": run_id,
-            "tool": approval.tool,
-            "input": approval.input,
-            "reason": approval.reason,
-        });
         if let Some(id) = id {
             req["id"] = id.into();
         }
-        let child = tokio::process::Command::new(bin)
+        let mut child = tokio::process::Command::new(bin)
             .args(["permission", "ask", "--json"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .spawn();
-        let Ok(mut child) = child else { return false };
+            .spawn()
+            .ok()?;
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(req.to_string().as_bytes()).await;
         }
-        let Ok(out) = child.wait_with_output().await else {
-            return false;
-        };
-        let answer: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
-        match answer.get("decision").and_then(Value::as_str) {
-            Some("allow") => return true,
-            Some("pending") => id = answer.get("id").and_then(Value::as_i64),
-            _ => return false,
+        let out = child.wait_with_output().await.ok()?;
+        let answer: Value = serde_json::from_slice(&out.stdout).ok()?;
+        if answer.get("decision").and_then(Value::as_str) != Some("pending") {
+            return Some(answer);
         }
-        if id.is_none() {
-            return false;
-        }
+        id = Some(answer.get("id").and_then(Value::as_i64)?);
     }
 }
 
@@ -434,6 +596,7 @@ pub async fn drive<R, W>(
     turn: Turn,
     asker: Option<Asker>,
     events: tokio::sync::mpsc::UnboundedSender<Event>,
+    mut steer: Option<tokio::sync::mpsc::UnboundedReceiver<Steer>>,
 ) -> std::io::Result<()>
 where
     R: tokio::io::AsyncBufRead + Unpin,
@@ -454,9 +617,59 @@ where
     // The turn in progress, and why anchorleg is stopping it (soft stop).
     let mut turn_id: Option<String> = None;
     let mut stopping: Option<String> = None;
+    // `turn/steer` requests in flight: request id → queued message id.
+    let mut steering: HashMap<i64, i64> = HashMap::new();
+    let mut next_steer_id = STEER;
 
-    send(&mut stdin, &initialize()).await?;
-    while let Some(line) = lines.next_line().await? {
+    send(&mut stdin, &initialize(turn.plan)).await?;
+    // The model plan mode needs: anchorleg's setting, else the one Codex picked for the thread.
+    let mut plan_model = turn.model.clone();
+    let start_turn = |id: i64, thread: &str, text: &str, model: Option<&str>| {
+        let r = turn_request(id, thread, text, turn.effort.as_deref());
+        match (turn.plan, model) {
+            (true, Some(m)) => with_plan_mode(r, m, turn.effort.as_deref()),
+            _ => r,
+        }
+    };
+    loop {
+        let line = tokio::select! {
+            line = lines.next_line() => match line? {
+                Some(line) => line,
+                None => break,
+            },
+            s = next_steer(&mut steer) => {
+                let (Some(tid), Some(thread)) = (turn_id.as_deref(), t.thread_id()) else {
+                    // Between turns: the message waits and starts the next one.
+                    continue;
+                };
+                match s {
+                    Steer::Text { id, text } => {
+                        steering.insert(next_steer_id, id);
+                        send(&mut stdin, &json!({
+                            "id": next_steer_id,
+                            "method": "turn/steer",
+                            "params": {
+                                "threadId": thread,
+                                "expectedTurnId": tid,
+                                "input": [{ "type": "text", "text": text }],
+                            },
+                        }))
+                        .await?;
+                        next_steer_id += 1;
+                    }
+                    Steer::Interrupt if stopping.is_none() => {
+                        send(&mut stdin, &json!({
+                            "id": INTERRUPT,
+                            "method": "turn/interrupt",
+                            "params": { "threadId": thread, "turnId": tid },
+                        }))
+                        .await?;
+                    }
+                    Steer::Interrupt => {}
+                }
+                continue;
+            }
+        };
         let Ok(msg) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -481,14 +694,24 @@ where
                         }
                         (None, Some(result)) => {
                             t.thread_started(result).into_iter().for_each(emit);
+                            if plan_model.is_none() {
+                                plan_model = result
+                                    .get("model")
+                                    .or_else(|| result.pointer("/thread/model"))
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned);
+                            }
                             let thread = t.thread_id().unwrap_or_default().to_owned();
                             send(
                                 &mut stdin,
-                                &turn_request(
-                                    next_id,
-                                    &thread,
-                                    &turn.prompt,
-                                    turn.effort.as_deref(),
+                                &with_images(
+                                    start_turn(
+                                        next_id,
+                                        &thread,
+                                        &turn.prompt,
+                                        plan_model.as_deref(),
+                                    ),
+                                    &turn.images,
                                 ),
                             )
                             .await?;
@@ -497,6 +720,11 @@ where
                     }
                 } else if id == INTERRUPT {
                     // The answer to a soft stop; `turn/completed` follows.
+                } else if let Some(message) = id.as_i64().and_then(|i| steering.remove(&i)) {
+                    // A refused steer (the turn ended meanwhile) stays queued for the next turn.
+                    if error.is_none() {
+                        let _ = events.send(Event::Steered(message));
+                    }
                 } else if let Some(e) = error {
                     // `turn/start` refused.
                     emit(json!({ "type": "turn.failed", "error": { "message": e } }));
@@ -507,6 +735,42 @@ where
             (Some(method), Some(id)) => {
                 let params = msg.get("params").unwrap_or(&Value::Null);
                 let reply = match (t.approval(method, params), &asker) {
+                    _ if method == "item/tool/requestUserInput" => {
+                        let result = match &asker {
+                            Some(asker) => ask_questions(&asker.bin, asker.run_id, params).await,
+                            None => questions::codex_response(&questions::Answers::new()),
+                        };
+                        json!({ "id": id, "result": result })
+                    }
+                    (Some(a), asker) if method == "mcpServer/elicitation/request" => {
+                        // An MCP tool call to approve.
+                        let allowed = match asker {
+                            Some(asker) => ask_person(&asker.bin, asker.run_id, &a).await,
+                            None => false,
+                        };
+                        let action = if allowed { "accept" } else { "decline" };
+                        json!({ "id": id, "result": { "action": action, "content": {} } })
+                    }
+                    (None, _) if method == "mcpServer/elicitation/request" => {
+                        let result = match &asker {
+                            Some(asker) => ask_elicitation(&asker.bin, asker.run_id, params).await,
+                            None => json!({ "action": "decline" }),
+                        };
+                        json!({ "id": id, "result": result })
+                    }
+                    (Some(a), asker) if a.tool == PERMISSIONS_TOOL => {
+                        // Granted for this turn as asked, or nothing.
+                        let granted = match asker {
+                            Some(asker) => ask_person(&asker.bin, asker.run_id, &a).await,
+                            None => false,
+                        };
+                        let result = if granted {
+                            json!({ "permissions": a.input["permissions"], "scope": "turn" })
+                        } else {
+                            json!({ "permissions": {} })
+                        };
+                        json!({ "id": id, "result": result })
+                    }
                     (Some(a), Some(asker)) => {
                         let decision = if ask_person(&asker.bin, asker.run_id, &a).await {
                             "accept"
@@ -560,7 +824,7 @@ where
                     let thread = t.thread_id().unwrap_or_default().to_owned();
                     send(
                         &mut stdin,
-                        &turn_request(next_id, &thread, &text, turn.effort.as_deref()),
+                        &start_turn(next_id, &thread, &text, plan_model.as_deref()),
                     )
                     .await?;
                     continue;
@@ -627,6 +891,62 @@ mod tests {
     const CANCEL: &str = include_str!(
         "../../../../fixtures/codex-0.153.4-app-server-turn-20261011/resume-cancel.jsonl"
     );
+
+    const MCP: &str =
+        include_str!("../../../../fixtures/codex-0.153.4-mcp-elicitation-20261012/requests.jsonl");
+
+    #[test]
+    fn plan_mode_turns() {
+        // Codex 0.153.4 ends a plan-mode turn with a `plan` item (seen on a real run).
+        let item = json!({ "type": "plan", "id": "p-plan", "text": "1. Create `hello.txt`.\n" });
+        assert_eq!(
+            exec_item(&item).unwrap(),
+            json!({ "id": "p-plan", "type": "agent_message", "text": "1. Create `hello.txt`.\n" })
+        );
+        assert_eq!(
+            initialize(true)["params"]["capabilities"]["experimentalApi"],
+            true
+        );
+        assert!(initialize(false)["params"].get("capabilities").is_none());
+        let r = with_plan_mode(
+            turn_request(3, "t1", "plan it", Some("low")),
+            "m",
+            Some("low"),
+        );
+        assert_eq!(
+            r["params"]["collaborationMode"],
+            json!({ "mode": "plan", "settings": { "model": "m", "reasoning_effort": "low", "developer_instructions": null } })
+        );
+    }
+
+    #[test]
+    fn real_mcp_tool_approval_and_form() {
+        let reqs: Vec<Value> = MCP
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|m| m["method"] == "mcpServer/elicitation/request")
+            .collect();
+        let t = Translator::default();
+        // The tool-call approval is asked like any tool call.
+        let a = t
+            .approval("mcpServer/elicitation/request", &reqs[0]["params"])
+            .unwrap();
+        assert_eq!(a.tool, "mcp__picker__pick_project");
+        assert_eq!(a.input, json!({}));
+        // The server's own form is asked as questions.
+        assert!(
+            t.approval("mcpServer/elicitation/request", &reqs[1]["params"])
+                .is_none()
+        );
+        let qs = questions::from_elicitation(&reqs[1]["params"]);
+        assert_eq!(qs.len(), 1);
+        let answers: questions::Answers =
+            [("project".to_owned(), questions::parse_answer(&qs[0], "2"))].into();
+        assert_eq!(
+            questions::elicitation_response(&reqs[1]["params"], &answers),
+            json!({ "action": "accept", "content": { "project": "OPS" } })
+        );
+    }
 
     /// The messages Codex sent in a capture.
     fn incoming(capture: &str) -> Vec<Value> {
@@ -814,6 +1134,8 @@ mod tests {
             sandbox: Some("workspace-write".into()),
             approval: Some("on-request".into()),
             stop_at: 0.9,
+            images: Vec::new(),
+            plan: false,
         };
         let r = thread_request(&turn);
         assert_eq!(r["method"], "thread/resume");

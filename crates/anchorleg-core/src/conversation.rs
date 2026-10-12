@@ -233,6 +233,27 @@ pub fn relative_input(input: &Value, cwd: &str) -> Value {
 
 /// `Bash  cargo test`, `Edit  src/lib.rs`, `Grep  "todo"`, else the tool name and its input.
 pub fn describe_tool(name: &str, input: &Value) -> String {
+    // A question to the person (Claude's own tool, or the one anchorleg-mod adds in `-p`).
+    if name == crate::questions::TOOL || name.ends_with("__ask_user") {
+        let qs: Vec<&str> = input
+            .get("questions")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|q| q.get("question").and_then(Value::as_str))
+            .collect();
+        return format!("Question  {}", first_line(&qs.join(" · "), 120))
+            .trim_end()
+            .to_owned();
+    }
+    if name == crate::adapters::codex_server::PERMISSIONS_TOOL {
+        return format!(
+            "Permissions  {}",
+            describe_permissions(input.get("permissions"))
+        )
+        .trim_end()
+        .to_owned();
+    }
     let field = |k: &str| input.get(k).and_then(Value::as_str);
     let detail = field("command")
         .or_else(|| field("file_path"))
@@ -248,6 +269,63 @@ pub fn describe_tool(name: &str, input: &Value) -> String {
     format!("{name}  {}", first_line(&detail, 120))
         .trim_end()
         .to_owned()
+}
+
+/// Codex's requested sandbox access in a few words: "network · write /a · read /b".
+fn describe_permissions(p: Option<&Value>) -> String {
+    let Some(p) = p else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if p.pointer("/network/enabled").and_then(Value::as_bool) == Some(true) {
+        parts.push("network".to_owned());
+    }
+    let fs = p.get("fileSystem").unwrap_or(&Value::Null);
+    let mut by_access: Vec<(String, Vec<String>)> = Vec::new();
+    let mut add = |access: &str, path: String| match by_access.iter_mut().find(|(a, _)| a == access)
+    {
+        Some((_, list)) => list.push(path),
+        None => by_access.push((access.to_owned(), vec![path])),
+    };
+    for e in fs
+        .get("entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let access = e.get("access").and_then(Value::as_str).unwrap_or("access");
+        let path = e.get("path").unwrap_or(&Value::Null);
+        let shown = path
+            .get("path")
+            .or_else(|| path.get("pattern"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                path.pointer("/value/kind")
+                    .and_then(Value::as_str)
+                    .map(|k| format!("<{k}>"))
+            })
+            .unwrap_or_default();
+        add(access, shown);
+    }
+    for access in ["read", "write"] {
+        for path in fs
+            .get(access)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(path) = path.as_str() {
+                add(access, path.to_owned());
+            }
+        }
+    }
+    parts.extend(
+        by_access
+            .into_iter()
+            .map(|(a, list)| format!("{a} {}", list.join(", "))),
+    );
+    first_line(&parts.join(" · "), 120)
 }
 
 fn content_text(block: &Value) -> String {
@@ -361,5 +439,18 @@ mod tests {
                 .any(|x| x.role == Role::Tool && x.text.starts_with("Read  "))
         );
         assert_eq!(m.last(), Some(&msg(Role::Agent, "MANGO-17")));
+    }
+
+    #[test]
+    fn questions_read_as_questions() {
+        let input = serde_json::json!({ "questions": [{ "question": "Red or Blue?" }, { "question": "Size?" }] });
+        assert_eq!(
+            describe_tool("mcp__anchorleg-mod__ask_user", &input),
+            "Question  Red or Blue? · Size?"
+        );
+        assert_eq!(
+            describe_tool("AskUserQuestion", &input),
+            "Question  Red or Blue? · Size?"
+        );
     }
 }

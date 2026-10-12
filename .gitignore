@@ -21,3 +21,4 @@ CLAUDE.local.md
 # Local secrets (never commit)
 .env
 .env.*
+__pycache__/

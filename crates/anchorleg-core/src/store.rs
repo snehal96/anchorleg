@@ -69,6 +69,17 @@ pub struct QuotaRow {
     pub updated_at: EpochSecs,
 }
 
+/// A message the person sent to a running session, waiting to reach the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QueuedMessage {
+    pub id: i64,
+    pub run_id: RunId,
+    pub text: String,
+    /// Stop the agent at its next clean point instead of waiting for its turn to end.
+    pub interrupt: bool,
+    pub created_at: EpochSecs,
+}
+
 /// The latest known usage-credit state for one account.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CreditsRow {
@@ -144,9 +155,20 @@ pub struct Permission {
     pub state: PermissionState,
     pub asked_at: EpochSecs,
     pub answered_at: Option<EpochSecs>,
+    /// For a question ([`crate::questions::TOOL`]): the person's answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answers: Option<crate::questions::Answers>,
 }
 
-const PERMISSION_COLUMNS: &str = "id, run_id, tool, input, reason, state, asked_at, answered_at";
+impl Permission {
+    /// A question from the agent rather than a tool call to approve.
+    pub fn is_question(&self) -> bool {
+        self.tool == crate::questions::TOOL
+    }
+}
+
+const PERMISSION_COLUMNS: &str =
+    "id, run_id, tool, input, reason, state, asked_at, answered_at, answer";
 
 fn permission_from_row(r: &rusqlite::Row) -> rusqlite::Result<Permission> {
     let input: String = r.get(3)?;
@@ -160,6 +182,9 @@ fn permission_from_row(r: &rusqlite::Row) -> rusqlite::Result<Permission> {
         state: PermissionState::parse(&state),
         asked_at: r.get(6)?,
         answered_at: r.get(7)?,
+        answers: r
+            .get::<_, Option<String>>(8)?
+            .and_then(|a| serde_json::from_str(&a).ok()),
     })
 }
 
@@ -325,6 +350,20 @@ CREATE TABLE usage (
     on_credits         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX usage_at ON usage(at);
+"#,
+    r#"
+ALTER TABLE permissions ADD COLUMN answer TEXT;
+"#,
+    r#"
+CREATE TABLE messages (
+    id         INTEGER PRIMARY KEY,
+    run_id     INTEGER NOT NULL REFERENCES runs(id),
+    text       TEXT NOT NULL,
+    interrupt  INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    taken_at   INTEGER
+);
+CREATE INDEX messages_run ON messages(run_id);
 "#,
 ];
 
@@ -748,6 +787,77 @@ impl Store {
             params![id, state.as_str(), now],
         )?;
         Ok(n == 1)
+    }
+
+    /// Answer a pending question. `false` if it was already answered (or doesn't exist).
+    pub fn answer_question(
+        &self,
+        id: i64,
+        answers: &crate::questions::Answers,
+        now: EpochSecs,
+    ) -> Result<bool> {
+        let text = serde_json::to_string(answers).unwrap_or_else(|_| "{}".to_owned());
+        let n = self.conn.execute(
+            "UPDATE permissions SET state = 'allowed', answer = ?2, answered_at = ?3
+             WHERE id = ?1 AND state = 'pending'",
+            params![id, text, now],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Queue a message for a running session.
+    pub fn queue_message(
+        &self,
+        run_id: RunId,
+        text: &str,
+        interrupt: bool,
+        now: EpochSecs,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO messages (run_id, text, interrupt, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![run_id, text, interrupt, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Messages for this run that haven't reached the agent yet, oldest first.
+    pub fn queued_messages(&self, run_id: RunId) -> Result<Vec<QueuedMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, run_id, text, interrupt, created_at FROM messages
+             WHERE run_id = ?1 AND taken_at IS NULL ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![run_id], |r| {
+            Ok(QueuedMessage {
+                id: r.get(0)?,
+                run_id: r.get(1)?,
+                text: r.get(2)?,
+                interrupt: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Mark a message delivered. `false` if it already was.
+    pub fn take_message(&self, id: i64, now: EpochSecs) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE messages SET taken_at = ?2 WHERE id = ?1 AND taken_at IS NULL",
+            params![id, now],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Whether the person asked this run to stop at its next clean point for a new message.
+    pub fn interrupt_requested(&self, run_id: RunId) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM messages WHERE run_id = ?1 AND taken_at IS NULL AND interrupt = 1",
+                params![run_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
     }
 
     /// Whether the person said "always" to `tool` in any of these runs (one session's runs).

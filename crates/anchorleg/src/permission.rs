@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 use anchorleg_core::adapters::agy::{self, HookVerdict};
 use anchorleg_core::conversation::{describe_tool, relative_input};
+use anchorleg_core::notify::{self, Kind, Notice};
+use anchorleg_core::questions;
+use anchorleg_core::registry::Config;
 use anchorleg_core::store::{PermissionState, RunState, Store};
 use anyhow::{Context, bail};
 use clap::Subcommand;
@@ -40,11 +43,17 @@ pub enum PermissionCmd {
         #[arg(long)]
         json: bool,
     },
-    /// Answer one: yes, always (this tool, for the rest of the session) or no.
+    /// Answer one. A tool call: yes, always (this tool, for the rest of the session) or no.
+    /// A question: one answer per question, in order: an option number (`2`, or `1,3` when
+    /// several may be picked), an option label, or your own words; `-` for a secret one
+    /// (anchorleg never passes secrets); `--skip` declines.
     Answer {
         id: i64,
-        #[arg(value_parser = ["yes", "always", "no"])]
-        answer: String,
+        #[arg(required_unless_present = "skip")]
+        answer: Vec<String>,
+        /// Decline a question without answering.
+        #[arg(long)]
+        skip: bool,
     },
 }
 
@@ -66,6 +75,9 @@ struct AskOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<i64>,
     reason: String,
+    /// A question's answers: question id → labels or typed text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answers: Option<questions::Answers>,
 }
 
 pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
@@ -106,6 +118,20 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
                 println!("nothing is waiting for you");
             }
             for p in &pending {
+                if p.is_question() {
+                    println!("{:>4}  run #{}  question:", p.id, p.run_id);
+                    for (i, q) in questions::from_input(&p.input).iter().enumerate() {
+                        println!("        {}. {}", i + 1, q.question);
+                        for (n, o) in q.options.iter().enumerate() {
+                            let more = o
+                                .description
+                                .as_deref()
+                                .map_or(String::new(), |d| format!("  ({d})"));
+                            println!("           {}) {}{more}", n + 1, o.label);
+                        }
+                    }
+                    continue;
+                }
                 println!(
                     "{:>4}  run #{}  {}",
                     p.id,
@@ -114,16 +140,51 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
                 );
             }
         }
-        PermissionCmd::Answer { id, answer } => {
-            let state = match answer.as_str() {
-                "yes" => PermissionState::Allowed,
-                "always" => PermissionState::Always,
-                _ => PermissionState::Denied,
+        PermissionCmd::Answer { id, answer, skip } => {
+            let p = store
+                .permission(id)?
+                .filter(|p| p.state == PermissionState::Pending)
+                .with_context(|| format!("request {id} isn't waiting for an answer"))?;
+            if p.is_question() {
+                if skip {
+                    store.answer_permission(id, PermissionState::Denied, now())?;
+                    println!("skipped {id}");
+                    return Ok(());
+                }
+                let qs = questions::from_input(&p.input);
+                if answer.len() != qs.len() {
+                    bail!(
+                        "{} question(s), {} answer(s): give one per question",
+                        qs.len(),
+                        answer.len()
+                    );
+                }
+                if qs.iter().zip(&answer).any(|(q, a)| q.secret && a != "-") {
+                    bail!("{}", questions::SECRET_NOTE);
+                }
+                let answers: questions::Answers = qs
+                    .iter()
+                    .zip(&answer)
+                    .filter(|(q, _)| !q.secret)
+                    .map(|(q, a)| (q.id.clone(), questions::parse_answer(q, a)))
+                    .collect();
+                if !store.answer_question(id, &answers, now())? {
+                    bail!("request {id} isn't waiting for an answer");
+                }
+                println!("answered {id}: {}", questions::summary(&qs, &answers));
+                return Ok(());
+            }
+            let answer = answer.join(" ");
+            let state = match (skip, answer.as_str()) {
+                (false, "yes") => PermissionState::Allowed,
+                (false, "always") => PermissionState::Always,
+                (_, "no") | (true, _) => PermissionState::Denied,
+                _ => bail!("answer a tool call with yes, always or no"),
             };
             if !store.answer_permission(id, state, now())? {
                 bail!("request {id} isn't waiting for an answer");
             }
-            println!("answered {id}: {answer}");
+            println!("answered {id}: {}", if skip { "no" } else { &answer });
         }
     }
     Ok(())
@@ -176,20 +237,52 @@ fn describe(tool: &str, input: &Value) -> String {
     }
 }
 
+/// A desktop notification (or the person's command) for a new request, so they come back.
+fn notify_waiting(store: &Store, req: &AskInput, what: &str, question: bool) {
+    let Ok(config) = Config::default_path().and_then(|p| Config::load(&p)) else {
+        return;
+    };
+    let task = store.run(req.run_id).ok().flatten().map(|r| r.task);
+    let title = task.as_deref().unwrap_or("anchorleg");
+    let plan = question
+        && questions::from_input(&req.input)
+            .first()
+            .is_some_and(|q| q.id == questions::plan_question().id);
+    let message = match () {
+        _ if plan => format!("#{} plan ready: approve it?", req.run_id),
+        _ if question => format!("#{} asks: {what}", req.run_id),
+        _ => format!("#{} waits: allow {what}?", req.run_id),
+    };
+    notify::send(
+        &config.notify,
+        &Notice::new(Kind::Waiting, Some(req.run_id), title, &message),
+    );
+}
+
 fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutput> {
     let runs = store.session_runs(req.run_id)?;
     if runs.is_empty() {
         bail!("no run {}", req.run_id);
     }
-    let what = describe(&req.tool, &req.input);
+    let question = req.tool == questions::TOOL;
+    let what = if question {
+        let qs = questions::from_input(&req.input);
+        match qs.as_slice() {
+            [q] => format!("“{}”", q.question),
+            _ => format!("{} questions", qs.len()),
+        }
+    } else {
+        describe(&req.tool, &req.input)
+    };
     let id = match req.id {
         Some(id) => id,
         None => {
-            if store.always_allowed(&runs, &req.tool)? {
+            if !question && store.always_allowed(&runs, &req.tool)? {
                 return Ok(AskOutput {
                     decision: "allow",
                     id: None,
                     reason: format!("{} allowed for this session", req.tool),
+                    answers: None,
                 });
             }
             let id = store.ask_permission(
@@ -199,7 +292,15 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
                 req.reason.as_deref(),
                 now(),
             )?;
-            note(req.run_id, &format!("waiting for you to allow {what}"));
+            note(
+                req.run_id,
+                &if question {
+                    format!("the agent asks: {what}")
+                } else {
+                    format!("waiting for you to allow {what}")
+                },
+            );
+            notify_waiting(store, req, &what, question);
             id
         }
     };
@@ -208,6 +309,26 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
         let p = store
             .permission(id)?
             .with_context(|| format!("no request {id}"))?;
+        if question && p.state != PermissionState::Pending {
+            let answered = p.state == PermissionState::Allowed;
+            let said = match &p.answers {
+                Some(a) if answered => {
+                    format!(
+                        "answered: {}",
+                        questions::summary(&questions::from_input(&p.input), a)
+                    )
+                }
+                _ if p.state == PermissionState::Expired => "nobody answered".to_owned(),
+                _ => "the user skipped it".to_owned(),
+            };
+            note(req.run_id, &format!("{what}: {said}"));
+            return Ok(AskOutput {
+                decision: if answered { "allow" } else { "deny" },
+                id: Some(id),
+                reason: said,
+                answers: if answered { p.answers } else { None },
+            });
+        }
         let (decision, reason, said) = match p.state {
             PermissionState::Allowed => ("allow", "the user allowed it".to_owned(), "allowed"),
             PermissionState::Always => (
@@ -231,6 +352,7 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
                         decision: "pending",
                         id: Some(id),
                         reason: "still waiting".to_owned(),
+                        answers: None,
                     });
                 }
                 std::thread::sleep(Duration::from_millis(250));
@@ -242,6 +364,7 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
             decision,
             id: Some(id),
             reason,
+            answers: None,
         });
     }
 }

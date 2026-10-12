@@ -65,6 +65,30 @@ enum Command {
         #[arg(value_parser = parse_policy)]
         policy: Option<Policy>,
     },
+    /// What a session changed in its folder since it started (new files included), as a diff.
+    Diff {
+        run: i64,
+        /// Only the files and line counts.
+        #[arg(long)]
+        stat: bool,
+    },
+    /// Notifications when a run needs you (a tool call, a question, a plan) or ends.
+    /// No options: show the current settings.
+    Notify {
+        /// Desktop notifications: on or off.
+        #[arg(long, value_name = "on|off", value_parser = parse_on_off)]
+        desktop: Option<bool>,
+        /// Also run this command (`sh -c`) for every notice: JSON on stdin, and
+        /// ANCHORLEG_EVENT / ANCHORLEG_RUN_ID / ANCHORLEG_TITLE / ANCHORLEG_MESSAGE.
+        #[arg(long, value_name = "CMD", conflicts_with = "no_command")]
+        command: Option<String>,
+        /// Stop running the command.
+        #[arg(long)]
+        no_command: bool,
+        /// Send a test notice.
+        #[arg(long)]
+        test: bool,
+    },
     /// Tokens and cost of anchorleg's runs, per account and model, plus credits and quota.
     Usage {
         /// How far back: e.g. 24h, 7d, 30d, or `all`.
@@ -80,6 +104,23 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Send a message to a session that's still working. Codex takes it into the running turn;
+    /// Claude gets it when its turn ends. `--interrupt` stops the agent at its next clean point
+    /// so the message is read now.
+    Send {
+        run: i64,
+        #[arg(long)]
+        interrupt: bool,
+        /// Attach a file; repeat for several.
+        #[arg(long, value_name = "FILE")]
+        attach: Vec<PathBuf>,
+        /// The message, after `--`.
+        #[arg(last = true, required = true)]
+        text: Vec<String>,
+    },
+    /// Exit 0 if the person asked this run to stop for a new message (called by anchorleg-mod).
+    #[command(hide = true)]
+    InterruptCheck { run: i64 },
     /// Stop a running session (its `anchorleg run` process and the CLI under it).
     Stop {
         /// The run id, as `anchorleg status`, `anchorleg ui` or `anchorleg run --json` show it.
@@ -130,9 +171,25 @@ pub struct RunArgs {
     /// Only use this account: no switching (waits for its reset, or exits with `--no-wait`).
     #[arg(long, value_name = "ACCOUNT", conflicts_with = "prefer")]
     pub account: Option<String>,
+    /// Attach a file (an image, a log…): copied into the task folder and named in the prompt.
+    /// Repeat for several.
+    #[arg(long, value_name = "FILE")]
+    pub attach: Vec<PathBuf>,
+    /// Plan first: the agent only plans, you approve the plan (or say what to change), then the
+    /// same session carries it out.
+    #[arg(long)]
+    pub plan: bool,
     /// The task, after `--`.
     #[arg(last = true, required = true)]
     pub prompt: Vec<String>,
+}
+
+fn parse_on_off(s: &str) -> Result<bool, String> {
+    match s {
+        "on" | "true" | "yes" => Ok(true),
+        "off" | "false" | "no" => Ok(false),
+        _ => Err(format!("{s}: on or off")),
+    }
 }
 
 fn parse_policy(s: &str) -> Result<Policy, String> {
@@ -180,7 +237,30 @@ fn main() -> ExitCode {
             },
         ),
         Command::Stop { run } => run::stop(run),
+        Command::Send {
+            run,
+            interrupt,
+            attach,
+            text,
+        } => run::send(run, &text.join(" "), interrupt, &attach),
+        Command::InterruptCheck { run } => {
+            return match run::interrupt_check(run) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::from(1),
+                Err(e) => {
+                    eprintln!("anchorleg: {e:#}");
+                    ExitCode::from(2)
+                }
+            };
+        }
         Command::Policy { policy } => settings::policy(policy),
+        Command::Diff { run, stat } => run::diff(run, stat),
+        Command::Notify {
+            desktop,
+            command,
+            no_command,
+            test,
+        } => settings::notify(desktop, command, no_command, test),
         Command::Sessions { json, limit } => status::sessions(json, limit),
         Command::Usage { since, json } => usage::run(since, json),
         Command::Report { json: _ } => status::report(),

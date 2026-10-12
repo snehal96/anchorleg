@@ -21,15 +21,18 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 |---|---|
 | `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly]` | works |
+| `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` | works |
-| `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `ask --json` (anchorleg-mod) | works (Claude, Codex; agy under development) |
+| `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `answer <id> <answer>… \| --skip` (questions) · `ask --json` (anchorleg-mod) | works (Claude, Codex; agy under development) |
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
 | `anchorleg stop <run>` | works |
+| `anchorleg diff <run> [--stat]` | works (git folders) |
+| `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex) |
 | `anchorleg status [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
-| `anchorleg run [--follow-up RUN] [--cwd DIR] [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN] [--cwd DIR] [--plan] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -209,6 +212,121 @@ git update-ref -d refs/anchorleg/run-12/1    # delete one
 At a switch, a session with more than `--fresh-above` tokens of context (default 100000) starts
 fresh on the next account from the handoff instead of being resumed on a cold cache.
 
+### Messages while it works
+
+`anchorleg send <run> -- <message>` (or Enter in `anchorleg ui` on a working session) reaches the
+agent without stopping the session:
+
+- **Codex** takes it into the running turn (`turn/steer`), as typing in Codex does.
+- **Claude Code** has no way to take a message mid-turn in `-p`, so it waits until the turn ends;
+  then anchorleg continues the same session with it, in the same run.
+
+`--interrupt` (Ctrl+X in the UI) reads it now: Codex's turn is interrupted; Claude stops before
+its next model request (anchorleg-mod checks before each one, like the quota stop), never in the
+middle of a tool call. Either way the session then continues with your message. Messages not
+delivered yet show in the conversation as `(queued)`. A session that isn't working takes a
+normal reply (`anchorleg run --follow-up <run>`).
+
+### What a session changed: `anchorleg diff`
+
+Every run saves its folder as it found it, as a local ref `refs/anchorleg/run-<id>/start` (never
+pushed; your branch, index and stash are untouched). `anchorleg diff <run>` shows what changed
+since the session's first run started, new files included and your own earlier uncommitted
+changes left out; `--stat` lists files and line counts. In `anchorleg ui`, **v** shows the same
+for the selected session (↑↓ PgUp PgDn scroll, any other key closes). Sessions from before this
+version have no start to compare with.
+
+The agent's task list (Claude's TODO list, Codex's plan) shows under the conversation as it
+works: ✔ done, ▸ in progress, ◻ to do.
+
+### Notifications: `anchorleg notify`
+
+Runs work in the background, so anchorleg tells you when one needs you or is over: a tool call,
+question or plan waiting for an answer; a run done or failed; a switch to another account; every
+account out. Desktop notifications are on by default (macOS Notification Center through
+`osascript`, Linux `notify-send`); `anchorleg notify --desktop off` turns them off.
+
+`--command CMD` also runs a command of yours for every notice, e.g. to reach your phone through a
+chat bot or a push service. It runs with `sh -c`, gets the notice as JSON on stdin
+(`{"event", "run_id", "title", "message"}`; events `waiting`, `done`, `failed`, `switched`,
+`blocked`, `test`) and as `ANCHORLEG_EVENT`, `ANCHORLEG_RUN_ID`, `ANCHORLEG_TITLE`,
+`ANCHORLEG_MESSAGE`. Notices name what is waiting, never an answer. `--test` sends one.
+
+```bash
+anchorleg notify --command 'curl -s -d "$ANCHORLEG_MESSAGE" https://ntfy.sh/my-anchorleg-topic'
+```
+
+On macOS the first notification may need permission: allow notifications for "Script Editor"
+in System Settings → Notifications if none show up.
+
+### Plan first: `--plan`
+
+`anchorleg run --plan -- <task>` (or `/plan <task>` as a new task in `anchorleg ui`) has the agent
+plan before it changes anything:
+
+- **Claude Code** runs in its plan mode (`--permission-mode plan`, replacing your own mode for
+  those launches). `-p` doesn't offer Claude's ExitPlanMode tool, so the agent is told to end its
+  reply with the plan.
+- **Codex** runs in its plan collaboration mode with a read-only sandbox.
+- **Antigravity** has no plan mode; it is only asked to plan.
+
+When the plan is ready the run asks **Approve the plan above? Or type what to change.** (the plan
+is the agent's last message in the conversation). **1** Approve: the same session carries it out
+in your normal mode. **2** Keep planning, or your own words: the agent revises the plan and asks
+again. No answer within 30 minutes, or a skip: the run ends with the plan as its result, and
+`anchorleg run --follow-up <run> -- "go ahead"` carries it out later. Planning survives an account
+switch like any other step.
+
+### Attachments: images and files
+
+`--attach FILE` (repeatable) on `anchorleg run` and `anchorleg send` sends files with the message.
+They're copied into the task folder, under `.anchorleg/attachments/` (that folder gets a
+`.gitignore` of `*`, so they never reach git), and the message lists their paths. Every account and
+CLI can then read them, also after a switch:
+
+- **Claude Code** reads them with its Read tool, which shows images to the model.
+- **Codex** also gets images directly with the first message (`localImage` input).
+
+In `anchorleg ui`, **Ctrl+V** attaches the image on the clipboard (macOS: `osascript`; Linux:
+`wl-paste` or `xclip`), and a file dragged onto the terminal (its path, quoted or with escaped
+spaces) is attached instead of sent as text. The message box title shows `· N attached`.
+
+```bash
+anchorleg run --attach ~/Desktop/error.png -- "fix the crash in this screenshot"
+anchorleg send 12 --attach build.log -- "the CI build fails like this"
+```
+
+### Questions from the agent
+
+When the agent needs a decision only you can make, it asks, and the run waits for your answer
+(30 minutes at most, like approvals):
+
+- **Codex** asks with its own `request_user_input` (through `codex app-server`). Codex 0.153 offers
+  that tool only in plan mode unless its experimental `default_mode_request_user_input` feature is
+  on, so anchorleg turns that on for its launches (`-c features.…=true`, ignored by a Codex that
+  doesn't know it). To keep it off, put `-c features.default_mode_request_user_input=false` in
+  `anchorleg settings codex --args`.
+- **Claude Code** drops its `AskUserQuestion` tool in `-p` runs, so anchorleg-mod adds an
+  `ask_user` tool with the same input (the model sees it as `mcp__anchorleg-mod__ask_user`).
+  Where the CLI does offer `AskUserQuestion`, that is answered the same way.
+
+In `anchorleg ui` the conversation shows the question and its numbered options: press a number to
+pick (several, then Enter, when more than one may be picked), type your own answer in the
+message box, or press **0** to skip. In a terminal:
+
+```bash
+anchorleg permission list                 # shows each question and its options
+anchorleg permission answer 7 2 "use src/" # one answer per question: option number, label or text
+anchorleg permission answer 7 --skip       # the agent is told you didn't answer
+```
+
+anchorleg never passes **secrets**: answer a question marked secret with `-` and give the agent
+the value another way (an environment variable, a file it can read). Otherwise it would sit in
+anchorleg's database. Questions are stored as requests with `tool = "AskUserQuestion"`; the
+JSON from `permission list` has `input.questions[]` (`id`, `header`, `question`, `options[]`
+of `{label, description}`, `multi_select`, `secret`) and, once answered, `answers` (question
+id → labels or text).
+
 ### Approving tool calls
 
 A headless Claude run can't show its permission dialog, so by default it refuses anything that
@@ -231,6 +349,17 @@ approval policy). Edits and commands inside the task folder go ahead; when Codex
 (network access, writing elsewhere) it asks, and the question shows up here as `Bash` or
 `Edit`. If Codex offers no way to decline and continue, a "no" stops its turn and anchorleg
 starts the next one with a note that you refused, so the agent carries on without it.
+
+Codex also asks before every **MCP tool call**; that shows up as `mcp__<server>__<tool>` with
+its arguments. A request for more sandbox access shows up as `Permissions  network · write
+/path`; yes grants it for the current turn.
+
+**MCP prompts (Codex).** When an MCP server asks for input (a form, or a link to open, e.g. to
+sign in), it arrives as a question: one per form field, with its choices numbered (Yes / No for
+a yes/no field), or "Done" / "Decline" for a link. Skipping declines it. Fields named like a
+password, token or API key are treated as secrets: anchorleg doesn't pass them (answer `-`).
+Claude Code's MCP prompts can't be answered from a mod yet, so in `-p` they are declined as
+before.
 
 **Antigravity (under development).** Headless agy can't ask either, and its hooks can refuse a call but not approve
 one. So for an agy account with its own `HOME` (`--cmd "HOME=~/.agy-2 agy"`), anchorleg adds an

@@ -5,11 +5,14 @@
 
 pub mod adapters;
 pub mod anchorleg_mod;
+pub mod attachments;
 pub mod checkpoint;
 pub mod conversation;
 pub mod handoff;
+pub mod notify;
 pub mod output;
 pub mod policy;
+pub mod questions;
 pub mod registry;
 pub mod store;
 pub mod supervisor;

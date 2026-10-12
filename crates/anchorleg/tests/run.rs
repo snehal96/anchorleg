@@ -89,6 +89,7 @@ impl Env {
         let mut cmd = Command::cargo_bin("anchorleg").unwrap();
         cmd.env("ANCHORLEG_CONFIG", self.path("config.toml"))
             .env("ANCHORLEG_HOME", self.path("home"))
+            .env("ANCHORLEG_NOTIFY_LOG", self.path("notify.log"))
             .env("HOME", self.path("userhome"))
             .env("FAKE_DIR", self.path("fake"))
             .env("FAKE_LOG", self.path("fake.log"))
@@ -120,6 +121,22 @@ impl Env {
             )
         });
         (out.status.code().unwrap(), report)
+    }
+
+    /// The notices anchorleg sent (`ANCHORLEG_NOTIFY_LOG`), as "event: message".
+    fn notices(&self) -> Vec<String> {
+        std::fs::read_to_string(self.path("notify.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| {
+                let v: Value = serde_json::from_str(l).unwrap();
+                format!(
+                    "{}: {}",
+                    v["event"].as_str().unwrap(),
+                    v["message"].as_str().unwrap()
+                )
+            })
+            .collect()
     }
 
     fn launches(&self) -> Vec<String> {
@@ -172,6 +189,10 @@ fn limit_hit_switches_and_resumes_the_same_session() {
     assert_eq!(r["accounts_used"], serde_json::json!(["a", "b"]));
     assert_eq!(r["switches"][0]["from"], "a");
     assert_eq!(r["switches"][0]["to"], "b");
+    assert_eq!(
+        env.notices(),
+        ["switched: switching a → b", "done: #1 done: finished on b"]
+    );
     assert_eq!(r["switches"][0]["rule"], "rejected");
 
     let launches = env.launches();
@@ -361,6 +382,7 @@ fn stop_ends_a_running_session() {
         .args(["--", "long", "task"])
         .env("ANCHORLEG_CONFIG", env.path("config.toml"))
         .env("ANCHORLEG_HOME", env.path("home"))
+        .env("ANCHORLEG_NOTIFY_LOG", env.path("notify.log"))
         .env("HOME", env.path("userhome"))
         .env("FAKE_DIR", env.path("fake"))
         .env("FAKE_LOG", env.path("fake.log"))
@@ -508,6 +530,7 @@ fn a_tool_call_waits_for_the_users_answer() {
         .args(["--", "write", "a.txt"])
         .env("ANCHORLEG_CONFIG", env.path("config.toml"))
         .env("ANCHORLEG_HOME", env.path("home"))
+        .env("ANCHORLEG_NOTIFY_LOG", env.path("notify.log"))
         .env("HOME", env.path("userhome"))
         .env("FAKE_DIR", env.path("fake"))
         .env("FAKE_LOG", env.path("fake.log"))
@@ -663,6 +686,11 @@ fn codex_runs_headless_and_reports_rollout_quota() {
         [
             "c1 thread/start model=gpt-5.6-luna effort=low sandbox=workspace-write approval=on-request -- fix the tests"
         ]
+    );
+    // Codex may ask the person questions outside plan mode too (D36).
+    assert_eq!(
+        std::fs::read_to_string(env.path("fake/features.log")).unwrap(),
+        "c1 features.default_mode_request_user_input=true\n"
     );
 
     let status = env.anchorleg().args(["status", "--json"]).output().unwrap();
@@ -899,12 +927,20 @@ fn agy_follow_up_on_a_login_without_the_conversation_starts_fresh() {
 /// Start `anchorleg run` in the background with extra environment, for tests that answer
 /// questions while it runs.
 fn spawn_run(env: &Env, vars: &[(&str, &str)]) -> std::process::Child {
+    spawn_run_with(env, &[], vars)
+}
+
+/// `anchorleg run` with `flags` added before the task.
+fn spawn_run_with(env: &Env, flags: &[&str], vars: &[(&str, &str)]) -> std::process::Child {
     let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("anchorleg"));
-    cmd.args(["run", "--json", "--cwd"])
+    cmd.args(["run", "--json"])
+        .args(flags)
+        .arg("--cwd")
         .arg(env.path("work"))
         .args(["--", "fix", "the", "tests"])
         .env("ANCHORLEG_CONFIG", env.path("config.toml"))
         .env("ANCHORLEG_HOME", env.path("home"))
+        .env("ANCHORLEG_NOTIFY_LOG", env.path("notify.log"))
         .env("HOME", env.path("userhome"))
         .env("FAKE_DIR", env.path("fake"))
         .env("FAKE_LOG", env.path("fake.log"))
@@ -1249,4 +1285,370 @@ fn last_resort_credits_carry_on_when_every_account_is_out() {
     let text = String::from_utf8_lossy(&text.stdout);
     assert!(text.contains("claude-haiku-5-5"), "{text}");
     assert!(text.contains("ran on paid credits: $0.25"), "{text}");
+}
+
+#[test]
+fn codex_questions_are_answered_through_anchorleg() {
+    let env = Env::mixed(&[("c", "codex")]);
+    let ask = r#"{"method":"item/tool/requestUserInput","id":0,"params":{"threadId":"t1","turnId":"u1","itemId":"q9","isBlocking":true,"questions":[{"id":"runner","header":"Runner","question":"Which test runner?","options":[{"label":"Vitest","description":"fast"},{"label":"Jest","description":"current"}]},{"id":"token","header":"Token","question":"npm token?","isSecret":true}]}}"#;
+    env.script(
+        "c.jsonl",
+        &(ask.to_owned() + "\n" + &codex_ok("t1", "migrated")),
+    );
+    let child = spawn_run(&env, &[]);
+    let q = first_question(&env);
+    assert_eq!(q["tool"], "AskUserQuestion");
+    assert_eq!(q["input"]["questions"][0]["options"][1]["label"], "Jest");
+    assert_eq!(q["input"]["questions"][1]["secret"], true);
+
+    // A secret is never passed: anchorleg refuses to take it.
+    env.anchorleg()
+        .args([
+            "permission",
+            "answer",
+            &q["id"].to_string(),
+            "1",
+            "npm_abc123",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("doesn't pass secrets"));
+    env.anchorleg()
+        .args(["permission", "answer", &q["id"].to_string(), "1", "-"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "Runner → Vitest; Token → (secret, not passed)",
+        ));
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "migrated", "{r}");
+
+    let answers = std::fs::read_to_string(env.path("fake/answers.log")).unwrap();
+    let reply: Value = serde_json::from_str(answers.lines().next().unwrap()).unwrap();
+    assert_eq!(
+        reply["result"],
+        serde_json::json!({ "answers": { "runner": { "answers": ["Vitest"] } } })
+    );
+    let log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert!(log.contains("the agent asks: 2 questions"), "{log}");
+    assert!(log.contains("Runner → Vitest"), "{log}");
+}
+
+#[test]
+fn codex_mcp_prompts_and_sandbox_requests_reach_the_person() {
+    let env = Env::mixed(&[("c", "codex")]);
+    let access = r#"{"method":"item/permissions/requestApproval","id":0,"params":{"threadId":"t1","turnId":"u1","itemId":"p1","cwd":"/w","startedAtMs":1,"reason":"fetch deps","permissions":{"network":{"enabled":true}}}}"#;
+    let form = r#"{"method":"mcpServer/elicitation/request","id":1,"params":{"serverName":"jira","threadId":"t1","turnId":"u1","mode":"form","message":"Which project?","requestedSchema":{"type":"object","properties":{"project":{"type":"string","enum":["ENG","OPS"]}}}}}"#;
+    env.script(
+        "c.jsonl",
+        &format!("{access}\n{form}\n{}", codex_ok("t1", "filed")),
+    );
+    let child = spawn_run(&env, &[]);
+
+    let p = first_question(&env);
+    assert_eq!(p["tool"], "Permissions");
+    let list = env
+        .anchorleg()
+        .args(["permission", "list"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&list.stdout).contains("Permissions  network"),
+        "{}",
+        String::from_utf8_lossy(&list.stdout)
+    );
+    env.anchorleg()
+        .args(["permission", "answer", &p["id"].to_string(), "yes"])
+        .assert()
+        .success();
+
+    let started = std::time::Instant::now();
+    let q = loop {
+        let q = first_question(&env);
+        if q["id"] != p["id"] {
+            break q;
+        }
+        assert!(started.elapsed().as_secs() < 10);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert_eq!(q["tool"], "AskUserQuestion");
+    assert_eq!(q["input"]["questions"][0]["header"], "jira · project");
+    env.anchorleg()
+        .args(["permission", "answer", &q["id"].to_string(), "2"])
+        .assert()
+        .success();
+
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "filed", "{r}");
+    let answers: Vec<Value> = std::fs::read_to_string(env.path("fake/answers.log"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        answers[0]["result"],
+        serde_json::json!({ "permissions": { "network": { "enabled": true } }, "scope": "turn" })
+    );
+    assert_eq!(
+        answers[1]["result"],
+        serde_json::json!({ "action": "accept", "content": { "project": "OPS" } })
+    );
+}
+
+/// The person's answer to the question waiting at the moment, once a new one shows up.
+fn answer_next_question(env: &Env, after: &Value, answer: &str) -> Value {
+    let started = std::time::Instant::now();
+    let q = loop {
+        let q = first_question(env);
+        if &q["id"] != after {
+            break q;
+        }
+        assert!(started.elapsed().as_secs() < 10, "no new question");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    env.anchorleg()
+        .args(["permission", "answer", &q["id"].to_string(), answer])
+        .assert()
+        .success();
+    q["id"].clone()
+}
+
+#[test]
+fn a_plan_is_approved_before_it_runs() {
+    let env = Env::new(&["a"]);
+    env.script("a.1.jsonl", &ok("s1", "1. add docs/page.md"));
+    env.script("a.2.jsonl", &ok("s1", "1. add docs/page.md in Markdown"));
+    env.script("a.3.jsonl", &ok("s1", "page added"));
+    env.anchorleg()
+        .args([
+            "settings",
+            "claude",
+            "--args",
+            "--permission-mode acceptEdits",
+        ])
+        .assert()
+        .success();
+    let child = spawn_run_with(&env, &["--plan"], &[]);
+
+    // Their words send the plan back; then they approve it.
+    let first = answer_next_question(&env, &Value::Null, "use Markdown");
+    answer_next_question(&env, &first, "1");
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "page added", "{r}");
+
+    let launches = env.launches();
+    assert_eq!(launches.len(), 3, "{launches:?}");
+    // Planning: plan mode replaces the person's own mode, and the agent is told how to hand
+    // the plan over.
+    assert!(
+        launches[0].contains("--permission-mode plan"),
+        "{launches:?}"
+    );
+    assert!(!launches[0].contains("acceptEdits"), "{launches:?}");
+    assert!(
+        launches[0].contains("anchorleg will ask me to approve it"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[1].contains("Change the plan: use Markdown")
+            && launches[1].contains("--resume s1"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[1].contains("--permission-mode plan"),
+        "{launches:?}"
+    );
+    // Approved: the same session, back in the person's own mode.
+    assert!(launches[2].contains("The plan is approved"), "{launches:?}");
+    assert!(
+        launches[2].contains("--permission-mode acceptEdits"),
+        "{launches:?}"
+    );
+    assert!(
+        !launches[2].contains("--permission-mode plan"),
+        "{launches:?}"
+    );
+    assert_eq!(
+        env.notices(),
+        [
+            "waiting: #1 plan ready: approve it?",
+            "waiting: #1 plan ready: approve it?",
+            "done: #1 done: page added"
+        ]
+    );
+}
+
+#[test]
+fn a_codex_plan_uses_plan_mode_until_approved() {
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.1.jsonl", &codex_ok("t1", "1. add docs/page.md"));
+    env.script("c.2.jsonl", &codex_ok("t1", "page added"));
+    let child = spawn_run_with(&env, &["--plan"], &[]);
+    answer_next_question(&env, &Value::Null, "1");
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "page added", "{r}");
+    let launches = env.launches();
+    assert_eq!(launches.len(), 2, "{launches:?}");
+    // Planning: Codex's plan mode (its model taken from the thread), nothing writable.
+    assert!(
+        launches[0].contains("sandbox=read-only")
+            && launches[0].contains("[mode: plan model=gpt-default experimental=True]"),
+        "{launches:?}"
+    );
+    assert!(
+        !launches[0].contains("anchorleg will ask me"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[1].contains("thread/resume t1")
+            && launches[1].contains("sandbox=workspace-write")
+            && launches[1].contains("The plan is approved")
+            && !launches[1].contains("[mode:"),
+        "{launches:?}"
+    );
+}
+
+/// Wait until the fakes have seen `n` launches.
+fn wait_launches(env: &Env, n: usize) {
+    let started = std::time::Instant::now();
+    while env.launches().len() < n {
+        assert!(
+            started.elapsed().as_secs() < 10,
+            "only {:?}",
+            env.launches()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn a_message_for_a_working_claude_session_continues_it_when_the_turn_ends() {
+    let env = Env::new(&["a"]);
+    env.script("a.1.jsonl", &ok("s1", "tests migrated"));
+    env.script("a.2.jsonl", &ok("s1", "docs updated too"));
+    let child = spawn_run(&env, &[("FAKE_SLEEP", "1")]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--", "also", "update", "the", "docs"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "docs updated too", "{r}");
+    let launches = env.launches();
+    assert_eq!(launches.len(), 2, "{launches:?}");
+    assert!(
+        launches[1].contains("-p also update the docs"),
+        "{launches:?}"
+    );
+    assert!(launches[1].contains("--resume s1"), "{launches:?}");
+    // Delivered once, and shown as the person's message.
+    let log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert!(
+        log.contains(r#""text":"also update the docs","type":"anchorleg_user""#),
+        "{log}"
+    );
+    env.anchorleg()
+        .args(["send", "1", "--", "late"])
+        .assert()
+        .failure();
+}
+
+fn codex_waiting(thread: &str, text: &str) -> String {
+    format!(
+        "{}\n{}\n{}",
+        format_args!(
+            r#"{{"method":"turn/started","params":{{"threadId":"{thread}","turn":{{"id":"u1","status":"inProgress"}}}}}}"#
+        ),
+        r#"{"fake":"wait_steer"}"#,
+        codex_ok(thread, text)
+    )
+}
+
+#[test]
+fn a_message_for_a_working_codex_turn_steers_it() {
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.jsonl", &codex_waiting("t1", "used vitest"));
+    let child = spawn_run(&env, &[]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--", "use", "vitest"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "used vitest", "{r}");
+    let steers = std::fs::read_to_string(env.path("fake/steers.log")).unwrap();
+    let steer: Value = serde_json::from_str(steers.lines().next().unwrap()).unwrap();
+    assert_eq!(steer["params"]["expectedTurnId"], "u1");
+    assert_eq!(steer["params"]["input"][0]["text"], "use vitest");
+    // Taken into the turn: no second launch for it.
+    assert_eq!(env.launches().len(), 1, "{:?}", env.launches());
+}
+
+#[test]
+fn interrupt_and_send_stops_the_codex_turn_and_continues_with_the_message() {
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.1.jsonl", &codex_waiting("t1", "never seen"));
+    env.script("c.2.jsonl", &codex_ok("t1", "moved to src/"));
+    let child = spawn_run(&env, &[]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--interrupt", "--", "stop,", "use", "src/"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "moved to src/", "{r}");
+    assert!(env.path("fake/interrupts.log").is_file());
+    let launches = env.launches();
+    assert_eq!(launches.len(), 2, "{launches:?}");
+    assert!(launches[1].contains("thread/resume t1"), "{launches:?}");
+    assert!(launches[1].ends_with("-- stop, use src/"), "{launches:?}");
+}
+
+#[test]
+fn attached_files_are_copied_into_the_task_and_named_in_the_prompt() {
+    let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
+    let shot = env.path("Screen Shot.png");
+    std::fs::write(&shot, b"\x89PNG fake").unwrap();
+    let log = env.path("build.log");
+    std::fs::write(&log, "error: boom").unwrap();
+
+    // Claude: the prompt names the copies, which sit in the task folder, ignored by git.
+    env.script("a.jsonl", &ok("s1", "looked"));
+    let (code, r) = env.run(&[
+        "--account",
+        "a",
+        "--attach",
+        shot.to_str().unwrap(),
+        "--attach",
+        log.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "{r}");
+    let launch = env.launches()[0].clone();
+    assert!(
+        launch.contains("Attached (read them; paths are relative to the task folder):"),
+        "{launch}"
+    );
+    let copies: Vec<_> = std::fs::read_dir(env.path("work/.anchorleg/attachments"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(copies.len(), 2, "{copies:?}");
+    assert!(copies.iter().any(|c| c.ends_with("-Screen_Shot.png")));
+    assert!(launch.contains(".anchorleg/attachments/"), "{launch}");
+    assert!(env.path("work/.anchorleg/.gitignore").is_file());
+
+    // Codex: images also go in as image input.
+    env.script("c.jsonl", &codex_ok("t1", "saw it"));
+    let (code, r) = env.run(&["--account", "c", "--attach", shot.to_str().unwrap()]);
+    assert_eq!(code, 0, "{r}");
+    let launch = env.launches().last().unwrap().clone();
+    assert!(launch.contains("[images: "), "{launch}");
+    assert!(launch.ends_with("-Screen_Shot.png]"), "{launch}");
 }

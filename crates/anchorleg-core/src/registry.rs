@@ -520,6 +520,12 @@ pub struct Config {
     /// is launched.
     #[serde(default, rename = "vendor", skip_serializing_if = "BTreeMap::is_empty")]
     pub vendors: BTreeMap<Vendor, VendorSettings>,
+    /// Notifications when a run needs the person or ends (`anchorleg notify`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::notify::NotifySettings::is_default"
+    )]
+    pub notify: crate::notify::NotifySettings,
 }
 
 fn is_default_policy(p: &crate::policy::Policy) -> bool {

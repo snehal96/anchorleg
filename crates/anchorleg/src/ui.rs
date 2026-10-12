@@ -18,6 +18,7 @@ use std::time::Duration;
 use anchorleg_core::adapters::CreditState;
 use anchorleg_core::conversation::{self, Message, Role};
 use anchorleg_core::policy::{self, PickOptions};
+use anchorleg_core::questions;
 use anchorleg_core::registry::{
     Account, Config, Keychain, SecretStore, TokenFrom, Vendor, VendorSettings,
     accounts_from_aliases,
@@ -189,6 +190,14 @@ pub enum Action {
     Remove,
     /// Answer the selected session's waiting tool call.
     Answer(PermissionState),
+    /// Pick option n (from 1) for the waiting question.
+    Pick(usize),
+    /// Confirm the options picked for a multi-select question.
+    ConfirmPicks,
+    /// Decline the waiting question.
+    SkipQuestion,
+    /// Send the message box to the working session, stopping it at its next clean point.
+    Interrupt,
     /// Edit the selected account's CLI settings (`[vendor.<name>]`).
     Settings,
     /// Next switch policy (drain → balance → save-weekly), saved as the default.
@@ -196,13 +205,27 @@ pub enum Action {
     Help,
     /// Show or hide the usage panel: tokens, cost, credits.
     Usage,
+    /// Show what the selected session changed in its folder since it started.
+    Diff,
     Quit,
+}
+
+/// The selected session's changes, shown over everything (`v`).
+pub struct DiffView {
+    title: String,
+    lines: Vec<String>,
+    scroll: usize,
 }
 
 pub struct App {
     pub focus: Focus,
     pub help: bool,
     pub usage_panel: bool,
+    /// Progress through the waiting question request: its id, the answers so far (one per
+    /// question answered), and the options ticked on a multi-select question.
+    asking: Option<(i64, Vec<Vec<String>>, Vec<usize>)>,
+    /// Files going with the next message (pasted images, already in the task folder).
+    attached: Vec<PathBuf>,
     pub config: Config,
     config_path: PathBuf,
     store: Store,
@@ -226,6 +249,11 @@ pub struct App {
     pub selected: usize,
     pub agent: usize,
     conversation: Vec<Message>,
+    /// The selected session's task list (TodoWrite / Codex's plan), last version.
+    steps: Vec<anchorleg_core::handoff::Step>,
+    pub diff_view: Option<DiffView>,
+    /// The terminal's height at the last draw (a page for scrolling).
+    last_height: u16,
     /// Lines scrolled up from the bottom of the conversation.
     scroll_up: usize,
     folder: TextBox,
@@ -265,6 +293,8 @@ impl App {
             focus: Focus::Sessions,
             help: false,
             usage_panel: false,
+            asking: None,
+            attached: Vec::new(),
             config: Config::default(),
             config_path,
             store,
@@ -282,6 +312,9 @@ impl App {
             selected: 0,
             agent: 0,
             conversation: Vec::new(),
+            steps: Vec::new(),
+            diff_view: None,
+            last_height: 24,
             scroll_up: 0,
             folder,
             message_box: TextBox::default(),
@@ -375,6 +408,7 @@ impl App {
         }
         let Some(run) = self.selected_run() else {
             self.conversation.clear();
+            self.steps.clear();
             return;
         };
         // A follow-up shows the whole session: its parents' messages first.
@@ -392,9 +426,11 @@ impl App {
             }
         }
         let mut messages = Vec::new();
+        let mut whole = String::new();
         for id in chain.iter().rev() {
             let log = std::fs::read_to_string(self.log_dir.join(format!("run-{id}.jsonl")))
                 .unwrap_or_default();
+            whole.push_str(&log);
             let mut part = conversation::from_log(&log);
             // Paths inside the session's folder read better relative to it.
             if let Some(r) = self.runs.iter().find(|r| r.id == *id) {
@@ -418,6 +454,7 @@ impl App {
             messages.extend(part);
         }
         self.conversation = messages;
+        self.steps = anchorleg_core::handoff::extract(&whole).steps;
     }
 
     fn agent_count(&self) -> usize {
@@ -461,6 +498,10 @@ impl App {
                 self.field = Field::Message;
             }
             Action::Answer(state) => self.answer(state)?,
+            Action::Pick(n) => self.pick(n)?,
+            Action::ConfirmPicks => self.confirm_picks()?,
+            Action::SkipQuestion => self.answer(PermissionState::Denied)?,
+            Action::Interrupt => self.send_to_running(true)?,
             Action::Send if self.settings_for.is_some() => self.save_settings()?,
             Action::Send => self.send()?,
             Action::Settings => self.edit_settings(),
@@ -472,6 +513,7 @@ impl App {
             Action::Remove => self.remove_agent()?,
             Action::Help => self.help = !self.help,
             Action::Usage => self.usage_panel = !self.usage_panel,
+            Action::Diff => self.open_diff(),
             Action::Quit => self.quit = true,
         }
         Ok(())
@@ -568,11 +610,211 @@ impl App {
         tool_label(&p.tool, &conversation::relative_input(&p.input, cwd))
     }
 
+    /// The folder the next message's task runs in: the session's, or the new task's.
+    fn task_folder(&self) -> Option<PathBuf> {
+        match self.selected_run() {
+            Some(r) => Some(PathBuf::from(&r.cwd)),
+            None => {
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                let dir = anchorleg_core::registry::expand_tilde(self.folder.text.trim(), &home);
+                Some(PathBuf::from(dir)).filter(|d| d.is_dir())
+            }
+        }
+    }
+
+    /// Ctrl+V: the clipboard's image goes with the next message.
+    fn paste_image(&mut self) -> anyhow::Result<()> {
+        let Some(dir) = self.task_folder() else {
+            self.message = "pick an existing folder first".to_owned();
+            return Ok(());
+        };
+        match anchorleg_core::attachments::paste_image(&dir, now())? {
+            Some(rel) => {
+                self.attached.push(dir.join(rel));
+                self.message =
+                    format!("image attached ({} with this message)", self.attached.len());
+            }
+            None => {
+                self.message = "no image on the clipboard (drop a file to attach it)".to_owned()
+            }
+        }
+        Ok(())
+    }
+
+    /// The message box's text and every file going with it: pasted images and file paths
+    /// dropped into the text. Clears the pasted ones.
+    fn take_message(&mut self) -> (String, Vec<PathBuf>) {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let (dropped, text) =
+            anchorleg_core::attachments::dropped_paths(self.message_box.text.trim(), &home);
+        let mut files = std::mem::take(&mut self.attached);
+        files.extend(dropped);
+        let text = if text.trim().is_empty() && !files.is_empty() {
+            "Have a look at the attached files.".to_owned()
+        } else {
+            text.trim().to_owned()
+        };
+        (text, files)
+    }
+
+    /// The message box, sent to the selected session while it works (`anchorleg send`): Codex
+    /// takes it into the running turn, Claude when its turn ends; `interrupt` stops the agent at
+    /// its next clean point first.
+    fn send_to_running(&mut self, interrupt: bool) -> anyhow::Result<()> {
+        let Some(run) = self.selected_run().cloned() else {
+            return Ok(());
+        };
+        if !(Self::is_running(&run) && self.is_alive(&run)) {
+            if interrupt {
+                self.message = format!("#{} isn't working; Enter sends a reply", run.id);
+                return Ok(());
+            }
+            return self.send();
+        }
+        if self.message_box.text.trim().is_empty() && self.attached.is_empty() {
+            self.focus = Focus::Composer;
+            self.message = "type a message first".to_owned();
+            return Ok(());
+        }
+        let (text, files) = self.take_message();
+        let staged = match anchorleg_core::attachments::stage(Path::new(&run.cwd), &files, now()) {
+            Ok(staged) => staged,
+            Err(e) => {
+                self.message = format!("couldn't attach: {e}");
+                return Ok(());
+            }
+        };
+        let text = anchorleg_core::attachments::with_note(&text, &staged);
+        self.store.queue_message(run.id, &text, interrupt, now())?;
+        self.message_box.set("");
+        let codex = self.provider() == Vendor::Codex;
+        self.message = match (interrupt, codex) {
+            (true, _) => format!(
+                "#{}: stopping at the next clean point, then your message",
+                run.id
+            ),
+            (false, true) => format!("#{}: sent into the running turn", run.id),
+            (false, false) => format!(
+                "#{}: queued; Claude reads it when this turn ends (Ctrl+X to interrupt)",
+                run.id
+            ),
+        };
+        self.refresh()
+    }
+
+    /// The waiting question request of the selected session, its questions, and which one is
+    /// being answered now.
+    fn question(&self) -> Option<(&Permission, Vec<questions::Question>, usize)> {
+        let p = self.waiting().filter(|p| p.is_question())?;
+        let qs = questions::from_input(&p.input);
+        let step = match &self.asking {
+            Some((id, done, _)) if *id == p.id => done.len(),
+            _ => 0,
+        };
+        Some((p, qs, step))
+    }
+
+    /// Option `n` (from 1) of the current question: answers it, or ticks it on a multi-select one.
+    fn pick(&mut self, n: usize) -> anyhow::Result<()> {
+        let Some((p, qs, step)) = self.question() else {
+            return Ok(());
+        };
+        let id = p.id;
+        let Some(q) = qs.get(step) else { return Ok(()) };
+        let Some(label) = n
+            .checked_sub(1)
+            .and_then(|i| q.options.get(i))
+            .map(|o| o.label.clone())
+        else {
+            self.message = format!("no option {n}");
+            return Ok(());
+        };
+        if q.multi_select {
+            let ticks = &mut self.asking_for(id).2;
+            match ticks.iter().position(|&t| t == n) {
+                Some(i) => {
+                    ticks.remove(i);
+                }
+                None => ticks.push(n),
+            }
+            self.message = "pick more, then Enter".to_owned();
+            return Ok(());
+        }
+        self.answer_step(vec![label])
+    }
+
+    fn confirm_picks(&mut self) -> anyhow::Result<()> {
+        let Some((p, qs, step)) = self.question() else {
+            return Ok(());
+        };
+        let id = p.id;
+        let Some(q) = qs.get(step).cloned() else {
+            return Ok(());
+        };
+        if q.secret {
+            return self.answer_step(Vec::new());
+        }
+        let mut ticks = std::mem::take(&mut self.asking_for(id).2);
+        ticks.sort_unstable();
+        if ticks.is_empty() {
+            self.message = "pick at least one option, or type an answer".to_owned();
+            return Ok(());
+        }
+        let labels = ticks
+            .iter()
+            .filter_map(|n| q.options.get(n - 1).map(|o| o.label.clone()))
+            .collect();
+        self.answer_step(labels)
+    }
+
+    fn asking_for(&mut self, id: i64) -> &mut (i64, Vec<Vec<String>>, Vec<usize>) {
+        if self.asking.as_ref().is_none_or(|a| a.0 != id) {
+            self.asking = Some((id, Vec::new(), Vec::new()));
+        }
+        self.asking.as_mut().expect("just set")
+    }
+
+    /// Record the answer to the current question; after the last one, send them all.
+    fn answer_step(&mut self, answer: Vec<String>) -> anyhow::Result<()> {
+        let Some((p, qs, _)) = self.question() else {
+            return Ok(());
+        };
+        let id = p.id;
+        let state = self.asking_for(id);
+        state.1.push(answer);
+        state.2.clear();
+        if state.1.len() < qs.len() {
+            return Ok(());
+        }
+        let answers: questions::Answers = qs
+            .iter()
+            .zip(std::mem::take(&mut state.1))
+            .filter(|(q, a)| !q.secret && !a.is_empty())
+            .map(|(q, a)| (q.id.clone(), a))
+            .collect();
+        self.asking = None;
+        self.store.answer_question(id, &answers, now())?;
+        self.message = format!("answered: {}", questions::summary(&qs, &answers));
+        self.refresh()
+    }
+
     fn answer(&mut self, state: PermissionState) -> anyhow::Result<()> {
         let Some(p) = self.waiting() else {
             self.message = "nothing is waiting for an answer here".to_owned();
             return Ok(());
         };
+        if p.is_question() {
+            let id = p.id;
+            self.asking = None;
+            self.store
+                .answer_permission(id, PermissionState::Denied, now())?;
+            self.message = "skipped the question".to_owned();
+            return self.refresh();
+        }
         let (id, what) = (p.id, self.tool_label(p));
         self.store.answer_permission(id, state, now())?;
         self.message = match state {
@@ -623,7 +865,20 @@ impl App {
 
     fn send(&mut self) -> anyhow::Result<()> {
         let text = self.message_box.text.trim().to_owned();
-        if text.is_empty() {
+        // While the agent waits on a question, what you type answers it.
+        if let Some((_, qs, step)) = self.question() {
+            if text.is_empty() {
+                return self.confirm_picks();
+            }
+            let q = qs[step.min(qs.len() - 1)].clone();
+            self.message_box.set("");
+            if q.secret {
+                self.message = questions::SECRET_NOTE.to_owned();
+                return self.answer_step(Vec::new());
+            }
+            return self.answer_step(questions::parse_answer(&q, &text));
+        }
+        if text.is_empty() && self.attached.is_empty() {
             self.focus = Focus::Composer;
             self.field = Field::Message;
             self.message = "type a message first".to_owned();
@@ -652,17 +907,23 @@ impl App {
                 args.extend(["--cwd".to_owned(), expanded]);
             }
             Some(run) if Self::is_running(run) && self.is_alive(run) => {
-                self.message = format!(
-                    "#{} is still working; wait for it to finish or stop it (s)",
-                    run.id
-                );
-                return Ok(());
+                return self.send_to_running(false);
             }
             Some(run) if run.session_id.is_none() => {
                 self.message = format!("#{} never started a session; start a new one (n)", run.id);
                 return Ok(());
             }
             Some(run) => args.extend(["--follow-up".to_owned(), run.id.to_string()]),
+        }
+        let new_task = self.selected_run().is_none();
+        let (mut text, files) = self.take_message();
+        for f in files {
+            args.extend(["--attach".to_owned(), f.display().to_string()]);
+        }
+        // `/plan <task>`: plan first, approve, then carry it out (`anchorleg run --plan`).
+        if new_task && let Some(task) = text.strip_prefix("/plan ") {
+            text = task.trim().to_owned();
+            args.push("--plan".to_owned());
         }
         args.push("--".to_owned());
         args.push(text);
@@ -801,6 +1062,19 @@ impl App {
         if ctrl && key.code == KeyCode::Char('c') {
             return self.apply(Action::Quit);
         }
+        if let Some(d) = &mut self.diff_view {
+            let page = usize::from(self.last_height.saturating_sub(4)).max(1);
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => d.scroll += 1,
+                KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(page),
+                KeyCode::PageDown | KeyCode::Char(' ') => d.scroll += page,
+                KeyCode::Home => d.scroll = 0,
+                KeyCode::End => d.scroll = usize::MAX,
+                _ => self.diff_view = None,
+            }
+            return Ok(());
+        }
         if self.help || self.usage_panel {
             self.help = false;
             self.usage_panel = false;
@@ -854,6 +1128,12 @@ impl App {
             match key.code {
                 KeyCode::Esc => self.focus = Focus::Sessions,
                 KeyCode::Enter => return self.apply(Action::Send),
+                KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return self.apply(Action::Interrupt);
+                }
+                KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return self.paste_image();
+                }
                 KeyCode::Up | KeyCode::Down if self.selected == 0 => {
                     self.field = match self.field {
                         Field::Folder => Field::Message,
@@ -877,9 +1157,21 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char('?') => Some(Action::Help),
             KeyCode::Char('u') => Some(Action::Usage),
+            KeyCode::Char('v') => Some(Action::Diff),
             KeyCode::Char('n') => Some(Action::NewSession),
             KeyCode::Char('/') | KeyCode::Char('m') => Some(Action::Focus(Focus::Composer)),
             KeyCode::Char('s') => Some(Action::Stop),
+            KeyCode::Char(c @ '1'..='9') if self.question().is_some() => {
+                Some(Action::Pick(usize::from(c as u8 - b'0')))
+            }
+            KeyCode::Char('0') if self.question().is_some() => Some(Action::SkipQuestion),
+            KeyCode::Enter
+                if self.question().is_some_and(|(_, qs, step)| {
+                    qs.get(step).is_some_and(|q| q.multi_select || q.secret)
+                }) =>
+            {
+                Some(Action::ConfirmPicks)
+            }
             KeyCode::Char('1') if self.waiting().is_some() => {
                 Some(Action::Answer(PermissionState::Allowed))
             }
@@ -949,7 +1241,20 @@ impl App {
         let pos = Position::new(m.column, m.row);
         let over = |r: Option<Rect>| r.is_some_and(|r| r.contains(pos));
         match m.kind {
+            MouseEventKind::ScrollUp if self.diff_view.is_some() => {
+                if let Some(d) = &mut self.diff_view {
+                    d.scroll = d.scroll.saturating_sub(3);
+                }
+            }
+            MouseEventKind::ScrollDown if self.diff_view.is_some() => {
+                if let Some(d) = &mut self.diff_view {
+                    d.scroll += 3;
+                }
+            }
             MouseEventKind::Down(MouseButton::Left) => {
+                if self.diff_view.take().is_some() {
+                    return Ok(());
+                }
                 if self.help || self.usage_panel {
                     self.help = false;
                     self.usage_panel = false;
@@ -1052,6 +1357,92 @@ impl App {
         if self.usage_panel {
             self.draw_usage(f);
         }
+        self.last_height = f.area().height;
+        if self.diff_view.is_some() {
+            self.draw_diff(f);
+        }
+    }
+
+    /// `v`: the selected session's changes since it started (`anchorleg diff`).
+    fn open_diff(&mut self) {
+        let Some(run) = self.selected_run().cloned() else {
+            self.message = "select a session to see its changes".to_owned();
+            return;
+        };
+        let chain = self.store.session_runs(run.id).unwrap_or_default();
+        match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, false) {
+            Ok(Some(d)) if d.trim().is_empty() => {
+                self.message = format!("#{}: no changes yet", run.id);
+            }
+            Ok(Some(d)) => {
+                self.diff_view = Some(DiffView {
+                    title: format!(" Changes in #{} since it started ", run.id),
+                    lines: d.lines().map(str::to_owned).collect(),
+                    scroll: 0,
+                });
+            }
+            Ok(None) => {
+                self.message = format!(
+                    "#{}: no start to compare with (not a git repository, or an older session)",
+                    run.id
+                );
+            }
+            Err(e) => self.message = format!("couldn't diff #{}: {e}", run.id),
+        }
+    }
+
+    fn draw_diff(&mut self, f: &mut Frame) {
+        let area = f.area();
+        let rect = Rect::new(
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+        let Some(d) = &mut self.diff_view else {
+            return;
+        };
+        let height = usize::from(rect.height.saturating_sub(2));
+        d.scroll = d.scroll.min(d.lines.len().saturating_sub(height));
+        let lines: Vec<Line> = d
+            .lines
+            .iter()
+            .skip(d.scroll)
+            .take(height)
+            .map(|l| {
+                let style = if l.starts_with("diff --git") {
+                    Style::new().add_modifier(Modifier::BOLD)
+                } else if l.starts_with("+++") || l.starts_with("---") {
+                    Style::new().fg(Color::DarkGray)
+                } else if l.starts_with('+') {
+                    Style::new().fg(Color::Green)
+                } else if l.starts_with('-') {
+                    Style::new().fg(Color::Red)
+                } else if l.starts_with("@@") {
+                    Style::new().fg(Color::Cyan)
+                } else {
+                    Style::new()
+                };
+                Line::from(Span::styled(l.replace('\t', "    "), style))
+            })
+            .collect();
+        let shown = format!(
+            " {}–{} of {} · ↑↓ PgUp PgDn · any other key closes ",
+            (d.scroll + 1).min(d.lines.len()),
+            (d.scroll + height).min(d.lines.len()),
+            d.lines.len()
+        );
+        f.render_widget(Clear, rect);
+        f.render_widget(
+            Paragraph::new(lines).block(
+                Block::new()
+                    .borders(Borders::ALL)
+                    .border_style(Style::new().fg(Color::Cyan))
+                    .title(d.title.clone())
+                    .title_bottom(shown),
+            ),
+            rect,
+        );
     }
 
     fn pane(&self, title: &str, focus: Focus) -> Block<'static> {
@@ -1263,10 +1654,22 @@ impl App {
         if let Some(p) = self.waiting().cloned()
             && inner.height > 6
         {
+            let height = match self.question() {
+                Some((_, qs, step)) => {
+                    let options = qs.get(step).map_or(0, |q| q.options.len());
+                    u16::try_from(options + 4).unwrap_or(u16::MAX)
+                }
+                None => 4,
+            }
+            .min(inner.height.saturating_sub(3));
             let [rest, prompt] =
-                Layout::vertical([Constraint::Min(1), Constraint::Length(4)]).areas(inner);
+                Layout::vertical([Constraint::Min(1), Constraint::Length(height)]).areas(inner);
             inner = rest;
-            self.draw_permission(f, prompt, &p);
+            if p.is_question() {
+                self.draw_question(f, prompt);
+            } else {
+                self.draw_permission(f, prompt, &p);
+            }
         }
 
         let width = usize::from(inner.width.max(10));
@@ -1292,10 +1695,66 @@ impl App {
             }
             lines.extend(message_lines(m, width));
         }
+        // The agent's task list, as Claude Code shows it under the conversation.
+        if !self.steps.is_empty() && self.selected_run().is_some() {
+            use anchorleg_core::handoff::StepStatus;
+            let done = self
+                .steps
+                .iter()
+                .filter(|s| s.status == StepStatus::Done)
+                .count();
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                format!("Tasks  {done}/{}", self.steps.len()),
+                Style::new().add_modifier(Modifier::BOLD),
+            )));
+            for step in &self.steps {
+                let (mark, style) = match step.status {
+                    StepStatus::Done => (
+                        "  ✔ ",
+                        Style::new()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::CROSSED_OUT),
+                    ),
+                    StepStatus::InProgress => ("  ▸ ", Style::new().add_modifier(Modifier::BOLD)),
+                    StepStatus::Pending => ("  ◻ ", Style::new()),
+                };
+                let text = truncate(&step.text, width.saturating_sub(6).max(10));
+                lines.push(Line::from(vec![
+                    Span::styled(mark, style.remove_modifier(Modifier::CROSSED_OUT)),
+                    Span::styled(text, style),
+                ]));
+            }
+        }
         if let Some(r) = self.selected_run()
             && Self::is_running(r)
             && self.is_alive(r)
         {
+            // Sent while it works, not read by the agent yet.
+            for m in self.store.queued_messages(r.id).unwrap_or_default() {
+                lines.push(Line::default());
+                let note = if m.interrupt {
+                    "interrupting"
+                } else {
+                    "queued"
+                };
+                for (i, piece) in wrap(&m.text, width.saturating_sub(14).max(10))
+                    .into_iter()
+                    .enumerate()
+                {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            if i == 0 {
+                                format!("> ({note}) ")
+                            } else {
+                                " ".repeat(note.len() + 5)
+                            },
+                            Style::new().fg(Color::DarkGray),
+                        ),
+                        Span::styled(piece, Style::new().fg(Color::Gray)),
+                    ]));
+                }
+            }
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
                 "✻ Working…",
@@ -1385,6 +1844,92 @@ impl App {
         }
     }
 
+    /// The agent's question: header, text, numbered options; clickable.
+    fn draw_question(&mut self, f: &mut Frame, area: Rect) {
+        let Some((p, qs, step)) = self.question() else {
+            return;
+        };
+        let id = p.id;
+        let Some(q) = qs.get(step).cloned() else {
+            return;
+        };
+        let ticks = match &self.asking {
+            Some((a, _, t)) if *a == id => t.clone(),
+            _ => Vec::new(),
+        };
+        let bold = Style::new().add_modifier(Modifier::BOLD);
+        let dim = Style::new().fg(Color::DarkGray);
+        let width = usize::from(area.width);
+        let mut y = area.y;
+        let mut row = |f: &mut Frame, line: Line| {
+            if y < area.bottom() {
+                f.render_widget(Paragraph::new(line), Rect::new(area.x, y, area.width, 1));
+            }
+            y += 1;
+            y - 1
+        };
+        row(
+            f,
+            Line::styled("─".repeat(width), Style::new().fg(Color::Yellow)),
+        );
+        let count = if qs.len() > 1 {
+            format!("  ({}/{})", step + 1, qs.len())
+        } else {
+            String::new()
+        };
+        let header = q
+            .header
+            .as_deref()
+            .map_or(String::new(), |h| format!("{h} · "));
+        row(
+            f,
+            Line::from(vec![
+                Span::styled("? ", Style::new().fg(Color::Yellow)),
+                Span::styled(
+                    truncate(&format!("{header}{}", q.question), width.saturating_sub(12)),
+                    bold,
+                ),
+                Span::styled(count, dim),
+            ]),
+        );
+        for (i, o) in q.options.iter().enumerate() {
+            let n = i + 1;
+            let mark = if q.multi_select {
+                if ticks.contains(&n) { "[x] " } else { "[ ] " }
+            } else {
+                ""
+            };
+            let more = o
+                .description
+                .as_deref()
+                .map_or(String::new(), |d| format!("  {d}"));
+            let ry = row(
+                f,
+                Line::from(vec![
+                    Span::styled(format!("  {n} "), Style::new().fg(Color::Cyan)),
+                    Span::raw(format!("{mark}{}", o.label)),
+                    Span::styled(
+                        truncate(&more, width.saturating_sub(o.label.len() + 10)),
+                        dim,
+                    ),
+                ]),
+            );
+            if ry < area.bottom() {
+                self.hits
+                    .push((Rect::new(area.x, ry, area.width, 1), Action::Pick(n)));
+            }
+        }
+        let hint = match (q.options.is_empty(), q.multi_select) {
+            _ if q.secret => {
+                "secret: anchorleg won't pass it; give it to the agent another way · Enter next"
+            }
+            (true, _) => "type your answer below and press Enter · 0 skip",
+            (false, true) => "number keys tick · Enter confirm · or type your own answer · 0 skip",
+            (false, false) => "number to pick · or type your own answer below · 0 skip",
+        };
+        row(f, Line::styled(format!("  {hint}"), dim));
+    }
+
     fn draw_composer(&mut self, f: &mut Frame, area: Rect) {
         if let Some(vendor) = self.settings_for {
             let title = format!(
@@ -1416,10 +1961,13 @@ impl App {
             }
             return;
         }
-        let title = match self.selected_run() {
+        let mut title = match self.selected_run() {
             None => "New task (Enter to start)".to_owned(),
             Some(r) => format!("Reply to #{} (Enter to send)", r.id),
         };
+        if !self.attached.is_empty() {
+            title.push_str(&format!(" · {} attached", self.attached.len()));
+        }
         let block = self.pane(&title, Focus::Composer);
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -1475,6 +2023,7 @@ impl App {
             ("Send (⏎)", Action::Send),
             ("Stop (s)", Action::Stop),
             ("Usage (u)", Action::Usage),
+            ("Changes (v)", Action::Diff),
             ("Help (?)", Action::Help),
             ("Quit (q)", Action::Quit),
         ] {
@@ -1616,12 +2165,16 @@ fn draw_help(f: &mut Frame) {
         "  / or m            type a message (new task or reply)",
         "  s                 stop the selected session",
         "  u                 usage: tokens, API price, credits",
+        "  v                 the selected session's changes since it started (a diff)",
+        "Message box (more)  Ctrl+V paste an image · drop a file to attach it",
+        "                    while a session works: Enter sends to it · Ctrl+X interrupts first",
         "  r                 refresh      ?  this help      q  quit",
         "",
         "Sessions            ↑↓ select · Enter reply",
         "Conversation        ↑↓ PgUp PgDn scroll · End latest",
         "Message box         Enter send · Esc leave · ↑↓ folder/message (new task)",
         "                    /model x · /effort x  set it for every account of the provider",
+        "                    /plan <task>  new task, plan first: approve the plan, then it runs",
         "                    /other  the CLI's own commands; Tab completes, ↑↓ choose",
         "                    Ctrl+A/E start/end · Ctrl+U clear",
         "Agents              ↑↓ select · Shift+↑↓ (K/J) reorder · space on/off",
@@ -2040,6 +2593,14 @@ mod tests {
                 "fix the tests".into()
             ]]
         );
+        // `/plan <task>`: a plan-first run.
+        key(&mut fx.app, KeyCode::Esc);
+        key(&mut fx.app, KeyCode::Char('n'));
+        typed(&mut fx.app, "/plan add a docs page");
+        key(&mut fx.app, KeyCode::Enter);
+        let started = &fx.calls.borrow().started;
+        assert_eq!(started.len(), 2, "{started:?}");
+        assert_eq!(started[1][4..], ["--plan", "--", "add a docs page"]);
     }
 
     #[test]
@@ -2087,17 +2648,28 @@ mod tests {
     }
 
     #[test]
-    fn a_running_session_can_be_stopped_but_not_replied_to() {
+    fn messages_to_a_running_session_are_queued_or_interrupt() {
         let mut fx = fixture(
             &[("sm", 1)],
             &[("long task", RunState::Running, Some("s1"))],
         );
         assert!(screen(&mut fx.app).contains("✻ Working…"));
         key(&mut fx.app, KeyCode::Char('/'));
-        typed(&mut fx.app, "more");
+        typed(&mut fx.app, "also update the docs");
         key(&mut fx.app, KeyCode::Enter);
+        // No new run: the message waits for the working one.
         assert!(fx.calls.borrow().started.is_empty());
-        assert!(fx.app.message.contains("still working"));
+        assert!(fx.app.message.contains("queued"), "{}", fx.app.message);
+        let s = screen(&mut fx.app);
+        assert!(s.contains("> (queued) also update the docs"), "{s}");
+        typed(&mut fx.app, "stop, wrong folder");
+        fx.app
+            .on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(fx.app.message.contains("stopping at the next clean point"));
+        assert!(fx.app.store.interrupt_requested(1).unwrap());
+        assert!(screen(&mut fx.app).contains("> (interrupting) stop, wrong folder"));
+        assert_eq!(fx.app.store.queued_messages(1).unwrap().len(), 2);
 
         key(&mut fx.app, KeyCode::Esc);
         key(&mut fx.app, KeyCode::Char('s'));
@@ -2405,6 +2977,253 @@ mod tests {
         assert!(panel.contains("not reported yet"), "{panel}");
         key(&mut fx.app, KeyCode::Char('x'));
         assert!(!fx.app.usage_panel);
+    }
+
+    #[test]
+    fn agent_questions_are_answered_with_numbers_or_typed_text() {
+        use anchorleg_core::questions::{Choice, Question, to_input};
+        let mut fx = fixture(
+            &[("sm", 1)],
+            &[("migrate tests", RunState::Running, Some("s1"))],
+        );
+        let qs = vec![
+            Question {
+                id: "Which test runner?".into(),
+                header: Some("Runner".into()),
+                question: "Which test runner?".into(),
+                options: vec![
+                    Choice {
+                        label: "Vitest".into(),
+                        description: Some("fast, ESM".into()),
+                    },
+                    Choice {
+                        label: "Jest".into(),
+                        description: None,
+                    },
+                ],
+                multi_select: false,
+                secret: false,
+            },
+            Question {
+                id: "Folders?".into(),
+                header: None,
+                question: "Which folders?".into(),
+                options: ["src", "lib", "test"]
+                    .map(|l| Choice {
+                        label: l.into(),
+                        description: None,
+                    })
+                    .to_vec(),
+                multi_select: true,
+                secret: false,
+            },
+            Question {
+                id: "Anything else?".into(),
+                header: None,
+                question: "Anything else?".into(),
+                options: vec![],
+                multi_select: false,
+                secret: false,
+            },
+        ];
+        let id = fx
+            .app
+            .store
+            .ask_permission(1, questions::TOOL, &to_input(&qs), None, now())
+            .unwrap();
+        fx.app.refresh().unwrap();
+        fx.app.select_session(1);
+
+        let s = screen(&mut fx.app);
+        assert!(s.contains("Runner · Which test runner?"), "{s}");
+        assert!(s.contains("(1/3)"), "{s}");
+        assert!(s.contains("1 Vitest  fast, ESM"), "{s}");
+        key(&mut fx.app, KeyCode::Char('1'));
+        // Multi-select: tick two, confirm with Enter.
+        assert!(screen(&mut fx.app).contains("[ ] lib"));
+        key(&mut fx.app, KeyCode::Char('3'));
+        key(&mut fx.app, KeyCode::Char('1'));
+        assert!(screen(&mut fx.app).contains("[x] test"));
+        key(&mut fx.app, KeyCode::Enter);
+        // Free text through the message box.
+        assert!(screen(&mut fx.app).contains("type your answer below"));
+        fx.app.message_box.set("keep the jest config for now");
+        fx.app.apply(Action::Send).unwrap();
+
+        let p = fx.app.store.permission(id).unwrap().unwrap();
+        assert_eq!(p.state, PermissionState::Allowed);
+        let a = p.answers.unwrap();
+        assert_eq!(a["Which test runner?"], ["Vitest"]);
+        assert_eq!(a["Folders?"], ["src", "test"]);
+        assert_eq!(a["Anything else?"], ["keep the jest config for now"]);
+        assert!(
+            fx.calls.borrow().started.is_empty(),
+            "typing answered; it didn't send a reply"
+        );
+    }
+
+    #[test]
+    fn a_question_can_be_skipped() {
+        use anchorleg_core::questions::{Question, to_input};
+        let mut fx = fixture(&[("sm", 1)], &[("t", RunState::Running, Some("s1"))]);
+        let q = Question {
+            id: "q".into(),
+            header: None,
+            question: "Token?".into(),
+            options: vec![],
+            multi_select: false,
+            secret: true,
+        };
+        let id = fx
+            .app
+            .store
+            .ask_permission(1, questions::TOOL, &to_input(&[q]), None, now())
+            .unwrap();
+        fx.app.refresh().unwrap();
+        fx.app.select_session(1);
+        key(&mut fx.app, KeyCode::Char('0'));
+        let p = fx.app.store.permission(id).unwrap().unwrap();
+        assert_eq!(p.state, PermissionState::Denied);
+    }
+
+    #[test]
+    fn task_list_and_changes_of_a_session() {
+        let mut fx = fixture(&[("sm", 1)], &[]);
+        // A session in a real repository, started (and its start saved) before the agent wrote.
+        let repo = fx.dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .env("GIT_AUTHOR_NAME", "t")
+                    .env("GIT_AUTHOR_EMAIL", "t@t")
+                    .env("GIT_COMMITTER_NAME", "t")
+                    .env("GIT_COMMITTER_EMAIL", "t@t")
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        git(&["add", "a.txt"]);
+        git(&["commit", "-q", "-m", "init"]);
+        let id = fx
+            .app
+            .store
+            .start_run("split the module", &repo.display().to_string(), None, 100)
+            .unwrap();
+        fx.app.store.set_run_account(id, "sm", Some("s1")).unwrap();
+        fx.app.store.set_run_state(id, RunState::Done, 100).unwrap();
+        anchorleg_core::checkpoint::save_start(&repo, id).unwrap();
+        std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+        let todo = serde_json::json!({ "type": "assistant", "message": { "role": "assistant", "content": [
+            { "type": "tool_use", "id": "t1", "name": "TodoWrite", "input": { "todos": [
+                { "content": "Move the parser", "status": "completed" },
+                { "content": "Update the imports", "status": "in_progress" },
+                { "content": "Run the tests", "status": "pending" }
+            ]}}
+        ]}});
+        std::fs::write(
+            fx.dir.path().join(format!("runs/run-{id}.jsonl")),
+            format!("{todo}\n"),
+        )
+        .unwrap();
+        fx.app.refresh().unwrap();
+        fx.app.select_session(1);
+
+        let s = screen(&mut fx.app);
+        assert!(s.contains("Tasks  1/3"), "{s}");
+        assert!(
+            s.contains("✔ Move the parser") && s.contains("▸ Update the imports"),
+            "{s}"
+        );
+        assert!(s.contains("◻ Run the tests"), "{s}");
+
+        key(&mut fx.app, KeyCode::Char('v'));
+        let s = screen(&mut fx.app);
+        assert!(
+            s.contains(&format!("Changes in #{id} since it started")),
+            "{s}"
+        );
+        assert!(s.contains("+two"), "{s}");
+        key(&mut fx.app, KeyCode::Char('x'));
+        assert!(fx.app.diff_view.is_none());
+    }
+
+    #[test]
+    fn dropped_files_go_with_the_message() {
+        let mut fx = fixture(
+            &[("sm", 1)],
+            &[
+                ("done task", RunState::Done, Some("s1")),
+                ("working task", RunState::Running, Some("s2")),
+            ],
+        );
+        let file = fx.dir.path().join("crash report.txt");
+        std::fs::write(&file, "trace").unwrap();
+        let dropped = file.display().to_string().replace(' ', "\\ ");
+
+        // A reply to a finished session: the file is passed with --attach, the path leaves the text.
+        let done = fx
+            .app
+            .runs
+            .iter()
+            .position(|r| r.task == "done task")
+            .unwrap()
+            + 1;
+        fx.app.select_session(done);
+        fx.app
+            .message_box
+            .set(&format!("why does this crash {dropped}"));
+        fx.app.apply(Action::Send).unwrap();
+        let started = fx.calls.borrow().started[0].clone();
+        let at = started.iter().position(|a| a == "--attach").unwrap();
+        assert_eq!(started[at + 1], file.display().to_string());
+        assert_eq!(started.last().unwrap(), "why does this crash");
+
+        // To a working session: copied into its folder and named in the queued message.
+        let folder = fx.dir.path().join("work");
+        std::fs::create_dir_all(&folder).unwrap();
+        let run_id = fx
+            .app
+            .store
+            .start_run("busy", &folder.display().to_string(), None, 100)
+            .unwrap();
+        fx.app
+            .store
+            .set_run_account(run_id, "sm", Some("s3"))
+            .unwrap();
+        fx.app.store.set_run_pid(run_id, Some(4242)).unwrap();
+        fx.app.refresh().unwrap();
+        let working = fx.app.runs.iter().position(|r| r.id == run_id).unwrap() + 1;
+        fx.app.select_session(working);
+        fx.app.message_box.set(&dropped);
+        fx.app.apply(Action::Send).unwrap();
+        let queued = fx.app.store.queued_messages(run_id).unwrap();
+        assert!(
+            queued[0]
+                .text
+                .starts_with("Have a look at the attached files."),
+            "{}",
+            queued[0].text
+        );
+        assert!(
+            queued[0].text.contains(".anchorleg/attachments/"),
+            "{}",
+            queued[0].text
+        );
+        assert!(
+            folder
+                .join(".anchorleg/attachments")
+                .read_dir()
+                .unwrap()
+                .next()
+                .is_some()
+        );
     }
 
     #[test]

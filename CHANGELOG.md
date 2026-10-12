@@ -7,6 +7,31 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Talk to a session while it works: `anchorleg send <run> -- …` (Enter in `anchorleg ui`). Codex
+  takes the message into the running turn; Claude Code reads it when its turn ends, in the same
+  run. `--interrupt` (Ctrl+X) stops the agent at its next clean point and continues with the
+  message.
+- Questions from the agent reach you: Codex's `request_user_input` (anchorleg turns on Codex's
+  experimental feature that offers it outside plan mode), and for Claude Code an
+  `ask_user` tool added by anchorleg-mod (headless runs drop Claude's own question tool). Answer
+  in `anchorleg ui` (number keys, your own words, `0` to skip) or with
+  `anchorleg permission answer <id> <answer>…`. Secret answers are never passed or stored.
+- See what a session changed: `anchorleg diff <run> [--stat]`, `v` in `anchorleg ui`. Every run
+  saves the folder as it found it (`refs/anchorleg/run-<id>/start`, local only), so the diff shows
+  the session's own changes. The agent's task list shows under the conversation.
+- Notifications: a desktop notification when a run waits for you (tool call, question, plan),
+  finishes, fails, switches accounts or runs out of accounts. `anchorleg notify` turns them off or
+  adds a command of your own (JSON on stdin), e.g. to reach your phone.
+- Plan first: `anchorleg run --plan` (`/plan <task>` in `anchorleg ui`). The agent plans in Claude's
+  or Codex's plan mode; you approve the plan or say what to change; then the same session
+  carries it out.
+- MCP in Codex runs: MCP tool calls are now asked as approvals (before, anchorleg rejected the
+  request, so every MCP tool call failed), MCP servers' prompts (forms, sign-in links) reach you
+  as questions, and Codex's requests for more sandbox access as `Permissions` approvals.
+- Attach images and files: `--attach FILE` on `anchorleg run` and `anchorleg send`; in
+  `anchorleg ui`, Ctrl+V pastes the clipboard's image and a dropped file is attached. Files are
+  copied into the task folder's git-ignored `.anchorleg/attachments/`, so any account or CLI can
+  read them; Codex also gets images as image input.
 - Homebrew tap (in progress).
 
 ## [0.3.0] — 2026-10-12
