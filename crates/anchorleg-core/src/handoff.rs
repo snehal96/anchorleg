@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn reads_the_real_mod_stop_capture() {
         let t = extract(include_str!(
-            "../../../fixtures/claude-2.1.294-mod-stop-20261008/run-sm-then-two.jsonl"
+            "../../../fixtures/claude-2.1.294-mod-stop-20261008/run-personal-then-two.jsonl"
         ));
         assert_eq!(t.last_message.as_deref(), Some("MANGO-17"));
         assert_eq!(t.read.len(), 1);
@@ -772,7 +772,7 @@ mod tests {
             goals: &goals,
             transcript: &t,
             cwd: Path::new("/repo"),
-            from: "claude-sm",
+            from: "claude-personal",
             reason: "limit reached",
             git_status: Some(" M src/a.rs\n"),
             checkpoint: Some("refs/anchorleg/run-3/1"),

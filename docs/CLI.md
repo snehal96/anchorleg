@@ -19,7 +19,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
@@ -38,12 +38,12 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 ### Session manager: `anchorleg ui`
 
 ```
-┌ Sessions ──────────┐┌ #12 · claude-sm · running · ~/repo ─────────┐
+┌ Sessions ──────────┐┌ #12 · personal · running · ~/repo ──────────┐
 │ + New session      ││ you   fix the failing auth tests            │
-│ ● #12 claude-sm …  ││   ⚙ Bash  cargo test auth                   │
-│ ✓ #11 two …     ││ anchorleg claude-sm paused (quota at 91%) …     │
+│ ● #12 personal …   ││   ⚙ Bash  cargo test auth                   │
+│ ✓ #11 two …        ││ anchorleg personal paused (quota at 91%) …  │
 ├ Agents ────────────┤│ agent All 14 auth tests pass now.           │
-│ 1 claude-sm ██ 41% │├ Reply to #12 (Enter to send) ───────────────┤
+│ 1 personal  ██ 41% │├ Reply to #12 (Enter to send) ───────────────┤
 │   Codex  not inst. ││ > …                                          │
 └────────────────────┘└──────────────────────────────────────────────┘
  New (n)  Send (⏎)  Stop (s)  Help (?)  Quit (q)
@@ -93,14 +93,14 @@ anchorleg accounts show work                 # the exact launch line anchorleg w
 
 ```toml
 [[account]]
-name = "claude-sm"
+name = "claude-personal"
 vendor = "claude"          # claude | codex | kimi | cursor
 priority = 1               # lower is tried first; default 100
 bin = "~/.local/bin/claude"
-env = { CLAUDE_CONFIG_DIR = "~/.claude-sm" }
+env = { CLAUDE_CONFIG_DIR = "~/.claude-personal" }
 # args = ["--model", "sonnet"]   # placed before anchorleg's own args
 # token_from = "keychain"        # instead of env; Claude only
-# shell = "claude-sm"            # instead of bin/args
+# shell = "claude-personal"            # instead of bin/args
 # enabled = false                # keep it configured but never use it
 ```
 
@@ -133,8 +133,8 @@ Antigravity reports no quota, so it switches on quota errors only.
 
 Every pick skips disabled and blocked accounts (rejected until a reset; 1 hour when the CLI gave
 no reset time). An account at 95% or more in any window, or inside its weekly reserve
-(`reserve_7d`: weekly use at or above `1 - reserve_7d`), is used only when no healthier account
-is free, and then the least used of those wins; if everything is blocked, the run waits for the
+(`reserve_7d`: weekly use at or above `1 - reserve_7d`), or past its own `stop_at`, is used only
+when no healthier account is free, and then the least used of those wins; if everything is blocked, the run waits for the
 earliest reset (or exits 75 with `--no-wait`). Among the healthy accounts:
 
 - `--account A` limits every pick to A (no switching).
@@ -145,7 +145,14 @@ earliest reset (or exits 75 with `--no-wait`). Among the healthy accounts:
   order, and accounts with no quota data count as unused.
 
 The same rules pick the account after a soft stop (with `--stop-at` as the threshold) and after a
-limit hit. `anchorleg status` shows the next pick under the configured policy; the run's `start`
+limit hit.
+
+An account can have its own limit: `anchorleg accounts set work --stop-at 0.4` (`stop_at = 0.4` in
+`config.toml`; 0 removes it). A session on it stops softly once any window reaches 40% (or the
+run's `--stop-at`, if lower) and moves to another account; from then on it goes after every
+account with room, like the weekly reserve. Use it to keep a shared or work subscription mostly
+free. With nowhere else to go, the session stays on it until the hard limit, as with any soft
+stop. `anchorleg status` shows the next pick under the configured policy; the run's `start`
 decision records the policy used.
 
 ```toml
@@ -154,6 +161,7 @@ policy = "balance"
 [[account]]
 name = "home"
 reserve_7d = 0.2
+stop_at = 0.4
 pinned = false
 credits = "last-resort"
 ```
@@ -188,7 +196,7 @@ Antigravity don't report it (`null`).
 {
   "schema": 1, "now": 1791442500, "since": 1790837700,
   "totals": [
-    { "account": "claude-sm", "model": "claude-sonnet-5-5", "launches": 4,
+    { "account": "claude-personal", "model": "claude-sonnet-5-5", "launches": 4,
       "input_tokens": 1200, "output_tokens": 8400, "cache_read_tokens": 412000,
       "cache_write_tokens": 36000, "cost_usd": 1.84, "credits_cost_usd": null }
   ],
@@ -543,8 +551,8 @@ default for you.
   "outcome": "done",
   "result": "All tests pass.",
   "session_id": "4f6c…",
-  "accounts_used": ["claude-sm", "claude-two"],
-  "switches": [{ "from": "claude-sm", "to": "claude-two", "rule": "rejected", "at": 1791450000 }],
+  "accounts_used": ["claude-personal", "claude-two"],
+  "switches": [{ "from": "claude-personal", "to": "claude-two", "rule": "rejected", "at": 1791450000 }],
   "wait_until": null
 }
 ```
@@ -568,7 +576,7 @@ default for you.
   "next": { "action": "use", "account": "claude-two", "reason": "available" },
   "accounts": [
     {
-      "name": "claude-sm", "vendor": "claude", "priority": 1,
+      "name": "claude-personal", "vendor": "claude", "priority": 1,
       "blocked_until": 1791450000,
       "windows": [
         { "window": "five_hour", "status": "rejected", "used": 1.0,
@@ -592,7 +600,7 @@ default for you.
 For anchorleg-mod (Phase 2), which converts its own numbers to this shape:
 
 ```json
-{ "account": "claude-sm",
+{ "account": "claude-personal",
   "readings": [ { "window": "five_hour", "status": "warning", "used": 0.91, "resets_at": 1791450000 } ] }
 ```
 

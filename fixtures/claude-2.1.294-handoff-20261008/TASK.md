@@ -1,6 +1,6 @@
 # Task handoff
 
-<!-- Written by relay when claude-sm stopped (paused, quota at 67%). Any agent can continue from this file: read it, check the working tree, finish the task. -->
+<!-- Written by relay when claude-personal stopped (paused, quota at 67%). Any agent can continue from this file: read it, check the working tree, finish the task. -->
 
 ## Goal
 

@@ -137,6 +137,17 @@ impl Mode {
     }
 }
 
+/// The env var that tells anchorleg-mod the launch's permission mode, when it's `auto`.
+const PERMISSION_MODE_ENV: &str = "ANCHORLEG_PERMISSION_MODE";
+
+/// The `--permission-mode` Claude's `args` give, if any.
+fn claude_mode(args: &[String]) -> Option<&str> {
+    args.iter().enumerate().rev().find_map(|(i, a)| {
+        a.strip_prefix("--permission-mode=")
+            .or_else(|| (a == "--permission-mode").then(|| args.get(i + 1).map(String::as_str))?)
+    })
+}
+
 /// `args` with Claude's `--permission-mode` set to `mode`, whatever the settings said.
 fn with_claude_mode(args: Vec<String>, mode: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -666,7 +677,7 @@ impl Supervisor<'_> {
             let stop_at = if stop_off_for.as_deref() == Some(account.name.as_str()) {
                 0.0
             } else {
-                opts.stop_at
+                account.stop_at(opts.stop_at)
             };
             let may_spend = picked_for_credits || account.credits == policy::CreditsUse::Allow;
             let attempt = self
@@ -1263,6 +1274,11 @@ impl Supervisor<'_> {
                 cmd.env("ANCHORLEG_ACCOUNT", &account.name)
                     .env("ANCHORLEG_RUN_ID", run_id.to_string())
                     .env("ANCHORLEG_STOP_AT", stop_at.to_string());
+                // In auto mode Claude's classifier answers what it would ask about; the mod
+                // leaves those to it instead of asking the person.
+                if claude_mode(&launch.args) == Some("auto") {
+                    cmd.env(PERMISSION_MODE_ENV, "auto");
+                }
                 if let Some(bin) = &opts.relay_bin {
                     cmd.env("ANCHORLEG_BIN", bin);
                 }

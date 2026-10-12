@@ -3,9 +3,9 @@
 //! ```text
 //! ┌ Sessions ─────────┐┌ Conversation ────────────────────┐
 //! │ + New session     ││ you: …                            │
-//! │ ● #12 claude-sm … ││ agent: …                          │
+//! │ ● #12 claude-personal … ││ agent: …                          │
 //! ├ Agents ───────────┤├ Message ─────────────────────────┤
-//! │ claude-sm  ██ 29% ││ > …                               │
+//! │ claude-personal  ██ 29% ││ > …                               │
 //! └───────────────────┘└───────────────────────────────────┘
 //! ```
 //!
@@ -2935,7 +2935,7 @@ fn usage_note(day: &[UsageTotal]) -> String {
     format!("  · 24h {} tokens{cost} (u)", crate::usage::count(tokens))
 }
 
-/// "· claude-sm paying from credits" for the top bar, or nothing.
+/// "· claude-personal paying from credits" for the top bar, or nothing.
 fn paying_note(credits: &[CreditsRow]) -> String {
     let paying: Vec<&str> = credits
         .iter()
@@ -3245,7 +3245,7 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         for (task, state, session) in runs {
             let id = store.start_run(task, "/repo", None, 100).unwrap();
-            store.set_run_account(id, "sm", *session).unwrap();
+            store.set_run_account(id, "personal", *session).unwrap();
             store.set_run_state(id, *state, 100).unwrap();
             if *state == RunState::Running {
                 store.set_run_pid(id, Some(4242)).unwrap();
@@ -3306,7 +3306,7 @@ mod tests {
 
     #[test]
     fn new_task_from_the_keyboard() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         let folder = fx.dir.path().display().to_string();
         key(&mut fx.app, KeyCode::Char('n'));
         assert_eq!(fx.app.focus, Focus::Composer);
@@ -3343,7 +3343,7 @@ mod tests {
 
     #[test]
     fn bang_runs_a_command_and_its_output_goes_with_the_next_message() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         std::fs::write(fx.dir.path().join("marker.txt"), "x").unwrap();
         key(&mut fx.app, KeyCode::Char('n'));
         typed(&mut fx.app, "!ls marker.txt; echo oops >&2; false");
@@ -3373,7 +3373,7 @@ mod tests {
     #[test]
     fn clear_starts_a_new_session_in_the_same_folder() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("fix the tests", RunState::Done, Some("s1"))],
         );
         let cwd = fx.app.selected_run().unwrap().cwd.clone();
@@ -3392,7 +3392,7 @@ mod tests {
 
     #[test]
     fn slash_goal_starts_a_task_or_sets_the_sessions_goal() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         key(&mut fx.app, KeyCode::Char('n'));
         typed(&mut fx.app, "/goal cargo test passes");
         key(&mut fx.app, KeyCode::Enter);
@@ -3400,7 +3400,7 @@ mod tests {
         assert_eq!(started[0][4..], ["--goal", "cargo test passes", "--", ""]);
 
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("fix the tests", RunState::Done, Some("s1"))],
         );
         key(&mut fx.app, KeyCode::Char('/'));
@@ -3425,7 +3425,7 @@ mod tests {
     #[test]
     fn slash_review_reviews_the_selected_session() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("fix the tests", RunState::Done, Some("s1"))],
         );
         key(&mut fx.app, KeyCode::Char('/'));
@@ -3449,7 +3449,7 @@ mod tests {
 
     #[test]
     fn new_task_checks_the_folder() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         key(&mut fx.app, KeyCode::Char('n'));
         key(&mut fx.app, KeyCode::Up); // to the folder field
         fx.app
@@ -3466,7 +3466,7 @@ mod tests {
     #[test]
     fn reply_to_a_finished_session() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("fix the tests", RunState::Done, Some("s1"))],
         );
         std::fs::write(
@@ -3494,7 +3494,7 @@ mod tests {
     #[test]
     fn a_working_session_lists_its_subagents() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("list the files", RunState::Running, Some("s1"))],
         );
         // A real Claude run, cut while its subagent was on its Bash call.
@@ -3520,7 +3520,7 @@ mod tests {
     #[test]
     fn messages_to_a_running_session_are_queued_or_interrupt() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("long task", RunState::Running, Some("s1"))],
         );
         assert!(screen(&mut fx.app).contains("✻ Working…"));
@@ -3549,7 +3549,7 @@ mod tests {
     #[test]
     fn sessions_list_and_selection_by_mouse() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[
                 ("first task", RunState::Done, Some("s1")),
                 ("second task", RunState::Failed, Some("s2")),
@@ -3570,9 +3570,12 @@ mod tests {
 
     #[test]
     fn agents_pane_shows_accounts_and_other_clis() {
-        let mut fx = fixture(&[("two", 2), ("sm", 1)], &[]);
+        let mut fx = fixture(&[("two", 2), ("personal", 1)], &[]);
         let s = screen(&mut fx.app);
-        assert!(s.find("1 sm").unwrap() < s.find("2 two").unwrap(), "{s}");
+        assert!(
+            s.find("1 personal").unwrap() < s.find("2 two").unwrap(),
+            "{s}"
+        );
         assert!(s.contains("Codex        not installed"), "{s}");
         assert!(s.contains("Antigravity  not installed"));
         assert!(s.contains("Cursor       installed, unsupported"));
@@ -3580,7 +3583,7 @@ mod tests {
 
     #[test]
     fn agents_reorder_toggle_remove_by_keyboard() {
-        let mut fx = fixture(&[("sm", 1), ("two", 2), ("three", 3)], &[]);
+        let mut fx = fixture(&[("personal", 1), ("two", 2), ("three", 3)], &[]);
         fx.app.apply(Action::Focus(Focus::Agents)).unwrap();
         fx.app
             .on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT))
@@ -3593,10 +3596,10 @@ mod tests {
                 .map(|a| a.name.clone())
                 .collect()
         };
-        assert_eq!(order(&fx.app), ["two", "sm", "three"]);
+        assert_eq!(order(&fx.app), ["two", "personal", "three"]);
         key(&mut fx.app, KeyCode::Char(' '));
         let config = Config::load(&fx.app.config_path).unwrap();
-        assert!(!config.get("sm").unwrap().enabled);
+        assert!(!config.get("personal").unwrap().enabled);
         key(&mut fx.app, KeyCode::Char('d'));
         assert_eq!(order(&fx.app).len(), 3, "first d only asks");
         key(&mut fx.app, KeyCode::Char('d'));
@@ -3622,7 +3625,7 @@ mod tests {
 
     #[test]
     fn cli_settings_by_keyboard_and_mouse() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         fx.app.apply(Action::Focus(Focus::Agents)).unwrap();
         key(&mut fx.app, KeyCode::Char('o'));
         assert!(screen(&mut fx.app).contains("claude settings: args for every claude launch"));
@@ -3667,12 +3670,12 @@ mod tests {
 
     #[test]
     fn conversation_looks_like_claude_code() {
-        let mut fx = fixture(&[("sm", 1)], &[("hi", RunState::Done, Some("s1"))]);
+        let mut fx = fixture(&[("personal", 1)], &[("hi", RunState::Done, Some("s1"))]);
         std::fs::write(
             fx.dir.path().join("runs/run-1.jsonl"),
             [
                 r#"{"type":"anchorleg_user","text":"hi"}"#,
-                r#"{"type":"anchorleg","text":"running on sm"}"#,
+                r#"{"type":"anchorleg","text":"running on personal"}"#,
                 r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/repo/docs/STATUS.md"}}]}}"#,
                 r#"{"type":"assistant","message":{"content":[{"type":"text","text":"**Phases 0-3** are done."}]}}"#,
             ]
@@ -3702,12 +3705,15 @@ mod tests {
         let agent = row("⏺ Phases 0-3 are done.");
         assert!(buf[(x0 + 2, agent)].modifier.contains(Modifier::BOLD));
         assert!(!buf[(x0 + 15, agent)].modifier.contains(Modifier::BOLD));
-        assert!(row("· anchorleg: running on sm") > you);
+        assert!(row("· anchorleg: running on personal") > you);
     }
 
     #[test]
     fn a_waiting_tool_call_is_answered_with_1_2_3_or_a_click() {
-        let mut fx = fixture(&[("sm", 1)], &[("edit it", RunState::Running, Some("s1"))]);
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("edit it", RunState::Running, Some("s1"))],
+        );
         let input = serde_json::json!({ "file_path": "/repo/a.txt", "content": "x" });
         let ask = |app: &App| {
             app.store
@@ -3742,7 +3748,7 @@ mod tests {
 
     #[test]
     fn slash_model_and_effort_set_the_provider_and_others_complete() {
-        let mut fx = fixture(&[("sm", 1)], &[("hi", RunState::Done, Some("s1"))]);
+        let mut fx = fixture(&[("personal", 1)], &[("hi", RunState::Done, Some("s1"))]);
         std::fs::write(
             fx.dir.path().join("runs/run-1.jsonl"),
             r#"{"type":"system","subtype":"init","session_id":"s1","slash_commands":["compact","code-review","doctor"],"terminal_slash_commands":["doctor"]}"#,
@@ -3795,7 +3801,7 @@ mod tests {
 
     #[test]
     fn help_and_quit() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         key(&mut fx.app, KeyCode::Char('?'));
         assert!(screen(&mut fx.app).contains("Tab / Shift+Tab"));
         key(&mut fx.app, KeyCode::Char('x'));
@@ -3809,7 +3815,7 @@ mod tests {
     #[test]
     fn usage_panel_shows_tokens_cost_and_credits() {
         use anchorleg_core::adapters::{Credits, Usage};
-        let mut fx = fixture(&[("sm", 1), ("two", 2)], &[]);
+        let mut fx = fixture(&[("personal", 1), ("two", 2)], &[]);
         let usage = Usage {
             model: Some("claude-haiku-5-5".into()),
             input_tokens: 1_000,
@@ -3820,7 +3826,7 @@ mod tests {
         };
         fx.app
             .store
-            .record_usage(None, "sm", &usage, false, now())
+            .record_usage(None, "personal", &usage, false, now())
             .unwrap();
         let paying = Credits {
             state: CreditState::InUse,
@@ -3829,13 +3835,18 @@ mod tests {
         };
         fx.app
             .store
-            .record_credits("sm", &paying, anchorleg_core::store::Source::Stream, now())
+            .record_credits(
+                "personal",
+                &paying,
+                anchorleg_core::store::Source::Stream,
+                now(),
+            )
             .unwrap();
         fx.app.refresh().unwrap();
 
         let top = screen(&mut fx.app);
         assert!(top.contains("24h 53.0k tokens · $1.25 API price"), "{top}");
-        assert!(top.contains("sm paying from credits"), "{top}");
+        assert!(top.contains("personal paying from credits"), "{top}");
         assert!(top.contains("paying"), "{top}");
 
         key(&mut fx.app, KeyCode::Char('u'));
@@ -3853,7 +3864,7 @@ mod tests {
     fn agent_questions_are_answered_with_numbers_or_typed_text() {
         use anchorleg_core::questions::{Choice, Question, to_input};
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[("migrate tests", RunState::Running, Some("s1"))],
         );
         let qs = vec![
@@ -3935,7 +3946,7 @@ mod tests {
     #[test]
     fn a_question_can_be_skipped() {
         use anchorleg_core::questions::{Question, to_input};
-        let mut fx = fixture(&[("sm", 1)], &[("t", RunState::Running, Some("s1"))]);
+        let mut fx = fixture(&[("personal", 1)], &[("t", RunState::Running, Some("s1"))]);
         let q = Question {
             id: "q".into(),
             header: None,
@@ -3958,7 +3969,7 @@ mod tests {
 
     #[test]
     fn task_list_and_changes_of_a_session() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         // A session in a real repository, started (and its start saved) before the agent wrote.
         let repo = fx.dir.path().join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -3986,7 +3997,10 @@ mod tests {
             .store
             .start_run("split the module", &repo.display().to_string(), None, 100)
             .unwrap();
-        fx.app.store.set_run_account(id, "sm", Some("s1")).unwrap();
+        fx.app
+            .store
+            .set_run_account(id, "personal", Some("s1"))
+            .unwrap();
         fx.app.store.set_run_state(id, RunState::Done, 100).unwrap();
         anchorleg_core::checkpoint::save_start(&repo, id).unwrap();
         std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
@@ -4054,7 +4068,7 @@ mod tests {
     #[test]
     fn dropped_files_go_with_the_message() {
         let mut fx = fixture(
-            &[("sm", 1)],
+            &[("personal", 1)],
             &[
                 ("done task", RunState::Done, Some("s1")),
                 ("working task", RunState::Running, Some("s2")),
@@ -4092,7 +4106,7 @@ mod tests {
             .unwrap();
         fx.app
             .store
-            .set_run_account(run_id, "sm", Some("s3"))
+            .set_run_account(run_id, "personal", Some("s3"))
             .unwrap();
         fx.app.store.set_run_pid(run_id, Some(4242)).unwrap();
         fx.app.refresh().unwrap();
@@ -4125,7 +4139,7 @@ mod tests {
 
     #[test]
     fn at_completes_files_and_ctrl_p_recalls() {
-        let mut fx = fixture(&[("sm", 1)], &[]);
+        let mut fx = fixture(&[("personal", 1)], &[]);
         std::fs::create_dir_all(fx.dir.path().join("src")).unwrap();
         std::fs::write(fx.dir.path().join("src/parser.rs"), "").unwrap();
         std::fs::write(fx.dir.path().join("src/sparse.rs"), "").unwrap();
@@ -4151,7 +4165,10 @@ mod tests {
 
     #[test]
     fn fork_from_the_composer() {
-        let mut fx = fixture(&[("sm", 1)], &[("first task", RunState::Done, Some("s1"))]);
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("first task", RunState::Done, Some("s1"))],
+        );
         fx.app.select_session(1);
         key(&mut fx.app, KeyCode::Char('/'));
         typed(&mut fx.app, "/fork try it with a macro instead");
@@ -4172,7 +4189,10 @@ mod tests {
 
     #[test]
     fn mode_per_session() {
-        let mut fx = fixture(&[("sm", 1)], &[("first task", RunState::Done, Some("s1"))]);
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("first task", RunState::Done, Some("s1"))],
+        );
         // No session: the next new task's mode.
         key(&mut fx.app, KeyCode::Char('n'));
         typed(&mut fx.app, "/mode edits");

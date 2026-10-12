@@ -9,7 +9,8 @@
 set -uo pipefail
 
 account="$(basename "$CLAUDE_CONFIG_DIR")"
-printf '%s %s [stop_at=%s]\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" >>"$FAKE_LOG"  # one line per launch
+printf '%s %s [stop_at=%s]%s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" \
+  "${ANCHORLEG_PERMISSION_MODE:+ [permission_mode=$ANCHORLEG_PERMISSION_MODE]}" >>"$FAKE_LOG"  # one line per launch
 n="$(grep -c "^$account " "$FAKE_LOG")"
 
 resume=""

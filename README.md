@@ -299,6 +299,7 @@ anchorleg run --prefer work -- "…"              # this account first while it 
 anchorleg run --account work -- "…"             # only this account, no switching
 anchorleg accounts set work --pinned true       # always first while it has room
 anchorleg accounts set home --reserve-7d 0.2    # keep its last 20% of the week for emergencies
+anchorleg accounts set work --stop-at 0.4       # move off this account once it's 40% used
 anchorleg accounts set side --priority 3 --enabled false
 anchorleg accounts set home --credits last-resort  # pay from extra usage only when all are out
 ```

@@ -4,7 +4,7 @@ import type { On, SessionRateLimit } from 'claude-code'
 import { maxUsed, toReadings } from './register'
 
 const ENV = {
-  ANCHORLEG_ACCOUNT: 'claude-sm',
+  ANCHORLEG_ACCOUNT: 'claude-personal',
   ANCHORLEG_BIN: '/bin/anchorleg',
   ANCHORLEG_RUN_ID: '7',
   ANCHORLEG_STOP_AT: '0.9',
@@ -76,7 +76,7 @@ test('session.measure reports quota to anchorleg', async ($, on) => {
   expect(calls.length).toBe(1)
   expect(calls[0].argv).toEqual(['/bin/anchorleg', 'report', '--json'])
   expect(JSON.parse(calls[0].stdin ?? '')).toEqual({
-    account: 'claude-sm',
+    account: 'claude-personal',
     readings: toReadings(limits(30)),
   })
 })
@@ -178,6 +178,13 @@ test('allowed calls, queries and runs outside anchorleg never ask', async ($, on
   const calls = asking(on, [])
   expect((await $.tool.check({ ...write, tool: 'Read' })).decision).toBe('allow')
   expect((await $.tool.check({ tool: 'Write', input: write.input })).decision).toBe('ask')
+  expect(calls.length).toBe(0)
+})
+
+test("in auto mode Claude's classifier decides, not the person", async ($, on) => {
+  mock.env(on, { ...ENV, ANCHORLEG_PERMISSION_MODE: 'auto' })
+  const calls = asking(on, [])
+  expect((await $.tool.check(write)).decision).toBe('ask')
   expect(calls.length).toBe(0)
 })
 

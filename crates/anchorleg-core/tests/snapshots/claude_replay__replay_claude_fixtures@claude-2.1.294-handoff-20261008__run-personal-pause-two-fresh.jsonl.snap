@@ -1,7 +1,7 @@
 ---
 source: crates/anchorleg-core/tests/claude_replay.rs
 expression: replay
-input_file: fixtures/claude-2.1.294-handoff-20261008/run-sm-pause-two-fresh.jsonl
+input_file: fixtures/claude-2.1.294-handoff-20261008/run-personal-pause-two-fresh.jsonl
 ---
 [
   {

@@ -16,7 +16,14 @@ All notable changes are listed here. The format follows
 - `--mode auto` (`/mode auto` in `anchorleg ui`): the CLI's own reviewer approves or refuses
   tool calls instead of asking you (Claude Code's auto mode, Codex's auto-review); Codex's
   decisions show in the conversation. agy runs it as `edits`.
+- Per-account limit: `anchorleg accounts set <name> --stop-at 0.4` (`stop_at` in `config.toml`).
+  A session on that account stops softly at that use and moves on; past it, the account goes
+  after every account with room.
 - Homebrew tap (in progress).
+
+### Fixed
+- `--mode auto` on Claude Code: anchorleg-mod sent Claude's permission asks to the person
+  instead of leaving them to Claude's auto-mode classifier.
 
 ## [0.4.0] — 2026-10-12
 

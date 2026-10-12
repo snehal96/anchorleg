@@ -296,6 +296,38 @@ fn mod_stop_switches_at_a_clean_point() {
 }
 
 #[test]
+fn an_accounts_own_limit_stops_it_earlier() {
+    let env = Env::new(&["a", "b"]);
+    // a ends at 50% of its five-hour window.
+    env.script(
+        "a.jsonl",
+        &ok("s1", "[anchorleg] Pausing here").replace("\"utilization\":0.2", "\"utilization\":0.5"),
+    );
+    env.script("b.jsonl", &ok("s1", "finished on b"));
+    env.anchorleg()
+        .args(["accounts", "set", "a", "--stop-at", "0.4"])
+        .assert()
+        .success();
+    let list = env.anchorleg().args(["accounts", "list"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&list.stdout).contains("stops at 40%"));
+    let mut cmd = env.anchorleg();
+    cmd.env("FAKE_MOD_STOP", "a");
+
+    let (code, r) = env.run_with(cmd, &[]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["switches"][0]["rule"], "quota_stop");
+    let launches = env.launches();
+    assert!(launches[0].ends_with("[stop_at=0.4]"), "{launches:?}");
+    assert!(launches[1].ends_with("[stop_at=0.9]"), "{launches:?}");
+
+    // a is past its own 40% now: the next task starts on b.
+    env.script("b.jsonl", &ok("s2", "second"));
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["accounts_used"], serde_json::json!(["b"]), "{r}");
+}
+
+#[test]
 fn mod_stop_with_nowhere_better_continues_with_the_stop_off() {
     let env = Env::new(&["a"]);
     env.script("a.1.jsonl", &ok("s1", "[anchorleg] Pausing here"));
@@ -1762,6 +1794,8 @@ fn auto_mode_lets_the_clis_own_reviewer_decide() {
     let launches = env.launches();
     for l in &launches {
         assert!(l.contains("--permission-mode auto"), "{launches:?}");
+        // The mod leaves Claude's asks to its classifier.
+        assert!(l.contains("[permission_mode=auto]"), "{launches:?}");
     }
 
     let env = Env::mixed(&[("c", "codex")]);

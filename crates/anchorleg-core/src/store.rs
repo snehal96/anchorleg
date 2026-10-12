@@ -1025,12 +1025,13 @@ mod tests {
             Some(0.91),
             Some(1000),
         );
-        s.record_quota("sm", &full, Source::Mod, 10).unwrap();
+        s.record_quota("personal", &full, Source::Mod, 10).unwrap();
         // Claude's usual "allowed" event: status only.
         let partial = reading(Window::FiveHour, Some(QuotaStatus::Allowed), None, None);
-        s.record_quota("sm", &partial, Source::Stream, 20).unwrap();
+        s.record_quota("personal", &partial, Source::Stream, 20)
+            .unwrap();
 
-        let row = &s.quota(Some("sm")).unwrap()[0];
+        let row = &s.quota(Some("personal")).unwrap()[0];
         assert_eq!(row.status.as_deref(), Some("allowed"));
         assert_eq!(row.used, Some(0.91));
         assert_eq!(row.resets_at, Some(1000));
@@ -1042,16 +1043,17 @@ mod tests {
     fn new_reset_time_drops_stale_usage() {
         let s = Store::open_in_memory().unwrap();
         let old = reading(Window::FiveHour, None, Some(0.97), Some(1000));
-        s.record_quota("sm", &old, Source::Mod, 10).unwrap();
+        s.record_quota("personal", &old, Source::Mod, 10).unwrap();
         let rolled = reading(
             Window::FiveHour,
             Some(QuotaStatus::Allowed),
             None,
             Some(19000),
         );
-        s.record_quota("sm", &rolled, Source::Stream, 1100).unwrap();
+        s.record_quota("personal", &rolled, Source::Stream, 1100)
+            .unwrap();
 
-        let row = &s.quota(Some("sm")).unwrap()[0];
+        let row = &s.quota(Some("personal")).unwrap()[0];
         assert_eq!(row.used, None);
         assert_eq!(row.resets_at, Some(19000));
     }
@@ -1065,8 +1067,9 @@ mod tests {
             None,
             Some(1000),
         );
-        s.record_quota("sm", &hit, Source::Stream, 10).unwrap();
-        let row = &s.quota(Some("sm")).unwrap()[0];
+        s.record_quota("personal", &hit, Source::Stream, 10)
+            .unwrap();
+        let row = &s.quota(Some("personal")).unwrap()[0];
         assert_eq!(row.status.as_deref(), Some("rejected"));
         assert_eq!(row.resets_at, Some(1000));
     }
@@ -1095,11 +1098,11 @@ mod tests {
         let child = s.start_run("now add docs", "/repo", Some(id), 300).unwrap();
         assert_eq!(s.run(child).unwrap().unwrap().parent_id, Some(id));
         s.set_run_pid(id, None).unwrap();
-        s.set_run_account(id, "sm", Some("sess-1")).unwrap();
+        s.set_run_account(id, "personal", Some("sess-1")).unwrap();
         s.record_decision(&Decision {
             run_id: Some(id),
             at: 150,
-            from_account: Some("sm".into()),
+            from_account: Some("personal".into()),
             to_account: Some("two".into()),
             rule: "rejected".into(),
             detail: serde_json::json!({ "resets_at": 1000 }),
@@ -1133,7 +1136,7 @@ mod tests {
         {
             let s = Store::open(&path).unwrap();
             let r = reading(Window::SevenDay, None, Some(0.4), None);
-            s.record_quota("sm", &r, Source::Mod, 1).unwrap();
+            s.record_quota("personal", &r, Source::Mod, 1).unwrap();
         }
         let s = Store::open(&path).unwrap();
         assert_eq!(s.quota(None).unwrap().len(), 1);

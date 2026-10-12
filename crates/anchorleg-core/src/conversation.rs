@@ -826,7 +826,7 @@ mod tests {
     fn reads_a_relay_run_log() {
         let log = [
             r#"{"type":"anchorleg_user","text":"fix the tests"}"#,
-            r#"{"type":"anchorleg","text":"running on claude-sm"}"#,
+            r#"{"type":"anchorleg","text":"running on claude-personal"}"#,
             r#"{"type":"system","subtype":"init","session_id":"s1"}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hm"},{"type":"text","text":"Running them.\n"},{"type":"tool_use","name":"Bash","input":{"command":"cargo test\necho done"}}]}}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"error: 2 tests failed\nmore"}]}}"#,
@@ -839,7 +839,7 @@ mod tests {
             from_log(&log),
             vec![
                 msg(Role::User, "fix the tests"),
-                msg(Role::Anchorleg, "running on claude-sm"),
+                msg(Role::Anchorleg, "running on claude-personal"),
                 msg(Role::Thinking, "hm"),
                 msg(Role::Agent, "Running them."),
                 msg(Role::Tool, "Bash  cargo test"),
@@ -898,7 +898,7 @@ mod tests {
     #[test]
     fn reads_the_real_mod_stop_capture() {
         let log = include_str!(
-            "../../../fixtures/claude-2.1.294-mod-stop-20261008/run-sm-then-two.jsonl"
+            "../../../fixtures/claude-2.1.294-mod-stop-20261008/run-personal-then-two.jsonl"
         );
         let m = from_log(log);
         assert!(

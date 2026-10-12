@@ -246,7 +246,11 @@ pub fn pick<'a>(
         let into_reserve = account
             .reserve_7d
             .is_some_and(|reserve| weekly >= 1.0 - reserve);
-        if used < opts.near_limit && !into_reserve {
+        // Its own `stop_at` (e.g. 0.4) counts like the near-limit line, for this account only.
+        let limit = account
+            .stop_at
+            .map_or(opts.near_limit, |own| own.min(opts.near_limit));
+        if used < limit && !into_reserve {
             healthy.push((account, used, weekly));
             continue;
         }
@@ -557,6 +561,26 @@ mod tests {
             "use b (Available)"
         );
         assert_eq!("save-weekly".parse::<Policy>(), Ok(Policy::SaveWeekly));
+
+        // An account past its own limit goes after the others, and is still used when nothing
+        // else is free.
+        let mut a = acct("a", Vendor::Claude);
+        a.stop_at = Some(0.4);
+        let b = acct("b", Vendor::Claude);
+        let quota = vec![
+            row("a", "five_hour", None, Some(0.45), None),
+            row("b", "five_hour", None, Some(0.7), None),
+        ];
+        let drain = PickOptions::default();
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &drain)),
+            "use b (Available)"
+        );
+        assert_eq!(name(&pick(&[&a], &quota, NOW, &drain)), "use a (NearLimit)");
+        assert_eq!(a.stop_at(0.9), 0.4);
+        assert_eq!(a.stop_at(0.3), 0.3);
+        assert_eq!(a.stop_at(0.0), 0.4);
+        assert_eq!(b.stop_at(0.9), 0.9);
         assert!("fastest".parse::<Policy>().is_err());
     }
 

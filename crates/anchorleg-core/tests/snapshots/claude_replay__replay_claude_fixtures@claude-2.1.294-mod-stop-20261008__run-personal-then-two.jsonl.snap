@@ -1,7 +1,7 @@
 ---
 source: crates/anchorleg-core/tests/claude_replay.rs
 expression: replay
-input_file: fixtures/claude-2.1.294-mod-stop-20261008/run-sm-then-two.jsonl
+input_file: fixtures/claude-2.1.294-mod-stop-20261008/run-personal-then-two.jsonl
 ---
 [
   {

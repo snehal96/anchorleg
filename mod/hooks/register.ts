@@ -11,7 +11,8 @@
 // - tool.check: when Claude would ask the person about a tool call (in `-p` that ask becomes a
 //   refusal), asks anchorleg instead (`anchorleg permission ask`) and waits for the person's answer in
 //   `anchorleg ui` or `anchorleg permission answer`. Nothing is allowed without that answer; if anchorleg
-//   can't be reached the CLI's own verdict stands.
+//   can't be reached the CLI's own verdict stands. In auto mode (ANCHORLEG_PERMISSION_MODE=auto)
+//   Claude's classifier decides instead, so the mod leaves the ask to it.
 // - ask_user: `-p` runs drop Claude's own AskUserQuestion tool (seen on 2.1.296), so in an
 //   anchorleg run the mod registers `ask_user` (the model calls it `mcp__anchorleg-mod__ask_user`)
 //   with the same input. Its questions go to anchorleg (the same queue, as tool
@@ -260,6 +261,7 @@ export const register: Register = (on) => {
     const verdict = await next(e)
     // Only the CLI's own question about a real call; a plugin's query (no id) never asks anyone.
     if (verdict.decision !== 'ask' || e.tool_use_id === undefined) return verdict
+    if ((await $.env.get('ANCHORLEG_PERMISSION_MODE')) === 'auto') return verdict
     const answer = await askAnchorleg($, { tool: e.tool, input: e.input ?? null, reason: verdict.reason ?? null })
     if (answer?.decision === 'allow') return { decision: 'allow', reason: answer.reason }
     if (answer?.decision === 'deny') {

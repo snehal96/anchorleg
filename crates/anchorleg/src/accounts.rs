@@ -26,7 +26,7 @@ pub enum AccountsCmd {
     Rm { name: String },
     /// Change how an account is used.
     Set(SetArgs),
-    /// Turn shell aliases like `claude-sm='CLAUDE_CONFIG_DIR=… claude'` into accounts.
+    /// Turn shell aliases like `claude-personal='CLAUDE_CONFIG_DIR=… claude'` into accounts.
     ImportAliases {
         /// Write the accounts. Without it, only show what would be added.
         #[arg(long)]
@@ -47,6 +47,11 @@ pub struct SetArgs {
     /// 0 turns it off.
     #[arg(long, value_parser = parse_reserve)]
     reserve_7d: Option<f64>,
+    /// This account's own limit, e.g. 0.4: a session on it stops once any quota window reaches
+    /// it and moves to another account; past it, the account is used only when no other has
+    /// room. 0 turns it off.
+    #[arg(long, value_parser = parse_limit)]
+    stop_at: Option<f64>,
     /// Use this account first whenever it has room, whatever the policy.
     #[arg(long)]
     pinned: Option<bool>,
@@ -60,6 +65,13 @@ pub struct SetArgs {
 
 fn parse_credits(s: &str) -> Result<CreditsUse, String> {
     s.parse()
+}
+
+fn parse_limit(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(f) if (0.0..=1.0).contains(&f) => Ok(f),
+        _ => Err("expected a fraction from 0 to 1, e.g. 0.4 (0 turns it off)".to_owned()),
+    }
 }
 
 fn parse_reserve(s: &str) -> Result<f64, String> {
@@ -79,7 +91,7 @@ pub struct AddArgs {
     #[arg(long)]
     priority: Option<u32>,
     /// The command you'd type to run this account, e.g.
-    /// "CLAUDE_CONFIG_DIR=~/.claude-sm ~/.local/bin/claude".
+    /// "CLAUDE_CONFIG_DIR=~/.claude-personal ~/.local/bin/claude".
     #[arg(long, conflicts_with = "shell")]
     cmd: Option<String>,
     /// Run this through your interactive shell instead (e.g. an alias name). Slower.
@@ -141,6 +153,9 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             if let Some(r) = args.reserve_7d {
                 account.reserve_7d = (r > 0.0).then_some(r);
             }
+            if let Some(s) = args.stop_at {
+                account.stop_at = (s > 0.0).then_some(s);
+            }
             if let Some(p) = args.pinned {
                 account.pinned = p;
             }
@@ -187,6 +202,7 @@ fn list(config: &Config, json: bool) -> anyhow::Result<()> {
             a.pinned.then(|| "pinned".to_owned()),
             a.reserve_7d
                 .map(|r| format!("weekly reserve {:.0}%", r * 100.0)),
+            a.stop_at.map(|s| format!("stops at {:.0}%", s * 100.0)),
             (a.credits != CreditsUse::Never).then(|| format!("credits: {}", a.credits.name())),
         ]
         .into_iter()
@@ -218,6 +234,9 @@ fn describe_use(a: &anchorleg_core::registry::Account) -> String {
     }
     if let Some(r) = a.reserve_7d {
         parts.push(format!("weekly reserve {:.0}%", r * 100.0));
+    }
+    if let Some(s) = a.stop_at {
+        parts.push(format!("stops at {:.0}%", s * 100.0));
     }
     parts.push(format!("credits {}", a.credits.name()));
     parts.join(", ")
