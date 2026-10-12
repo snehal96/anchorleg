@@ -1,0 +1,91 @@
+crates/anchorleg-core/src/handoff.rs
+  s_3c59a91d489536::t_9984b5adaceed7 53-59,64-79,86-87,111-117,219-223
+  s_3c59a91d489536::t_dd2863831166d8 60-63,603-607
+  s_3c59a91d489536::t_cb401b0031012c 580-602,608-611
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_6ce91d7837801e 1008-1011,1030,1032-1038,1067-1070,1818-1821,1845-1852,1872-1875
+  s_3c59a91d489536::t_b9d7b41f948785 1829-1830,1832-1844,1853-1854,1856-1867,1869-1871,1876-1877
+  s_3c59a91d489536::t_d2680e99ecdbb0 1001-1007,1012-1029,1031,1039-1040
+  s_3c59a91d489536::t_e58a802d322cb3 1812-1815
+  s_3c59a91d489536::t_992dd23a117836 1831,1855
+  s_3c59a91d489536::t_0bb71ef7dcd566 1868
+  s_3c59a91d489536::t_c62ae3e79b4094 1060-1066
+  s_3c59a91d489536::t_4bea5e4fd440a3 1000,1806-1811,1816-1817,1822-1828
+docs/CLI.md
+  s_3c59a91d489536::t_da878372dc42d7 31,228-229,233-234
+  s_3c59a91d489536::t_20ee0b0801269c 323-325,337-341,346-347
+crates/anchorleg/tests/fake/fake-agy.sh
+  s_3c59a91d489536::t_d2680e99ecdbb0 33-36
+  s_3c59a91d489536::t_bd54ad284dc8c9 54-56
+  s_3c59a91d489536::t_b9d7b41f948785 57-62
+crates/anchorleg/tests/fake/fake-codex.py
+  s_3c59a91d489536::t_4bea5e4fd440a3 23-24,119-128
+.github/workflows/pages.yml
+  s_3c59a91d489536::t_138ae0084c6a34 21-23,27
+crates/anchorleg/src/run.rs
+  s_3c59a91d489536::t_da878372dc42d7 339
+.github/workflows/ci.yml
+  s_3c59a91d489536::t_138ae0084c6a34 14
+fixtures/agy-1.3.3-plan-question-20261012/plan-skip-permissions.jsonl
+  s_3c59a91d489536::t_eb34bdbe4d8de3 14,25
+  s_3c59a91d489536::t_778664f321ed0c 1-13,15-24,26
+fixtures/agy-1.3.3-plan-question-20261012/plan-own-home.jsonl
+  s_3c59a91d489536::t_778664f321ed0c 1-8,10-14
+  s_3c59a91d489536::t_eb34bdbe4d8de3 9
+fixtures/agy-1.3.3-plan-question-20261012/plan-command-denied.jsonl
+  s_3c59a91d489536::t_778664f321ed0c 1-6
+crates/anchorleg-core/src/adapters/agy.rs
+  s_3c59a91d489536::t_6ce91d7837801e 642-645
+  s_3c59a91d489536::t_18303ae19702f2 97-98,101-137,164-168,188-193,197-219
+  s_3c59a91d489536::t_aa73b126919488 640-641,646-671
+  s_3c59a91d489536::t_f29618744cbe8e 639
+Cargo.toml
+  s_3c59a91d489536::t_138ae0084c6a34 6
+crates/anchorleg/src/main.rs
+  s_3c59a91d489536::t_da878372dc42d7 118
+README.md
+  s_3c59a91d489536::t_138ae0084c6a34 140-141
+fixtures/agy-1.3.3-plan-question-20261012/question-skipped.jsonl
+  s_3c59a91d489536::t_778664f321ed0c 1-7,9
+  s_3c59a91d489536::t_eb34bdbe4d8de3 8
+CHANGELOG.md
+  s_3c59a91d489536::t_20ee0b0801269c 65-67,71-72
+  s_3c59a91d489536::t_138ae0084c6a34 10-13
+  s_3c59a91d489536::t_dd2863831166d8 68-70
+  s_3c59a91d489536::t_0829d81bd6763d 9
+.github/workflows/release.yml
+  s_3c59a91d489536::t_138ae0084c6a34 23,38,47-48,59,73,75,81
+site/index.html
+  s_3c59a91d489536::t_138ae0084c6a34 28
+fixtures/agy-1.3.3-plan-question-20261012/README.md
+  s_3c59a91d489536::t_1c1d80f5d0e449 19-20
+  s_3c59a91d489536::t_778664f321ed0c 1-18
+crates/anchorleg/src/ui.rs
+  s_3c59a91d489536::t_75a5b7fa9c91c1 1213-1227
+  s_3c59a91d489536::t_7a1c6609359700 1003
+crates/anchorleg-core/src/supervisor.rs
+  s_3c59a91d489536::t_c62ae3e79b4094 1027-1033
+  s_3c59a91d489536::t_b9d7b41f948785 1181-1182,1194-1204
+  s_3c59a91d489536::t_18303ae19702f2 1007-1016,1018-1019
+crates/anchorleg/src/permission.rs
+  s_3c59a91d489536::t_6ce91d7837801e 209-210
+  s_3c59a91d489536::t_18303ae19702f2 211,213
+Cargo.lock
+  s_3c59a91d489536::t_79fb640ff12166 33,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d83392e64b940e91473112f13cbaae256e4c44c4",
+  "prompts": {},
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
