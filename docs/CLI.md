@@ -28,7 +28,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
 | `anchorleg stop <run>` | works |
 | `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
-| `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex) |
+| `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex, Antigravity) |
 | `anchorleg status [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
@@ -225,12 +225,13 @@ fresh on the next account from the handoff instead of being resumed on a cold ca
 agent without stopping the session:
 
 - **Codex** takes it into the running turn (`turn/steer`), as typing in Codex does.
-- **Claude Code** has no way to take a message mid-turn in `-p`, so it waits until the turn ends;
-  then anchorleg continues the same session with it, in the same run.
+- **Claude Code** and **Antigravity** have no way to take a message mid-turn in `-p`, so it waits
+  until the turn ends; then anchorleg continues the same session with it, in the same run.
 
 `--interrupt` (Ctrl+X in the UI) reads it now: Codex's turn is interrupted; Claude stops before
 its next model request (anchorleg-mod checks before each one, like the quota stop), never in the
-middle of a tool call. Either way the session then continues with your message. Messages not
+middle of a tool call; Antigravity is stopped at once (it has no clean-point hook) and its
+conversation resumed with the message. Either way the session then continues with your message. Messages not
 delivered yet show in the conversation as `(queued)`. A session that isn't working takes a
 normal reply (`anchorleg run --follow-up <run>`).
 
@@ -319,7 +320,9 @@ the ones sent from this UI.
 are still asked; `--mode ask` sends every question to you. The mode belongs to the session: its
 follow-ups keep it unless they pass another one. It overrides the CLI settings'
 `--permission-mode` for Claude; Codex already accepts edits inside the task folder, so both modes
-are the same there. In `anchorleg ui`, `/mode edits` sets the selected session's mode (from its next
+are the same there. On an Antigravity account with its own `HOME`, `--mode ask` makes
+anchorleg's hook ask before every change to the task's files; on your own `HOME` (no hook) agy
+accepts edits either way. In `anchorleg ui`, `/mode edits` sets the selected session's mode (from its next
 message) or, with no session selected, the mode new tasks start in; the conversation title shows it.
 
 ### Plan first: `--plan`
@@ -331,12 +334,17 @@ plan before it changes anything:
   those launches). `-p` doesn't offer Claude's ExitPlanMode tool, so the agent is told to end its
   reply with the plan.
 - **Codex** runs in its plan collaboration mode with a read-only sandbox.
-- **Antigravity** has no plan mode; it is only asked to plan.
+- **Antigravity**: on an account with its own `HOME`, anchorleg's hook refuses changes to the
+  task's files while it plans (the agent reads the reason and plans on; agy's own `--mode plan`
+  carries the plan out once permissions are skipped, so it isn't used there). On your own `HOME`
+  it runs in agy's plan mode (`--mode plan`), which in `-p` reads and plans but has its edits
+  refused.
 
 When the plan is ready the run asks **Approve the plan above? Or type what to change.** (the plan
 is the agent's last message in the conversation). **1** Approve: the same session carries it out
 in your normal mode. **2** Keep planning, or your own words: the agent revises the plan and asks
-again. No answer within 30 minutes, or a skip: the run ends with the plan as its result, and
+again. The question waits for you (or `--answer-wait`); a skip, or no answer by then: the run
+ends with the plan as its result, and
 `anchorleg run --follow-up <run> -- "go ahead"` carries it out later. Planning survives an account
 switch like any other step.
 

@@ -50,12 +50,41 @@ pub struct Transcript {
 }
 
 /// Read a transcript. Lines that aren't JSON, and subagent (sidechain) lines, are skipped.
+/// Where agy keeps a conversation's own files (`~/.gemini/antigravity-cli/brain/<id>/`).
+const AGY_BRAIN: &str = "/antigravity-cli/brain/";
+
+/// A markdown checklist (`- [ ]`, `- [/]` in progress, `- [x]`) as steps.
+pub fn checklist(md: &str) -> Vec<Step> {
+    md.lines()
+        .filter_map(|l| {
+            let l = l
+                .trim_start()
+                .strip_prefix("- [")
+                .or_else(|| l.trim_start().strip_prefix("* ["))?;
+            let (mark, text) = l.split_once(']')?;
+            let status = match mark.trim() {
+                "x" | "X" => StepStatus::Done,
+                "/" | "-" | "~" => StepStatus::InProgress,
+                "" => StepStatus::Pending,
+                _ => return None,
+            };
+            let text = text.trim();
+            (!text.is_empty()).then(|| Step {
+                text: text.to_owned(),
+                status,
+            })
+        })
+        .collect()
+}
+
 pub fn extract(log: &str) -> Transcript {
     let mut t = Transcript::default();
     // TaskCreate: tool_use id → subject, then the result's "Task #N" → that subject.
     let mut pending_tasks: HashMap<String, String> = HashMap::new();
     let mut tasks: Vec<(String, Step)> = Vec::new();
     let mut todo_steps: Option<Vec<Step>> = None;
+    // agy keeps its task list as a checklist file in its own brain folder.
+    let mut agy_task_file: Option<String> = None;
 
     for line in log.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
@@ -79,6 +108,13 @@ pub fn extract(log: &str) -> Transcript {
                             }
                         }
                         "Bash" => t.commands.push(arg.trim().to_owned()),
+                        // agy's own notes (plans, task list), not the task's files.
+                        _ if arg.contains(AGY_BRAIN) => {
+                            let name = arg.rsplit('/').next().unwrap_or_default();
+                            if name.contains("task") && name.ends_with(".md") {
+                                agy_task_file = Some(arg);
+                            }
+                        }
                         op => {
                             if !t.files.iter().any(|(p, _)| *p == arg) {
                                 t.files
@@ -180,6 +216,11 @@ pub fn extract(log: &str) -> Transcript {
     }
     // Whichever list the agent used last wins; TodoWrite replaces its whole list each time.
     t.steps = todo_steps.unwrap_or_else(|| tasks.into_iter().map(|(_, s)| s).collect());
+    if t.steps.is_empty()
+        && let Some(text) = agy_task_file.and_then(|f| std::fs::read_to_string(f).ok())
+    {
+        t.steps = checklist(&text);
+    }
     t
 }
 
@@ -535,6 +576,38 @@ fn one_line(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agy_task_list_comes_from_its_checklist_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let brain = dir.path().join(".gemini/antigravity-cli/brain/c1");
+        std::fs::create_dir_all(&brain).unwrap();
+        let file = brain.join("task_list.md");
+        std::fs::write(
+            &file,
+            "# Task List\n\n- [x] 1) Create `a.txt`\n- [/] 2) Create `b.txt`\n- [ ] 3) Test\n",
+        )
+        .unwrap();
+        let write = |path: &str| {
+            format!(
+                r#"{{"event":"step_update","step_update":{{"state":"DONE","step_type":"tool","tool_info":{{"name":"write_to_file","parameters":{{"TargetFile":"{path}"}}}}}}}}"#
+            )
+        };
+        let log = [write("/w/a.txt"), write(&file.display().to_string())].join("\n");
+        let t = extract(&log);
+        // The checklist isn't one of the task's files.
+        assert_eq!(t.files, [("/w/a.txt".to_owned(), "written")]);
+        let st: Vec<StepStatus> = t.steps.iter().map(|s| s.status).collect();
+        assert_eq!(
+            st,
+            [
+                StepStatus::Done,
+                StepStatus::InProgress,
+                StepStatus::Pending
+            ]
+        );
+        assert_eq!(t.steps[0].text, "1) Create `a.txt`");
+    }
 
     fn assistant(content: &str, usage: &str) -> String {
         format!(r#"{{"type":"assistant","message":{{"content":[{content}],"usage":{usage}}}}}"#)

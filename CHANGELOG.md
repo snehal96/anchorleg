@@ -7,6 +7,11 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Homebrew tap (in progress).
+
+## [0.4.0] — 2026-10-12
+
+### Added
 - Talk to a session while it works: `anchorleg send <run> -- …` (Enter in `anchorleg ui`). Codex
   takes the message into the running turn; Claude Code reads it when its turn ends, in the same
   run. `--interrupt` (Ctrl+X) stops the agent at its next clean point and continues with the
@@ -53,11 +58,18 @@ All notable changes are listed here. The format follows
   `anchorleg ui`, Ctrl+V pastes the clipboard's image and a dropped file is attached. Files are
   copied into the task folder's git-ignored `.anchorleg/attachments/`, so any account or CLI can
   read them; Codex also gets images as image input.
-- Homebrew tap (in progress).
 
 ### Changed
 - Follow-ups stay on the account their session ran on while it has room, instead of following
   the switch policy to another CLI, which could only continue from a handoff.
+- Antigravity: `anchorleg send --interrupt` stops agy and continues its conversation with the
+  message; plan runs keep the task's files unchanged (anchorleg's hook on accounts with their own
+  `HOME`, agy's `--mode plan` on yours); `--mode ask` asks before edits on hook accounts.
+- Antigravity's task list (the checklist file it keeps in its own folder) shows like the others,
+  and goes into handoffs; its own notes (plans, task list) no longer count as files the task
+  changed.
+- `anchorleg ui`: a `/command` Codex can't run headless says so instead of reaching the model as
+  text.
 
 ### Fixed
 - Codex: a run ended as soon as a subagent of the task finished, losing the agent's answer.

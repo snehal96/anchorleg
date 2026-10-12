@@ -115,7 +115,7 @@ enum Command {
         limit: usize,
     },
     /// Send a message to a session that's still working. Codex takes it into the running turn;
-    /// Claude gets it when its turn ends. `--interrupt` stops the agent at its next clean point
+    /// Claude and agy get it when their turn ends. `--interrupt` stops the agent at its next clean point
     /// so the message is read now.
     Send {
         run: i64,

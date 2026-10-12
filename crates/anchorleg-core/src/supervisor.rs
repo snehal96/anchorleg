@@ -1004,8 +1004,19 @@ impl Supervisor<'_> {
             let gated = !agy::sets_mode(&launch.args) && self.agy_hook(run_id, account, opts);
             if gated {
                 cmd.arg(agy::SKIP_PERMISSIONS);
+                // The hook keeps the task's files alone while planning and asks before edits in
+                // `--mode ask` (agy's own `--mode plan` goes on to carry the plan out once
+                // permissions are skipped; seen on 1.3.3).
+                let mode = if plan {
+                    agy::HookMode::Plan
+                } else if opts.mode == Some(Mode::Ask) {
+                    agy::HookMode::Ask
+                } else {
+                    agy::HookMode::Edits
+                };
                 cmd.env("ANCHORLEG_ACCOUNT", &account.name)
-                    .env("ANCHORLEG_RUN_ID", run_id.to_string());
+                    .env("ANCHORLEG_RUN_ID", run_id.to_string())
+                    .env(agy::MODE_ENV, mode.name());
                 if let Some(dir) = &opts.data_dir {
                     cmd.env("ANCHORLEG_HOME", dir);
                 }
@@ -1013,7 +1024,13 @@ impl Supervisor<'_> {
             cmd.arg("-p").arg(prompt);
             cmd.args(["--output-format", "stream-json"]);
             if !gated && !agy::sets_mode(&launch.args) {
-                cmd.args(agy::ACCEPT_EDITS);
+                // Without the hook, agy's own plan mode keeps the files as they are: in `-p` it
+                // reads, writes its plan and has its edits refused (seen on 1.3.3).
+                if plan {
+                    cmd.args(["--mode", "plan"]);
+                } else {
+                    cmd.args(agy::ACCEPT_EDITS);
+                }
             }
             cmd.args(&model_args);
             if let Some(sid) = resume {
@@ -1161,6 +1178,8 @@ impl Supervisor<'_> {
         let mut tick = tokio::time::interval(Duration::from_millis(500));
         // Queued messages already handed to the Codex driver.
         let mut forwarded: Vec<i64> = Vec::new();
+        // agy was stopped for a message sent with "interrupt".
+        let mut interrupted = false;
 
         loop {
             let item = tokio::select! {
@@ -1172,7 +1191,17 @@ impl Supervisor<'_> {
                         break;
                     }
                 },
-                _ = tick.tick(), if steer_tx.is_some() => {
+                _ = tick.tick(), if steer_tx.is_some() || account.vendor == Vendor::Antigravity => {
+                    // agy takes nothing mid-turn: "interrupt" stops it, and the session goes on
+                    // with the message (as Claude's does at its next step, through the mod).
+                    if account.vendor == Vendor::Antigravity
+                        && !interrupted
+                        && self.store.interrupt_requested(run_id)?
+                    {
+                        interrupted = true;
+                        self.note(opts, run_id, "stopping here: the user sent a new message");
+                        child.start_kill()?;
+                    }
                     if let Some(tx) = &steer_tx {
                         for m in self.store.queued_messages(run_id)? {
                             if forwarded.contains(&m.id) {

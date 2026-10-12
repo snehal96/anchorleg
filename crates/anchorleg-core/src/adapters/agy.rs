@@ -94,7 +94,46 @@ pub enum HookVerdict {
     /// Ask the person, showing the call as `tool` with `input` (Claude's tool names where one
     /// fits, so `anchorleg ui` shows it the same way).
     Ask { tool: String, input: Value },
+    /// Refuse it, telling the agent why (it reads the reason and carries on).
+    Deny(String),
 }
+
+/// The run's mode, as the hook sees it (`MODE_ENV`, set by anchorleg at launch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookMode {
+    /// Like `--mode accept-edits`: edits inside the task's folders go ahead.
+    Edits,
+    /// Edits to the task's files are asked about too (`anchorleg run --mode ask`).
+    Ask,
+    /// Planning (`anchorleg run --plan`, before the plan is approved): the task's files are
+    /// left alone; agy's own artifact folder (where it writes plans) stays writable.
+    Plan,
+}
+
+/// The env var anchorleg sets on a hook-gated agy launch: `edits`, `ask` or `plan`.
+pub const MODE_ENV: &str = "ANCHORLEG_AGY_MODE";
+
+impl HookMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            HookMode::Edits => "edits",
+            HookMode::Ask => "ask",
+            HookMode::Plan => "plan",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "ask" => HookMode::Ask,
+            "plan" => HookMode::Plan,
+            _ => HookMode::Edits,
+        }
+    }
+}
+
+/// What the plan stage tells agy when it tries to change a file.
+pub const PLAN_DENY: &str = "Planning only: don't change the task's files yet. Investigate, \
+     then write the plan in your reply; the person approves it first.";
 
 /// agy tools that only read.
 const READ_TOOLS: &[&str] = &["view_file", "list_dir", "find_by_name", "grep_search"];
@@ -122,6 +161,11 @@ const QUIET_TOOLS: &[&str] = &[
 /// inside the workspace (and agy's own artifact folder) go ahead; shell commands, the browser,
 /// the web, MCP tools and anything outside those folders are asked about.
 pub fn hook_verdict(req: &Value) -> HookVerdict {
+    hook_verdict_in(req, HookMode::Edits)
+}
+
+/// `hook_verdict` for a run in `mode`.
+pub fn hook_verdict_in(req: &Value, mode: HookMode) -> HookVerdict {
     let name = req
         .pointer("/toolCall/name")
         .and_then(Value::as_str)
@@ -141,11 +185,38 @@ pub fn hook_verdict(req: &Value) -> HookVerdict {
         .filter_map(Value::as_str)
         .map(PathBuf::from)
         .collect();
-    if let Some(dir) = req.get("artifactDirectoryPath").and_then(Value::as_str) {
-        roots.push(PathBuf::from(dir));
+    let artifacts = req
+        .get("artifactDirectoryPath")
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+    if let Some(dir) = &artifacts {
+        roots.push(dir.clone());
     }
     let paths = absolute_paths(&args);
     let inside = |p: &Path| roots.iter().any(|r| within(p, r));
+    // agy's own notes (plans, walkthroughs) aren't the task's files.
+    let notes_only = !paths.is_empty()
+        && artifacts
+            .as_ref()
+            .is_some_and(|a| paths.iter().all(|p| within(p, a)));
+    if EDIT_TOOLS.contains(&name) && !notes_only {
+        match mode {
+            HookMode::Plan => return HookVerdict::Deny(PLAN_DENY.to_owned()),
+            HookMode::Ask => {
+                let path = paths.first().map(|p| p.display().to_string());
+                return HookVerdict::Ask {
+                    tool: if name == "write_to_file" {
+                        "Write"
+                    } else {
+                        "Edit"
+                    }
+                    .to_owned(),
+                    input: serde_json::json!({ "file_path": path }),
+                };
+            }
+            HookMode::Edits => {}
+        }
+    }
     let kind = if READ_TOOLS.contains(&name) {
         Some("Read")
     } else if EDIT_TOOLS.contains(&name) {
@@ -563,6 +634,39 @@ mod tests {
             "artifactDirectoryPath": "/h/.gemini/antigravity-cli/brain/c1",
             "conversationId": "c1",
         })
+    }
+
+    #[test]
+    fn the_hook_asks_about_edits_in_ask_mode_and_refuses_them_while_planning() {
+        use serde_json::json;
+        let edit = hook_req(
+            "replace_file_content",
+            json!({ "TargetFile": "/w/repo/a.rs" }),
+        );
+        let read = hook_req("view_file", json!({ "AbsolutePath": "/w/repo/a.rs" }));
+        let plan = hook_req(
+            "write_to_file",
+            json!({ "TargetFile": "/h/.gemini/antigravity-cli/brain/c1/plan.md" }),
+        );
+        assert_eq!(
+            hook_verdict_in(&edit, HookMode::Ask),
+            HookVerdict::Ask {
+                tool: "Edit".into(),
+                input: json!({ "file_path": "/w/repo/a.rs" })
+            }
+        );
+        assert_eq!(
+            hook_verdict_in(&edit, HookMode::Plan),
+            HookVerdict::Deny(PLAN_DENY.into())
+        );
+        for mode in [HookMode::Ask, HookMode::Plan] {
+            assert_eq!(hook_verdict_in(&read, mode), HookVerdict::Allow);
+            // agy's own plan file isn't the task's.
+            assert_eq!(hook_verdict_in(&plan, mode), HookVerdict::Allow);
+        }
+        assert_eq!(hook_verdict_in(&edit, HookMode::Edits), HookVerdict::Allow);
+        assert_eq!(HookMode::parse("plan"), HookMode::Plan);
+        assert_eq!(HookMode::parse("whatever"), HookMode::Edits);
     }
 
     #[test]

@@ -1000,7 +1000,7 @@ impl App {
             ),
             (false, true) => format!("#{}: sent into the running turn", run.id),
             (false, false) => format!(
-                "#{}: queued; Claude reads it when this turn ends (Ctrl+X to interrupt)",
+                "#{}: queued; the agent reads it when this turn ends (Ctrl+X to interrupt)",
                 run.id
             ),
         };
@@ -1208,6 +1208,21 @@ impl App {
             self.field = Field::Message;
             self.message_box = TextBox::default();
             self.message = format!("new session in {cwd}");
+            return Ok(());
+        }
+        // Codex runs its slash commands only in its own app; in a headless session the model
+        // would just read "/review" as text.
+        if let Some(rest) = text.strip_prefix('/')
+            && self.provider() == Vendor::Codex
+            && !matches!(
+                rest.split(' ').next().unwrap_or(""),
+                "model" | "effort" | "mode" | "fork" | "plan" | "worktree" | "clear" | "compact"
+            )
+        {
+            let cmd = rest.split(' ').next().unwrap_or("");
+            self.message = format!(
+                "Codex runs /{cmd} only in its own app; here: /compact, /clear, /plan, /fork, /mode"
+            );
             return Ok(());
         }
         if text == "/compact" {

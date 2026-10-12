@@ -20,6 +20,8 @@ real app server (fixtures/codex-0.153.4-app-server-*).
   in the same launch plays $FAKE_DIR/X.followup.jsonl. A script line {"fake":"wait_steer"} holds
   the turn until anchorleg sends `turn/steer` (appended to $FAKE_DIR/steers.log; the turn goes
   on) or `turn/interrupt` (the turn ends interrupted), 10 s at most.
+- `thread/compact/start`: logged like a turn, answered with a `contextCompaction` item and a
+  completed turn.
 """
 
 import glob
@@ -114,6 +116,16 @@ while True:
             if os.path.exists(f"{fake}/{account}.rollout.jsonl"):
                 f.write(open(f"{fake}/{account}.rollout.jsonl").read())
         send({"id": msg["id"], "result": {"thread": {"id": tid, "path": path}, "model": params.get("model") or "gpt-default"}})
+    elif method == "thread/compact/start":
+        # `/compact`: logged like a turn ("… thread/compact/start <thread>"), then a compaction.
+        turns += 1
+        how, tp, tid = thread
+        with open(os.environ["FAKE_LOG"], "a") as f:
+            f.write(f"{account} {' '.join(pre_args)} {how} {tid} thread/compact/start {params.get('threadId')}".replace("  ", " ") + "\n")
+        send({"id": msg["id"], "result": {}})
+        send({"method": "turn/started", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "inProgress"}}})
+        send({"method": "item/completed", "params": {"threadId": tid, "item": {"type": "contextCompaction", "id": "cc1"}}})
+        send({"method": "turn/completed", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "completed", "error": None}}})
     elif method == "turn/start":
         turns += 1
         how, tp, tid = thread

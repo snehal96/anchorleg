@@ -206,8 +206,11 @@ fn agy_hook(store: &Store, text: &str) -> Value {
             return json!({ "decision": "deny", "reason": format!("anchorleg: bad request: {e}") });
         }
     };
-    let (tool, input) = match agy::hook_verdict(&req) {
+    let mode =
+        std::env::var(agy::MODE_ENV).map_or(agy::HookMode::Edits, |m| agy::HookMode::parse(&m));
+    let (tool, input) = match agy::hook_verdict_in(&req, mode) {
         HookVerdict::Allow => return json!({ "decision": "allow" }),
+        HookVerdict::Deny(reason) => return json!({ "decision": "deny", "reason": reason }),
         HookVerdict::Ask { tool, input } => (tool, input),
     };
     let ask_req = AskInput {

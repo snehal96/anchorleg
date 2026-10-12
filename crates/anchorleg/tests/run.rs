@@ -998,6 +998,47 @@ fn agy_commands_wait_for_the_users_answer() {
 }
 
 #[test]
+fn agy_edits_are_asked_about_in_ask_mode_and_refused_while_planning() {
+    // `--mode ask`: an edit inside the task folder waits for the person.
+    let env = Env::mixed(&[("g", "antigravity")]);
+    env.script("g.jsonl", &agy_ok("conv-1", "edited"));
+    let child = spawn_run_with(&env, &["--mode", "ask"], &[("FAKE_HOOK", "edit:a.rs")]);
+    let q = first_question(&env);
+    assert_eq!(q["tool"], "Write");
+    assert!(
+        q["input"]["file_path"].as_str().unwrap().ends_with("/a.rs"),
+        "{q}"
+    );
+    env.anchorleg()
+        .args(["permission", "answer", &q["id"].to_string(), "yes"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "edited", "{r}");
+
+    // `--plan`: the edit is refused with a note the agent reads; nobody is asked.
+    let env = Env::mixed(&[("g", "antigravity")]);
+    env.script("g.jsonl", &agy_ok("conv-1", "1. Change a.rs"));
+    let mut child = spawn_run_with(&env, &["--plan"], &[("FAKE_HOOK", "edit:a.rs")]);
+    // The plan's approval is the first (and only) question.
+    let q = first_question(&env);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_ne!(q["tool"], "Write", "{q}");
+    let hook: Value =
+        serde_json::from_str(&std::fs::read_to_string(env.path("fake/hook.out")).unwrap()).unwrap();
+    assert_eq!(hook["decision"], "deny", "{hook}");
+    assert!(
+        hook["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("Planning only"),
+        "{hook}"
+    );
+}
+
+#[test]
 fn agy_on_the_persons_own_home_only_accepts_edits() {
     let env = Env::mixed(&[("g", "antigravity")]);
     let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake/fake-agy.sh");
@@ -1016,6 +1057,17 @@ fn agy_on_the_persons_own_home_only_accepts_edits() {
     assert!(launches[0].contains("--mode accept-edits"), "{launches:?}");
     assert!(!launches[0].contains("--dangerously-skip-permissions"));
     assert!(!env.path("userhome/.gemini/config/hooks.json").exists());
+
+    // Planning uses agy's own plan mode there.
+    let mut child = spawn_run_with(&env, &["--plan"], &[]);
+    let _ = first_question(&env);
+    let _ = child.kill();
+    let _ = child.wait();
+    let launches = env.launches();
+    assert!(
+        launches.last().unwrap().contains("--mode plan"),
+        "{launches:?}"
+    );
 }
 
 #[test]
@@ -1749,6 +1801,78 @@ fn interrupt_and_send_stops_the_codex_turn_and_continues_with_the_message() {
     assert_eq!(launches.len(), 2, "{launches:?}");
     assert!(launches[1].contains("thread/resume t1"), "{launches:?}");
     assert!(launches[1].ends_with("-- stop, use src/"), "{launches:?}");
+}
+
+#[test]
+fn compact_on_codex_compacts_the_thread() {
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.jsonl", &codex_ok("t1", "done"));
+    let (code, r) = env.run(&["--account", "c"]);
+    assert_eq!(code, 0, "{r}");
+    env.anchorleg()
+        .args(["run", "--json", "--follow-up", "1", "--", "/compact"])
+        .assert()
+        .success();
+    let launches = env.launches();
+    assert!(
+        launches
+            .last()
+            .unwrap()
+            .ends_with("thread/compact/start t1"),
+        "{launches:?}"
+    );
+    let log = std::fs::read_to_string(env.path("home/runs/run-2.jsonl")).unwrap();
+    assert!(log.contains(r#""type":"context_compaction""#), "{log}");
+}
+
+#[test]
+fn messages_for_a_working_agy_session_wait_or_interrupt() {
+    // A plain message waits for the turn to end, then continues the same conversation.
+    let env = Env::mixed(&[("g", "antigravity")]);
+    env.script("g.1.jsonl", &agy_ok("conv-1", "first done"));
+    env.script("g.2.jsonl", &agy_ok("conv-1", "docs updated"));
+    let child = spawn_run(&env, &[("FAKE_SLEEP", "2")]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--", "also", "update", "the", "docs"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "docs updated", "{r}");
+    let launches = env.launches();
+    assert_eq!(launches.len(), 2, "{launches:?}");
+    assert!(
+        launches[1].contains("-p also update the docs"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[1].contains("--conversation conv-1"),
+        "{launches:?}"
+    );
+
+    // "Interrupt" stops agy now and continues with the message.
+    let env = Env::mixed(&[("g", "antigravity")]);
+    env.script("g.1.jsonl", &agy_ok("conv-1", "never seen"));
+    env.script("g.2.jsonl", &agy_ok("conv-1", "moved to src/"));
+    let start = std::time::Instant::now();
+    let child = spawn_run(&env, &[("FAKE_SLEEP", "30")]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--interrupt", "--", "stop,", "use", "src/"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "moved to src/", "{r}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(20));
+    let launches = env.launches();
+    assert_eq!(launches.len(), 2, "{launches:?}");
+    assert!(launches[1].contains("-p stop, use src/"), "{launches:?}");
+    assert!(
+        launches[1].contains("--conversation conv-1"),
+        "{launches:?}"
+    );
 }
 
 #[test]
