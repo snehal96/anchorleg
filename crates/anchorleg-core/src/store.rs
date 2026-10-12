@@ -240,10 +240,14 @@ pub struct Run {
     pub parent_id: Option<RunId>,
     /// The `anchorleg run` process working on it, while it runs.
     pub pid: Option<i64>,
+    /// The session's permission mode (`ask`, `edits`), if one was picked (D41).
+    pub mode: Option<String>,
+    /// How long a question or approval waits for the person (seconds) before the agent goes on
+    /// without an answer; `None`: anchorleg's default.
+    pub answer_wait: Option<i64>,
 }
 
-const RUN_COLUMNS: &str =
-    "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid";
+const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait";
 
 fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -257,6 +261,8 @@ fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         ended_at: r.get(7)?,
         parent_id: r.get(8)?,
         pid: r.get(9)?,
+        mode: r.get(10)?,
+        answer_wait: r.get(11)?,
     })
 }
 
@@ -364,6 +370,12 @@ CREATE TABLE messages (
     taken_at   INTEGER
 );
 CREATE INDEX messages_run ON messages(run_id);
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN mode TEXT;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN answer_wait INTEGER;
 "#,
 ];
 
@@ -666,6 +678,20 @@ impl Store {
     }
 
     /// Record the process working on a run; `None` once it's gone.
+    pub fn set_run_mode(&self, id: RunId, mode: Option<&str>) -> Result<()> {
+        self.conn
+            .execute("UPDATE runs SET mode = ?2 WHERE id = ?1", params![id, mode])?;
+        Ok(())
+    }
+
+    pub fn set_run_answer_wait(&self, id: RunId, secs: Option<i64>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET answer_wait = ?2 WHERE id = ?1",
+            params![id, secs],
+        )?;
+        Ok(())
+    }
+
     pub fn set_run_pid(&self, id: RunId, pid: Option<i64>) -> Result<()> {
         self.conn
             .execute("UPDATE runs SET pid = ?2 WHERE id = ?1", params![id, pid])?;

@@ -50,6 +50,8 @@ pub struct Turn {
     pub images: Vec<String>,
     /// Plan only: Codex's plan collaboration mode (experimental API), read-only sandbox.
     pub plan: bool,
+    /// Fork `resume` into a new thread (`thread/fork`) instead of continuing it.
+    pub fork: bool,
 }
 
 /// What the driver passes back to the supervisor.
@@ -132,7 +134,12 @@ pub fn thread_request(turn: &Turn) -> Value {
         Some(id) => {
             params["threadId"] = id.as_str().into();
             params["excludeTurns"] = true.into();
-            json!({ "id": THREAD, "method": "thread/resume", "params": params })
+            let method = if turn.fork {
+                "thread/fork"
+            } else {
+                "thread/resume"
+            };
+            json!({ "id": THREAD, "method": method, "params": params })
         }
         None => json!({ "id": THREAD, "method": "thread/start", "params": params }),
     }
@@ -195,6 +202,8 @@ pub struct Translator {
     thread_id: Option<String>,
     /// The latest model call's token usage (`last` of `thread/tokenUsage/updated`).
     last_usage: Option<Value>,
+    /// The model's context window, as Codex reports it with token usage.
+    context_window: Option<u64>,
     /// This turn's tokens: the sum of every model call's `last`.
     turn_usage: HashMap<&'static str, u64>,
     /// Files of each file change, from `item/started`, for its approval request.
@@ -253,6 +262,12 @@ impl Translator {
             }
             "thread/tokenUsage/updated" => {
                 self.last_usage = params.pointer("/tokenUsage/last").cloned();
+                if let Some(w) = params
+                    .pointer("/tokenUsage/modelContextWindow")
+                    .and_then(Value::as_u64)
+                {
+                    self.context_window = Some(w);
+                }
                 for (from, to) in [
                     ("inputTokens", "input_tokens"),
                     ("cachedInputTokens", "cached_input_tokens"),
@@ -298,7 +313,7 @@ impl Translator {
                         .and_then(Value::as_u64)
                         .unwrap_or(0)
                 };
-                json!({
+                let mut done = json!({
                     "type": "turn.completed",
                     "usage": {
                         "input_tokens": n("inputTokens"),
@@ -306,7 +321,11 @@ impl Translator {
                         "output_tokens": n("outputTokens"),
                     },
                     "turn_usage": self.turn_usage,
-                })
+                });
+                if let Some(w) = self.context_window {
+                    done["usage"]["model_context_window"] = w.into();
+                }
+                done
             }
             status => {
                 let error = turn.get("error").unwrap_or(&Value::Null);
@@ -1136,6 +1155,7 @@ mod tests {
             stop_at: 0.9,
             images: Vec::new(),
             plan: false,
+            fork: false,
         };
         let r = thread_request(&turn);
         assert_eq!(r["method"], "thread/resume");

@@ -72,6 +72,16 @@ enum Command {
         #[arg(long)]
         stat: bool,
     },
+    /// Put back every file a session changed since it started (files it created are removed).
+    /// Without --yes it only shows what would change. A backup is kept: --redo brings it back.
+    Undo {
+        run: i64,
+        #[arg(long)]
+        yes: bool,
+        /// Bring back what the last undo of this session put back.
+        #[arg(long, conflicts_with = "yes")]
+        redo: bool,
+    },
     /// Notifications when a run needs you (a tool call, a question, a plan) or ends.
     /// No options: show the current settings.
     Notify {
@@ -139,6 +149,10 @@ pub struct RunArgs {
     /// Send the prompt as a new message to this run's session instead of starting a new one.
     #[arg(long, value_name = "RUN")]
     pub follow_up: Option<i64>,
+    /// Start a new session from this run's session history (the original goes on unchanged):
+    /// try another direction from the same point. Claude and Codex.
+    #[arg(long, value_name = "RUN", conflicts_with = "follow_up")]
+    pub fork: Option<i64>,
     /// Directory the task runs in. Defaults to the current one (or the followed-up run's).
     #[arg(long)]
     pub cwd: Option<PathBuf>,
@@ -179,9 +193,38 @@ pub struct RunArgs {
     /// same session carries it out.
     #[arg(long)]
     pub plan: bool,
+    /// Run in a git worktree of its own (`.anchorleg/worktrees/NAME`, new local branch
+    /// `anchorleg/NAME`), so it can't collide with you or other sessions in the same repository.
+    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "",
+          conflicts_with_all = ["follow_up", "fork"])]
+    pub worktree: Option<String>,
+    /// How long a question or approval waits for you before the agent goes on without an answer
+    /// (it decides itself; a tool call is refused): e.g. 90s, 10m, 2h. Default 30m. Follow-ups
+    /// keep their session's.
+    #[arg(long, value_name = "DURATION", value_parser = parse_wait)]
+    pub answer_wait: Option<i64>,
+    /// The session's permission mode: `ask` (every question comes to you) or `edits` (file edits
+    /// go ahead). Follow-ups keep their session's mode unless given.
+    #[arg(long, value_parser = ["ask", "edits"])]
+    pub mode: Option<String>,
     /// The task, after `--`.
     #[arg(last = true, required = true)]
     pub prompt: Vec<String>,
+}
+
+fn parse_wait(s: &str) -> Result<i64, String> {
+    let (n, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len()));
+    let n: i64 = n.parse().map_err(|_| format!("{s}: like 90s, 10m or 2h"))?;
+    let secs = match unit {
+        "" | "s" => n,
+        "m" => n * 60,
+        "h" => n * 3600,
+        _ => return Err(format!("{s}: like 90s, 10m or 2h")),
+    };
+    if secs < 10 {
+        return Err("at least 10s".to_owned());
+    }
+    Ok(secs)
 }
 
 fn parse_on_off(s: &str) -> Result<bool, String> {
@@ -255,6 +298,7 @@ fn main() -> ExitCode {
         }
         Command::Policy { policy } => settings::policy(policy),
         Command::Diff { run, stat } => run::diff(run, stat),
+        Command::Undo { run, yes, redo } => run::undo(run, redo, yes),
         Command::Notify {
             desktop,
             command,

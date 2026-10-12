@@ -81,6 +81,58 @@ pub struct RunOptions {
     /// Plan first: the agent only plans (Claude's plan mode, Codex's plan collaboration mode)
     /// until the person approves the plan; then the same session carries it out (D38).
     pub plan: bool,
+    /// The session's permission mode, over the CLI settings' own (D41).
+    pub mode: Option<Mode>,
+    /// How long questions and approvals wait for the person (seconds) before the agent goes on.
+    pub answer_wait: Option<i64>,
+}
+
+/// How much the agent may do without asking, for one session (D41). Claude maps it to its
+/// `--permission-mode`; Codex already accepts edits inside the task folder, so both are the same
+/// there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Everything the CLI would ask about comes to the person.
+    Ask,
+    /// File edits go ahead; commands and the rest are asked.
+    Edits,
+}
+
+impl Mode {
+    pub const ALL: [Mode; 2] = [Mode::Ask, Mode::Edits];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Mode::Ask => "ask",
+            Mode::Edits => "edits",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Mode> {
+        Mode::ALL.into_iter().find(|m| m.name() == s)
+    }
+
+    fn claude(self) -> &'static str {
+        match self {
+            Mode::Ask => "default",
+            Mode::Edits => "acceptEdits",
+        }
+    }
+}
+
+/// `args` with Claude's `--permission-mode` set to `mode`, whatever the settings said.
+fn with_claude_mode(args: Vec<String>, mode: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        if a == "--permission-mode" {
+            it.next();
+        } else if !a.starts_with("--permission-mode=") {
+            out.push(a);
+        }
+    }
+    out.extend(["--permission-mode".to_owned(), mode.to_owned()]);
+    out
 }
 
 /// An existing session to continue with a new message.
@@ -90,6 +142,9 @@ pub struct FollowUp {
     pub session_id: String,
     /// The account the session was last on; its context is copied if another one takes over.
     pub account: String,
+    /// Start a new session from this one's history instead of continuing it (Claude
+    /// `--fork-session`, Codex `thread/fork`).
+    pub fork: bool,
 }
 
 impl RunOptions {
@@ -113,6 +168,8 @@ impl RunOptions {
             only: None,
             images: Vec::new(),
             plan: false,
+            mode: None,
+            answer_wait: None,
         }
     }
 }
@@ -292,6 +349,8 @@ struct Spend {
     may_spend: bool,
     /// Plan only: nothing may change yet.
     plan: bool,
+    /// Fork the session being resumed instead of continuing it.
+    fork: bool,
 }
 
 /// How the next launch continues the task.
@@ -317,6 +376,12 @@ impl Supervisor<'_> {
             opts.follow_up.as_ref().map(|f| f.parent),
             self.now(),
         )?;
+        if let Some(m) = opts.mode {
+            self.store.set_run_mode(run_id, Some(m.name()))?;
+        }
+        if opts.answer_wait.is_some() {
+            self.store.set_run_answer_wait(run_id, opts.answer_wait)?;
+        }
         // The folder as the run found it, so the session's own changes can be shown (D40).
         if let Err(e) = crate::checkpoint::save_start(&opts.cwd, run_id) {
             tracing::warn!(%e, "couldn't save the run's start");
@@ -335,7 +400,12 @@ impl Supervisor<'_> {
         ordered.retain(|a| DRIVEN.contains(&a.vendor));
         let mut pick_opts = PickOptions {
             policy: opts.policy,
-            prefer: opts.prefer.clone(),
+            // A follow-up or fork stays on the session's account while it has room: the session
+            // lives there, and another CLI could only start fresh from a handoff (D42).
+            prefer: opts
+                .prefer
+                .clone()
+                .or_else(|| opts.follow_up.as_ref().map(|f| f.account.clone())),
             only: opts.only.clone(),
             ..PickOptions::default()
         };
@@ -548,6 +618,8 @@ impl Supervisor<'_> {
                         stop_at,
                         may_spend,
                         plan: planning,
+                        fork: matches!(next, Continue::Reply(_))
+                            && opts.follow_up.as_ref().is_some_and(|f| f.fork),
                     },
                     opts,
                 )
@@ -879,6 +951,7 @@ impl Supervisor<'_> {
             stop_at,
             may_spend,
             plan,
+            fork,
         }: Spend,
         opts: &RunOptions,
     ) -> Result<Attempt, RunError> {
@@ -887,19 +960,16 @@ impl Supervisor<'_> {
             // An exec-only flag `codex app-server` rejects; anchorleg's defaults do the same.
             launch.args.retain(|a| a != "--full-auto");
         }
-        if plan && account.vendor == Vendor::Claude {
-            // Plan mode replaces the person's own permission mode for this launch.
-            let mut args = std::mem::take(&mut launch.args).into_iter();
-            while let Some(a) = args.next() {
-                if a == "--permission-mode" {
-                    args.next();
-                } else if !a.starts_with("--permission-mode=") {
-                    launch.args.push(a);
-                }
+        if account.vendor == Vendor::Claude {
+            // Plan mode, then the session's own mode, replace the settings' permission mode.
+            let mode = if plan {
+                Some("plan")
+            } else {
+                opts.mode.map(Mode::claude)
+            };
+            if let Some(m) = mode {
+                launch.args = with_claude_mode(std::mem::take(&mut launch.args), m);
             }
-            launch
-                .args
-                .extend(["--permission-mode".to_owned(), "plan".to_owned()]);
         }
         // Claude's plan mode can't end with its ExitPlanMode tool in `-p`, and agy has no plan
         // mode: say how a plan is handed over.
@@ -1009,6 +1079,7 @@ impl Supervisor<'_> {
                         .collect(),
                 },
                 plan,
+                fork,
             });
         } else {
             if let Some(dir) = &opts.mod_dir {
@@ -1025,6 +1096,9 @@ impl Supervisor<'_> {
             cmd.args(&model_args);
             if let Some(sid) = resume {
                 cmd.args(["--resume", sid]);
+                if fork {
+                    cmd.arg("--fork-session");
+                }
             }
         }
         // Without this, `claude -p` waits 3 s for stdin on every launch (Phase 0).

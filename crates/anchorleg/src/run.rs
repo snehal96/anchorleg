@@ -55,7 +55,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    let parent = match args.follow_up {
+    let parent = match args.follow_up.or(args.fork) {
         Some(id) => Some(
             store
                 .run(id)?
@@ -63,11 +63,25 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         ),
         None => None,
     };
-    let cwd = match (args.cwd, &parent) {
+    let mut cwd = match (args.cwd, &parent) {
         (Some(dir), _) => dir,
         (None, Some(p)) => PathBuf::from(&p.cwd),
         (None, None) => std::env::current_dir()?,
     };
+    if let Some(name) = &args.worktree {
+        let name = if name.trim().is_empty() {
+            format!("task-{}", now())
+        } else {
+            name.trim().to_owned()
+        };
+        cwd = anchorleg_core::checkpoint::add_worktree(&cwd, &name)?;
+        if !args.json {
+            eprintln!(
+                "anchorleg: working in {} (branch anchorleg/{name})",
+                cwd.display()
+            );
+        }
+    }
 
     let staged = attachments::stage(&cwd, &args.attach, now())?;
     let mut opts = RunOptions::new(
@@ -80,6 +94,15 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         .map(|p| cwd.join(p))
         .collect();
     opts.plan = args.plan;
+    opts.answer_wait = args
+        .answer_wait
+        .or_else(|| parent.as_ref().and_then(|p| p.answer_wait));
+    opts.mode = args
+        .mode
+        .clone()
+        .or_else(|| parent.as_ref().and_then(|p| p.mode.clone()))
+        .as_deref()
+        .and_then(anchorleg_core::supervisor::Mode::parse);
     if let Some(p) = &parent {
         let (Some(session_id), Some(account)) = (p.session_id.clone(), p.account.clone()) else {
             anyhow::bail!(
@@ -87,10 +110,21 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
                 p.id
             );
         };
+        if args.fork.is_some()
+            && config
+                .get(&account)
+                .is_some_and(|a| a.vendor == anchorleg_core::registry::Vendor::Antigravity)
+        {
+            anyhow::bail!(
+                "forking needs a Claude or Codex session; #{} ran on {account}",
+                p.id
+            );
+        }
         opts.follow_up = Some(FollowUp {
             parent: p.id,
             session_id,
             account,
+            fork: args.fork.is_some(),
         });
     }
     opts.model = args.model;
@@ -357,4 +391,108 @@ pub fn diff(id: i64, stat: bool) -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+/// Undo (or `redo`) the files a session changed since it started; the result as one line, also
+/// logged in the session's conversation. The caller makes sure the session isn't working.
+pub fn undo_session(store: &Store, log_dir: &Path, id: i64, redo: bool) -> anyhow::Result<String> {
+    let run = store
+        .run(id)?
+        .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+    let chain = store.session_runs(id)?;
+    let cwd = Path::new(&run.cwd);
+    let done = if redo {
+        anchorleg_core::checkpoint::redo_session(cwd, &chain)?
+    } else {
+        anchorleg_core::checkpoint::undo_session(cwd, &chain)?
+    };
+    let Some(r) = done else {
+        anyhow::bail!(if redo {
+            "nothing to redo for this session".to_owned()
+        } else {
+            format!(
+                "nothing to compare with: {} isn't a git repository, or the session started \
+                 before anchorleg recorded starts",
+                run.cwd
+            )
+        });
+    };
+    let what = if redo { "redid" } else { "undid" };
+    let line = if r.restored.is_empty() && r.removed.is_empty() {
+        format!("{what} nothing: no changes")
+    } else {
+        format!(
+            "{what} the session's changes: {} file(s) put back, {} removed",
+            r.restored.len(),
+            r.removed.len()
+        )
+    };
+    // The newest run of the session shows it in its conversation.
+    let newest = chain.iter().max().copied().unwrap_or(id);
+    {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .open(log_dir.join(format!("run-{newest}.jsonl")))
+        {
+            let _ = writeln!(
+                f,
+                "{}",
+                serde_json::json!({ "type": "anchorleg", "text": line })
+            );
+        }
+    }
+    Ok(line)
+}
+
+/// `anchorleg undo <run>`.
+pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
+    let db = Store::default_path()?;
+    let store = Store::open(&db)?;
+    let log_dir = db.with_file_name("runs");
+    let chain = store.session_runs(id)?;
+    for r in &chain {
+        if let Some(run) = store.run(*r)?
+            && matches!(run.state, RunState::Running | RunState::Waiting)
+            && run.pid.is_some_and(pid_alive)
+        {
+            anyhow::bail!(
+                "#{} is still working; stop it first (anchorleg stop {})",
+                run.id,
+                run.id
+            );
+        }
+    }
+    if !yes && !redo {
+        let run = store
+            .run(id)?
+            .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+        match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, true)? {
+            Some(stat) if !stat.trim().is_empty() => {
+                println!("{stat}");
+                println!(
+                    "\nThese files go back to how they were when the session started (a backup is \
+                     kept; `--redo` brings them back). Run again with --yes."
+                );
+            }
+            Some(_) => println!("no changes since the session started"),
+            None => anyhow::bail!("nothing to compare with for #{id}"),
+        }
+        return Ok(());
+    }
+    println!("{}", undo_session(&store, &log_dir, id, redo)?);
+    if !redo {
+        println!(
+            "`anchorleg undo {id} --redo` brings the changes back. The agent isn't told; say so in your next message."
+        );
+    }
+    Ok(())
+}
+
+fn pid_alive(pid: i64) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }

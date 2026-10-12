@@ -16,9 +16,21 @@ All notable changes are listed here. The format follows
   `ask_user` tool added by anchorleg-mod (headless runs drop Claude's own question tool). Answer
   in `anchorleg ui` (number keys, your own words, `0` to skip) or with
   `anchorleg permission answer <id> <answer>…`. Secret answers are never passed or stored.
+- `anchorleg ui`: `@` completes the task folder's file paths; Ctrl+P / Ctrl+N (↑) bring back
+  earlier messages.
+- `anchorleg run --answer-wait 10m`: how long questions and approvals wait before the agent goes
+  on without an answer (default 30m).
+- Fork a session (`anchorleg run --fork RUN`, `/fork` in the UI) and run a task in its own git
+  worktree (`--worktree [NAME]`, `/worktree`).
+
+- Permission mode per session: `anchorleg run --mode ask|edits`, `/mode` in the UI; follow-ups
+  keep their session's mode.
+- Undo a session: `anchorleg undo <run>` (U U in the UI) puts back every file it changed and
+  removes files it created, working tree only, with a backup for `--redo`.
 - See what a session changed: `anchorleg diff <run> [--stat]`, `v` in `anchorleg ui`. Every run
   saves the folder as it found it (`refs/anchorleg/run-<id>/start`, local only), so the diff shows
-  the session's own changes. The agent's task list shows under the conversation.
+  the session's own changes. The agent's task list shows under the conversation, and its title
+  shows how full the context is.
 - Notifications: a desktop notification when a run waits for you (tool call, question, plan),
   finishes, fails, switches accounts or runs out of accounts. `anchorleg notify` turns them off or
   adds a command of your own (JSON on stdin), e.g. to reach your phone.
@@ -33,6 +45,10 @@ All notable changes are listed here. The format follows
   copied into the task folder's git-ignored `.anchorleg/attachments/`, so any account or CLI can
   read them; Codex also gets images as image input.
 - Homebrew tap (in progress).
+
+### Changed
+- Follow-ups stay on the account their session ran on while it has room, instead of following
+  the switch policy to another CLI, which could only continue from a handoff.
 
 ## [0.3.0] — 2026-10-12
 

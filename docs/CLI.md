@@ -27,12 +27,12 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `answer <id> <answer>… \| --skip` (questions) · `ask --json` (anchorleg-mod) | works (Claude, Codex; agy under development) |
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
 | `anchorleg stop <run>` | works |
-| `anchorleg diff <run> [--stat]` | works (git folders) |
+| `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
 | `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex) |
 | `anchorleg status [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
-| `anchorleg run [--follow-up RUN] [--cwd DIR] [--plan] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN] [--worktree [NAME]] [--cwd DIR] [--plan] [--mode ask\|edits] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -236,8 +236,16 @@ changes left out; `--stat` lists files and line counts. In `anchorleg ui`, **v**
 for the selected session (↑↓ PgUp PgDn scroll, any other key closes). Sessions from before this
 version have no start to compare with.
 
+`anchorleg undo <run>` puts every file the session changed back the way the session found it and
+removes the files it created (**U U** in the UI). Without `--yes` it only lists them. Only the
+working tree changes: the branch, index and stash are left alone, and the folder is saved first
+(`refs/anchorleg/run-<id>/before-undo`), so `anchorleg undo <run> --redo` brings the changes back.
+A working session must be stopped first. The agent isn't told; mention it in your next message.
+
 The agent's task list (Claude's TODO list, Codex's plan) shows under the conversation as it
-works: ✔ done, ▸ in progress, ◻ to do.
+works: ✔ done, ▸ in progress, ◻ to do. The conversation's title shows how full the context is
+(`ctx 42k/200k (21%)`), from the last model request; above `--fresh-above` a switch starts the
+next account fresh from the handoff.
 
 ### Notifications: `anchorleg notify`
 
@@ -258,6 +266,39 @@ anchorleg notify --command 'curl -s -d "$ANCHORLEG_MESSAGE" https://ntfy.sh/my-a
 
 On macOS the first notification may need permission: allow notifications for "Script Editor"
 in System Settings → Notifications if none show up.
+
+### Fork a session, or give a task its own worktree
+
+`anchorleg run --fork <run> -- <message>` starts a **new** session from that session's history
+(Claude `--resume … --fork-session`, Codex `thread/fork`); the original is left as it was, so you
+can try another direction from the same point. In `anchorleg ui`: `/fork <message>` with the
+session selected. Claude and Codex only.
+
+`anchorleg run --worktree [NAME] -- <task>` runs the task in a git worktree of its own,
+`<repo>/.anchorleg/worktrees/NAME` on a new local branch `anchorleg/NAME` (from `HEAD`; NAME
+defaults to `task-<time>`), so two sessions in the same repository can't step on each other or on
+you. Follow-ups run there too. Nothing is pushed; merge the branch when you like it, and remove it
+with `git worktree remove`. In the UI: `/worktree <task>` as a new task.
+
+Follow-ups and forks stay on the account their session ran on while it has room (unless
+`--prefer`/`--account` say otherwise): on another CLI the session couldn't be resumed, only
+continued from a handoff.
+
+### Typing in `anchorleg ui`
+
+`@` followed by part of a name offers the task folder's files (as git sees them: tracked and
+untracked, not ignored); **Tab** puts the path in. **Ctrl+P** / **Ctrl+N** (or **↑** in an empty
+box with a session selected) bring back earlier messages: the session's own, or, for a new task,
+the ones sent from this UI.
+
+### Permission mode per session: `--mode`
+
+`anchorleg run --mode edits` lets file edits go ahead in that session while commands and the rest
+are still asked; `--mode ask` sends every question to you. The mode belongs to the session: its
+follow-ups keep it unless they pass another one. It overrides the CLI settings'
+`--permission-mode` for Claude; Codex already accepts edits inside the task folder, so both modes
+are the same there. In `anchorleg ui`, `/mode edits` sets the selected session's mode (from its next
+message) or, with no session selected, the mode new tasks start in; the conversation title shows it.
 
 ### Plan first: `--plan`
 
@@ -309,6 +350,10 @@ When the agent needs a decision only you can make, it asks, and the run waits fo
 - **Claude Code** drops its `AskUserQuestion` tool in `-p` runs, so anchorleg-mod adds an
   `ask_user` tool with the same input (the model sees it as `mcp__anchorleg-mod__ask_user`).
   Where the CLI does offer `AskUserQuestion`, that is answered the same way.
+
+How long a question (or approval) waits is 30 minutes unless the session says otherwise:
+`anchorleg run --answer-wait 10m` (follow-ups keep it). With no answer by then the agent decides
+itself (Codex gets no answers; Claude is told to decide), and a tool call is refused.
 
 In `anchorleg ui` the conversation shows the question and its numbered options: press a number to
 pick (several, then Enter, when more than one may be picked), type your own answer in the

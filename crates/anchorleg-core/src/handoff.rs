@@ -45,6 +45,8 @@ pub struct Transcript {
     pub last_message: Option<String>,
     /// Tokens in the context at the last model request (input + cache read + cache write).
     pub context_tokens: Option<u64>,
+    /// The model's context window, when the CLI reported it.
+    pub context_window: Option<u64>,
 }
 
 /// Read a transcript. Lines that aren't JSON, and subagent (sidechain) lines, are skipped.
@@ -130,12 +132,31 @@ pub fn extract(log: &str) -> Transcript {
                 }
             }
             Some("item.completed" | "item.updated") => codex_item(&v, &mut t, &mut todo_steps),
+            Some("result") => {
+                // Claude: `modelUsage.<model>.contextWindow`; the main model has the largest.
+                if let Some(w) = v
+                    .get("modelUsage")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flat_map(|m| m.values())
+                    .filter_map(|u| u.get("contextWindow").and_then(Value::as_u64))
+                    .max()
+                {
+                    t.context_window = Some(w);
+                }
+            }
             Some("turn.completed") => {
                 // Codex counts cached input inside `input_tokens`.
                 if let Some(n) = v.pointer("/usage/input_tokens").and_then(Value::as_u64)
                     && n > 0
                 {
                     t.context_tokens = Some(n);
+                }
+                if let Some(w) = v
+                    .pointer("/usage/model_context_window")
+                    .and_then(Value::as_u64)
+                {
+                    t.context_window = Some(w);
                 }
             }
             Some("user") => {
@@ -660,6 +681,7 @@ mod tests {
             }],
             last_message: Some("Halfway.".into()),
             context_tokens: None,
+            context_window: None,
         };
         let goals = ["fix the tests".to_owned(), "also run clippy".to_owned()];
         let md = render(&Handoff {
@@ -710,6 +732,31 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join(".handoff/.gitignore")).unwrap(),
             "*\n"
+        );
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn context_size_and_window() {
+        let claude = [
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":40000,"cache_creation_input_tokens":2000},"content":[]}}"#,
+            r#"{"type":"result","subtype":"success","modelUsage":{"claude-haiku-5-5":{"contextWindow":200000},"claude-opus-5-5":{"contextWindow":1000000}}}"#,
+        ]
+        .join("\n");
+        let t = extract(&claude);
+        assert_eq!(
+            (t.context_tokens, t.context_window),
+            (Some(42003), Some(1_000_000))
+        );
+        let codex = r#"{"type":"turn.completed","usage":{"input_tokens":9000,"model_context_window":258400}}"#;
+        let t = extract(codex);
+        assert_eq!(
+            (t.context_tokens, t.context_window),
+            (Some(9000), Some(258400))
         );
     }
 }

@@ -1512,6 +1512,146 @@ fn a_codex_plan_uses_plan_mode_until_approved() {
     );
 }
 
+#[test]
+fn a_session_keeps_its_mode() {
+    let env = Env::new(&["a"]);
+    env.script("a.1.jsonl", &ok("s1", "first"));
+    env.script("a.2.jsonl", &ok("s1", "second"));
+    env.anchorleg()
+        .args([
+            "settings",
+            "claude",
+            "--args",
+            "--permission-mode default --verbose",
+        ])
+        .assert()
+        .success();
+    let (code, r) = env.run(&["--mode", "edits"]);
+    assert_eq!(code, 0, "{r}");
+    let (code, r) = env.run(&["--follow-up", "1"]);
+    assert_eq!(code, 0, "{r}");
+    let launches = env.launches();
+    for l in &launches {
+        assert!(l.contains("--permission-mode acceptEdits"), "{launches:?}");
+        assert!(!l.contains("--permission-mode default"), "{launches:?}");
+    }
+}
+
+#[test]
+fn a_fork_starts_a_new_session_from_the_old_one() {
+    let env = Env::new(&["a"]);
+    env.script("a.1.jsonl", &ok("s1", "first"));
+    env.script("a.2.jsonl", &ok("s2", "the other way"));
+    assert_eq!(env.run(&[]).0, 0);
+    let (code, r) = env.run(&["--fork", "1"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["session_id"], "s2");
+    let launches = env.launches();
+    assert!(
+        launches[1].contains("--resume s1 --fork-session"),
+        "{launches:?}"
+    );
+
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.1.jsonl", &codex_ok("t1", "first"));
+    env.script("c.2.jsonl", &codex_ok("t1-fork", "the other way"));
+    assert_eq!(env.run(&[]).0, 0);
+    let (code, r) = env.run(&["--fork", "1"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["session_id"], "t1-fork", "{r}");
+    let launches = env.launches();
+    assert!(launches[1].contains("thread/fork t1"), "{launches:?}");
+}
+
+#[test]
+fn a_task_can_run_in_its_own_worktree() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done"));
+    let work = env.path("work");
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&work)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let (code, r) = env.run(&["--worktree", "demo"]);
+    assert_eq!(code, 0, "{r}");
+    let out = env
+        .anchorleg()
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let runs: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let cwd = runs[0]["cwd"].as_str().unwrap();
+    assert!(cwd.ends_with(".anchorleg/worktrees/demo"), "{cwd}");
+    let branch = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["branch", "--show-current"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&branch.stdout).trim(),
+        "anchorleg/demo"
+    );
+}
+
+#[test]
+fn a_follow_up_stays_on_the_sessions_account() {
+    // `a` (Claude) comes first by priority, but the session lives on Codex.
+    let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
+    env.script("c.1.jsonl", &codex_ok("t1", "first"));
+    env.script("c.2.jsonl", &codex_ok("t1", "second"));
+    env.script("a.jsonl", &ok("s9", "wrong account"));
+    assert_eq!(env.run(&["--account", "c"]).0, 0);
+    let (code, r) = env.run(&["--follow-up", "1"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["result"], "second", "{r}");
+    let launches = env.launches();
+    assert!(
+        launches[1].starts_with("c ") && launches[1].contains("thread/resume t1"),
+        "{launches:?}"
+    );
+}
+
+#[test]
+fn an_unanswered_question_lets_the_agent_go_on_after_the_wait() {
+    let env = Env::mixed(&[("c", "codex")]);
+    let ask = r#"{"method":"item/tool/requestUserInput","id":0,"params":{"threadId":"t1","turnId":"u1","itemId":"q9","isBlocking":true,"questions":[{"id":"runner","header":"Runner","question":"Which test runner?","options":[{"label":"Vitest","description":"fast"}]}]}}"#;
+    env.script(
+        "c.jsonl",
+        &(ask.to_owned() + "\n" + &codex_ok("t1", "went with Vitest")),
+    );
+    let started = std::time::Instant::now();
+    let (code, r) = env.run(&["--answer-wait", "10s"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["result"], "went with Vitest");
+    assert!(started.elapsed().as_secs() >= 10, "{:?}", started.elapsed());
+    let answers = std::fs::read_to_string(env.path("fake/answers.log")).unwrap();
+    let reply: Value = serde_json::from_str(answers.lines().next().unwrap()).unwrap();
+    assert_eq!(reply["result"], serde_json::json!({ "answers": {} }));
+    let log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert!(log.contains("nobody answered"), "{log}");
+}
+
 /// Wait until the fakes have seen `n` launches.
 fn wait_launches(env: &Env, n: usize) {
     let started = std::time::Instant::now();

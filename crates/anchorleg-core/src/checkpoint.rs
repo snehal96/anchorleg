@@ -167,6 +167,181 @@ pub fn session_diff(cwd: &Path, runs: &[i64], stat: bool) -> Result<Option<Strin
     Ok(None)
 }
 
+/// Make a git worktree for one task: `<repo>/.anchorleg/worktrees/<name>` on a new local branch
+/// `anchorleg/<name>` from `HEAD`. Returns the folder to run in: the same place inside the
+/// worktree as `cwd` is inside the repository. Never pushed; remove it with `git worktree remove`.
+pub fn add_worktree(cwd: &Path, name: &str) -> Result<PathBuf, GitError> {
+    let not_repo = || GitError {
+        args: "worktree add".into(),
+        message: format!("{} isn't in a git repository", cwd.display()),
+    };
+    let top = toplevel(cwd).ok_or_else(not_repo)?;
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let dir = crate::attachments::anchorleg_dir(&top).map_err(|e| GitError {
+        args: "worktree add".into(),
+        message: e.to_string(),
+    })?;
+    let path = dir.join("worktrees").join(&name);
+    let branch = format!("anchorleg/{name}");
+    git(
+        &top,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            &branch,
+            &path.display().to_string(),
+            "HEAD",
+        ],
+        None,
+    )?;
+    let inside = cwd
+        .canonicalize()
+        .ok()
+        .zip(top.canonicalize().ok())
+        .and_then(|(c, t)| c.strip_prefix(&t).ok().map(Path::to_path_buf))
+        .unwrap_or_default();
+    Ok(if inside.as_os_str().is_empty() {
+        path
+    } else {
+        path.join(inside)
+    })
+}
+
+/// What an undo or redo changed in the folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restored {
+    /// Files put back as they were.
+    pub restored: Vec<String>,
+    /// Files the session had created, removed.
+    pub removed: Vec<String>,
+    /// The folder as it was before, to go back to (`--redo`).
+    pub backup: String,
+}
+
+/// Where the folder is kept before an undo of the session that started with run `first`.
+pub fn undo_ref(first: i64) -> String {
+    format!("refs/anchorleg/run-{first}/before-undo")
+}
+
+/// The oldest of `runs` that saved a start.
+fn first_start(top: &Path, runs: &[i64]) -> Option<i64> {
+    let mut ids = runs.to_vec();
+    ids.sort_unstable();
+    ids.into_iter().find(|id| {
+        git(
+            top,
+            &[
+                "rev-parse",
+                "--verify",
+                "-q",
+                &format!("{}^{{commit}}", start_ref(*id)),
+            ],
+            None,
+        )
+        .is_ok()
+    })
+}
+
+/// Put every file the session changed back as it was when it started; files it created are
+/// removed. Only the working tree changes (not the branch, index or stash), and only those
+/// files: the folder is saved first under [`undo_ref`], so [`redo_session`] can bring it back.
+/// `Ok(None)`: not a repository, or no start saved.
+pub fn undo_session(cwd: &Path, runs: &[i64]) -> Result<Option<Restored>, GitError> {
+    let Some(top) = toplevel(cwd) else {
+        return Ok(None);
+    };
+    let Some(first) = first_start(&top, runs) else {
+        return Ok(None);
+    };
+    let now = snapshot_tree(&top)?;
+    let backup = commit_ref(
+        &top,
+        &now,
+        head(&top).as_deref(),
+        &format!("anchorleg: before undoing run {first}'s session"),
+        &undo_ref(first),
+    )?;
+    restore(&top, &start_ref(first), &now, backup.refname).map(Some)
+}
+
+/// Undo the last [`undo_session`]: the files it touched go back to how they were before it.
+pub fn redo_session(cwd: &Path, runs: &[i64]) -> Result<Option<Restored>, GitError> {
+    let Some(top) = toplevel(cwd) else {
+        return Ok(None);
+    };
+    let Some(first) = first_start(&top, runs) else {
+        return Ok(None);
+    };
+    let backup = undo_ref(first);
+    if git(
+        &top,
+        &[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("{backup}^{{commit}}"),
+        ],
+        None,
+    )
+    .is_err()
+    {
+        return Ok(None);
+    }
+    let now = snapshot_tree(&top)?;
+    restore(&top, &backup, &now, backup.clone()).map(Some)
+}
+
+/// Make the files that differ between `target` (a commit ref) and the tree `now` match
+/// `target`, in the working tree only.
+fn restore(top: &Path, target: &str, now: &str, backup: String) -> Result<Restored, GitError> {
+    let target_tree = format!("{target}^{{tree}}");
+    let changes = git(
+        top,
+        &[
+            "diff",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            &target_tree,
+            now,
+        ],
+        None,
+    )?;
+    let mut fields = changes.split('\0').filter(|f| !f.is_empty());
+    let (mut restored, mut removed) = (Vec::new(), Vec::new());
+    while let (Some(status), Some(path)) = (fields.next(), fields.next()) {
+        if status == "A" {
+            // Not there at `target`: created since.
+            let _ = std::fs::remove_file(top.join(path));
+            removed.push(path.to_owned());
+        } else {
+            restored.push(path.to_owned());
+        }
+    }
+    if !restored.is_empty() {
+        let source = format!("--source={target}");
+        let mut args = vec!["restore", source.as_str(), "--worktree", "--"];
+        args.extend(restored.iter().map(String::as_str));
+        git(top, &args, None)?;
+    }
+    Ok(Restored {
+        restored,
+        removed,
+        backup,
+    })
+}
+
 /// What changed in the working tree since run `run_id` started: `git diff` (or `--stat`), new
 /// files included. `Ok(None)`: not a repository, or that run saved no start.
 pub fn diff_since_start(cwd: &Path, run_id: i64, stat: bool) -> Result<Option<String>, GitError> {
@@ -223,6 +398,63 @@ mod tests {
             git(p, &["diff", "--cached", "--name-only"], None).unwrap(),
             ""
         );
+    }
+
+    #[test]
+    fn undo_puts_the_session_back_and_redo_returns_it() {
+        let dir = repo();
+        let p = dir.path();
+        std::fs::write(p.join("a.txt"), "mine\n").unwrap();
+        std::fs::write(p.join("draft.txt"), "untracked before\n").unwrap();
+        save_start(p, 3).unwrap().unwrap();
+        // The session: edits, creates, deletes.
+        std::fs::write(p.join("a.txt"), "agent\n").unwrap();
+        std::fs::write(p.join("new.txt"), "created\n").unwrap();
+        std::fs::remove_file(p.join("draft.txt")).unwrap();
+        let status_before = git(p, &["diff", "--cached", "--name-only"], None).unwrap();
+
+        let u = undo_session(p, &[4, 3]).unwrap().unwrap();
+        assert_eq!(u.restored, ["a.txt", "draft.txt"]);
+        assert_eq!(u.removed, ["new.txt"]);
+        assert_eq!(std::fs::read_to_string(p.join("a.txt")).unwrap(), "mine\n");
+        assert_eq!(
+            std::fs::read_to_string(p.join("draft.txt")).unwrap(),
+            "untracked before\n"
+        );
+        assert!(!p.join("new.txt").exists());
+        assert_eq!(diff_since_start(p, 3, false).unwrap().unwrap(), "");
+        // The index is untouched.
+        assert_eq!(
+            git(p, &["diff", "--cached", "--name-only"], None).unwrap(),
+            status_before
+        );
+
+        let r = redo_session(p, &[3]).unwrap().unwrap();
+        assert_eq!(r.restored, ["a.txt", "new.txt"]);
+        assert_eq!(r.removed, ["draft.txt"]);
+        assert_eq!(std::fs::read_to_string(p.join("a.txt")).unwrap(), "agent\n");
+        assert!(p.join("new.txt").exists() && !p.join("draft.txt").exists());
+        assert_eq!(undo_session(p, &[9]).unwrap(), None);
+    }
+
+    #[test]
+    fn a_task_gets_its_own_worktree() {
+        let dir = repo();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join("src")).unwrap();
+        let wt = add_worktree(&p.join("src"), "split auth").unwrap();
+        assert!(
+            wt.ends_with(".anchorleg/worktrees/split-auth/src"),
+            "{}",
+            wt.display()
+        );
+        assert!(wt.parent().unwrap().join("a.txt").is_file());
+        assert_eq!(
+            git(wt.parent().unwrap(), &["branch", "--show-current"], None).unwrap(),
+            "anchorleg/split-auth"
+        );
+        // The main checkout doesn't see it as a change.
+        assert_eq!(status(p).unwrap(), "");
     }
 
     #[test]

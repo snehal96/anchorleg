@@ -20,9 +20,18 @@ pub fn is_image(path: &Path) -> bool {
 
 /// The folder attachments go to in `cwd`, created with its `.gitignore`.
 pub fn dir(cwd: &Path) -> std::io::Result<PathBuf> {
+    anchorleg_dir(cwd)?;
     let dir = cwd.join(DIR);
     std::fs::create_dir_all(&dir)?;
-    let ignore = cwd.join(".anchorleg/.gitignore");
+    Ok(dir)
+}
+
+/// `cwd/.anchorleg`, anchorleg's own folder in a task folder (attachments, worktrees), created
+/// with a `.gitignore` of `*` so none of it shows up in git.
+pub fn anchorleg_dir(cwd: &Path) -> std::io::Result<PathBuf> {
+    let dir = cwd.join(".anchorleg");
+    std::fs::create_dir_all(&dir)?;
+    let ignore = dir.join(".gitignore");
     if !ignore.exists() {
         std::fs::write(
             ignore,

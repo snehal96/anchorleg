@@ -208,6 +208,7 @@ anchorleg ui
 | `1` `2` `3` | Answer a waiting tool call: yes · yes for this session · no |
 | `s` | Stop the selected session |
 | `v` | What the selected session changed (a diff) |
+| `U` `U` | Undo the selected session's changes (`anchorleg undo --redo` brings them back) |
 | `Tab` | Next pane (in the message box: complete a slash command) |
 | `?` | All keys |
 
@@ -224,6 +225,8 @@ anchorleg usage                     # tokens and API-price cost per account and 
 anchorleg send 12 -- "also update the docs"   # message a working session (--interrupt: now)
 anchorleg run --attach error.png -- "fix this crash"   # attach images or files (also on send)
 anchorleg run --plan -- "split the auth module"         # plan first; approve, then it runs
+anchorleg run --worktree -- "try the new parser"        # in a git worktree of its own
+anchorleg run --fork 12 -- "now try it with a macro"    # a new session from #12's history
 anchorleg stop 12                   # stop a session and its CLI
 anchorleg diff 12 --stat            # what the session changed since it started
 anchorleg permission list           # tool calls waiting for you

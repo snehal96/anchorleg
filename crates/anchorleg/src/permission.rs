@@ -265,6 +265,11 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
         bail!("no run {}", req.run_id);
     }
     let question = req.tool == questions::TOOL;
+    // The session's own wait (`run --answer-wait`), else anchorleg's default.
+    let give_up = store
+        .run(req.run_id)?
+        .and_then(|r| r.answer_wait)
+        .unwrap_or(GIVE_UP_SECS);
     let what = if question {
         let qs = questions::from_input(&req.input);
         match qs.as_slice() {
@@ -343,7 +348,7 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
                 let ended = run.is_none_or(|r| {
                     !matches!(r.state, RunState::Running | RunState::Waiting) || r.pid.is_none()
                 });
-                if ended || now() - p.asked_at > GIVE_UP_SECS {
+                if ended || now() - p.asked_at > give_up {
                     store.answer_permission(id, PermissionState::Expired, now())?;
                     continue;
                 }

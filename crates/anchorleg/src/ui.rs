@@ -207,7 +207,18 @@ pub enum Action {
     Usage,
     /// Show what the selected session changed in its folder since it started.
     Diff,
+    /// Put back the files the selected session changed (press twice).
+    Undo,
     Quit,
+}
+
+/// One completion offered above the message box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    label: String,
+    what: String,
+    /// The message box's text once it's picked.
+    insert: String,
 }
 
 /// The selected session's changes, shown over everything (`v`).
@@ -251,6 +262,8 @@ pub struct App {
     conversation: Vec<Message>,
     /// The selected session's task list (TodoWrite / Codex's plan), last version.
     steps: Vec<anchorleg_core::handoff::Step>,
+    /// The selected session's context at its last model request, and the model's window.
+    context: Option<(u64, Option<u64>)>,
     pub diff_view: Option<DiffView>,
     /// The terminal's height at the last draw (a page for scrolling).
     last_height: u16,
@@ -269,6 +282,16 @@ pub struct App {
     /// Status line text.
     pub message: String,
     pub confirm_remove: Option<String>,
+    /// The session an undo waits for a second `U` on.
+    confirm_undo: Option<i64>,
+    /// `/mode` picked with no session selected: the next new task's mode.
+    new_mode: Option<String>,
+    /// Files of a task folder, for `@` completions (folder, paths), listed once per folder.
+    files: std::cell::RefCell<Option<(String, Vec<String>)>>,
+    /// Messages sent from this UI, oldest first, for Ctrl+P recall in a new task.
+    sent: Vec<String>,
+    /// Where Ctrl+P / Ctrl+N are in the recall list.
+    recall: Option<usize>,
     /// After starting a session, select it once it shows up.
     pending_pid: Option<i64>,
     hits: Vec<(Rect, Action)>,
@@ -313,6 +336,7 @@ impl App {
             agent: 0,
             conversation: Vec::new(),
             steps: Vec::new(),
+            context: None,
             diff_view: None,
             last_height: 24,
             scroll_up: 0,
@@ -325,6 +349,11 @@ impl App {
             field: Field::Message,
             message: String::new(),
             confirm_remove: None,
+            confirm_undo: None,
+            new_mode: None,
+            files: std::cell::RefCell::new(None),
+            sent: Vec::new(),
+            recall: None,
             pending_pid: None,
             hits: Vec::new(),
             session_rows: None,
@@ -409,6 +438,7 @@ impl App {
         let Some(run) = self.selected_run() else {
             self.conversation.clear();
             self.steps.clear();
+            self.context = None;
             return;
         };
         // A follow-up shows the whole session: its parents' messages first.
@@ -454,7 +484,9 @@ impl App {
             messages.extend(part);
         }
         self.conversation = messages;
-        self.steps = anchorleg_core::handoff::extract(&whole).steps;
+        let t = anchorleg_core::handoff::extract(&whole);
+        self.context = t.context_tokens.map(|n| (n, t.context_window));
+        self.steps = t.steps;
     }
 
     fn agent_count(&self) -> usize {
@@ -478,6 +510,9 @@ impl App {
     pub fn apply(&mut self, action: Action) -> anyhow::Result<()> {
         if action != Action::Remove {
             self.confirm_remove = None;
+        }
+        if action != Action::Undo {
+            self.confirm_undo = None;
         }
         if matches!(action, Action::SelectSession(_) | Action::NewSession) {
             self.settings_for = None;
@@ -514,6 +549,7 @@ impl App {
             Action::Help => self.help = !self.help,
             Action::Usage => self.usage_panel = !self.usage_panel,
             Action::Diff => self.open_diff(),
+            Action::Undo => self.undo()?,
             Action::Quit => self.quit = true,
         }
         Ok(())
@@ -566,16 +602,44 @@ impl App {
     }
 
     /// Completions for a slash command being typed: (name, what it does).
-    fn suggestions(&self) -> Vec<(String, String)> {
+    fn suggestions(&self) -> Vec<Suggestion> {
         if self.focus != Focus::Composer || (self.selected == 0 && self.field == Field::Folder) {
             return Vec::new();
         }
-        let Some(typed) = self.message_box.text.strip_prefix('/') else {
-            return Vec::new();
-        };
-        if typed.contains(' ') {
-            return Vec::new();
+        let text = self.message_box.text.as_str();
+        if let Some(typed) = text.strip_prefix('/')
+            && !typed.contains(' ')
+        {
+            return self.slash_suggestions(typed);
         }
+        // `@path`: a file of the task folder, completed from the last word.
+        let start = text.rfind(char::is_whitespace).map_or(0, |i| i + 1);
+        if let Some(typed) = text[start..].strip_prefix('@') {
+            let typed = typed.to_lowercase();
+            let mut hits: Vec<String> = self
+                .task_files()
+                .into_iter()
+                .filter(|f| f.to_lowercase().contains(&typed))
+                .collect();
+            // Names that start with what's typed first, then shorter paths.
+            hits.sort_by_key(|f| {
+                let name = f.rsplit('/').next().unwrap_or(f).to_lowercase();
+                (!name.starts_with(&typed), f.len())
+            });
+            return hits
+                .into_iter()
+                .take(8)
+                .map(|f| Suggestion {
+                    label: format!("@{f}"),
+                    what: String::new(),
+                    insert: format!("{}@{f} ", &text[..start]),
+                })
+                .collect();
+        }
+        Vec::new()
+    }
+
+    fn slash_suggestions(&self, typed: &str) -> Vec<Suggestion> {
         let v = self.provider().name();
         let own = [
             ("model", format!("anchorleg: model for every {v} account")),
@@ -591,7 +655,63 @@ impl App {
             )
             .filter(|(n, _)| n.starts_with(typed))
             .take(8)
+            .map(|(n, what)| Suggestion {
+                label: format!("/{n}"),
+                what,
+                insert: format!("/{n} "),
+            })
             .collect()
+    }
+
+    /// The files `@` completes: the selected session's folder (or the new task's), as git sees
+    /// it (tracked and untracked, not ignored), else a shallow walk.
+    fn task_files(&self) -> Vec<String> {
+        let folder = match self.selected_run() {
+            Some(r) => r.cwd.clone(),
+            None => {
+                let home = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                anchorleg_core::registry::expand_tilde(self.folder.text.trim(), &home)
+            }
+        };
+        if let Some((f, files)) = &*self.files.borrow()
+            && *f == folder
+        {
+            return files.clone();
+        }
+        let files = list_files(Path::new(&folder));
+        *self.files.borrow_mut() = Some((folder, files.clone()));
+        files
+    }
+
+    /// Earlier messages to recall: the selected session's, else the ones sent from here.
+    fn recall_list(&self) -> Vec<String> {
+        if self.selected_run().is_some() {
+            self.conversation
+                .iter()
+                .filter(|m| m.role == Role::User)
+                .map(|m| m.text.clone())
+                .collect()
+        } else {
+            self.sent.clone()
+        }
+    }
+
+    /// Ctrl+P (`back`) / Ctrl+N: put an earlier message in the box.
+    fn recall(&mut self, back: bool) {
+        let list = self.recall_list();
+        if list.is_empty() {
+            return;
+        }
+        let next = match (self.recall, back) {
+            (None, true) => Some(list.len() - 1),
+            (None, false) => None,
+            (Some(i), true) => Some(i.saturating_sub(1)),
+            (Some(i), false) => (i + 1 < list.len()).then_some(i + 1),
+        };
+        self.recall = next;
+        self.message_box.set(next.map_or("", |i| list[i].as_str()));
     }
 
     /// The selected session's oldest waiting tool call.
@@ -890,6 +1010,36 @@ impl App {
         {
             return self.provider_setting(cmd, arg.trim());
         }
+        if let Some(arg) = text
+            .strip_prefix("/mode")
+            .filter(|a| a.is_empty() || a.starts_with(' '))
+        {
+            return self.set_mode(arg.trim());
+        }
+        // `/fork <message>`: a new session from the selected one's history.
+        if let Some(message) = text.strip_prefix("/fork ") {
+            let Some(run) = self.selected_run().cloned() else {
+                self.message = "select the session to fork first".to_owned();
+                return Ok(());
+            };
+            if run.session_id.is_none() {
+                self.message = format!("#{} never started a session", run.id);
+                return Ok(());
+            }
+            let args = vec![
+                "run".to_owned(),
+                "--json".to_owned(),
+                "--fork".to_owned(),
+                run.id.to_string(),
+                "--".to_owned(),
+                message.trim().to_owned(),
+            ];
+            let pid = self.launcher.start(&args)?;
+            self.pending_pid = Some(i64::from(pid));
+            self.message_box = TextBox::default();
+            self.message = format!("forked #{}", run.id);
+            return self.refresh();
+        }
         let mut args = vec!["run".to_owned(), "--json".to_owned()];
         match self.selected_run() {
             None => {
@@ -920,12 +1070,25 @@ impl App {
         for f in files {
             args.extend(["--attach".to_owned(), f.display().to_string()]);
         }
+        if new_task && let Some(m) = &self.new_mode {
+            args.extend(["--mode".to_owned(), m.clone()]);
+        }
         // `/plan <task>`: plan first, approve, then carry it out (`anchorleg run --plan`).
-        if new_task && let Some(task) = text.strip_prefix("/plan ") {
-            text = task.trim().to_owned();
-            args.push("--plan".to_owned());
+        // `/worktree <task>`: in a git worktree of its own. Both may be given.
+        loop {
+            if new_task && let Some(task) = text.strip_prefix("/plan ") {
+                text = task.trim().to_owned();
+                args.push("--plan".to_owned());
+            } else if new_task && let Some(task) = text.strip_prefix("/worktree ") {
+                text = task.trim().to_owned();
+                args.push("--worktree".to_owned());
+            } else {
+                break;
+            }
         }
         args.push("--".to_owned());
+        self.sent.push(text.clone());
+        self.recall = None;
         args.push(text);
         let pid = self.launcher.start(&args)?;
         self.pending_pid = Some(i64::from(pid));
@@ -1085,7 +1248,7 @@ impl App {
             let pick = self.suggestion.min(suggestions.len() - 1);
             match key.code {
                 KeyCode::Tab => {
-                    self.message_box.set(&format!("/{} ", suggestions[pick].0));
+                    self.message_box.set(&suggestions[pick].insert);
                     self.suggestion = 0;
                     return Ok(());
                 }
@@ -1134,6 +1297,21 @@ impl App {
                 KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return self.paste_image();
                 }
+                KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.recall(true);
+                }
+                KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.recall(false);
+                }
+                KeyCode::Up
+                    if self.selected != 0
+                        && (self.message_box.text.is_empty() || self.recall.is_some()) =>
+                {
+                    self.recall(true);
+                }
+                KeyCode::Down if self.selected != 0 && self.recall.is_some() => {
+                    self.recall(false);
+                }
                 KeyCode::Up | KeyCode::Down if self.selected == 0 => {
                     self.field = match self.field {
                         Field::Folder => Field::Message,
@@ -1147,6 +1325,7 @@ impl App {
                     };
                     target.edit(&key);
                     self.suggestion = 0;
+                    self.recall = None;
                 }
             }
             return Ok(());
@@ -1158,6 +1337,7 @@ impl App {
             KeyCode::Char('?') => Some(Action::Help),
             KeyCode::Char('u') => Some(Action::Usage),
             KeyCode::Char('v') => Some(Action::Diff),
+            KeyCode::Char('U') => Some(Action::Undo),
             KeyCode::Char('n') => Some(Action::NewSession),
             KeyCode::Char('/') | KeyCode::Char('m') => Some(Action::Focus(Focus::Composer)),
             KeyCode::Char('s') => Some(Action::Stop),
@@ -1361,6 +1541,83 @@ impl App {
         if self.diff_view.is_some() {
             self.draw_diff(f);
         }
+    }
+
+    /// `/mode [ask|edits]`: the selected session's permission mode (its follow-ups use it), or
+    /// the next new task's.
+    fn set_mode(&mut self, value: &str) -> anyhow::Result<()> {
+        use anchorleg_core::supervisor::Mode;
+        let names: Vec<&str> = Mode::ALL.iter().map(|m| m.name()).collect();
+        let selected = self.selected_run().cloned();
+        if value.is_empty() {
+            let now = match &selected {
+                Some(r) => r.mode.clone(),
+                None => self.new_mode.clone(),
+            };
+            self.message = format!(
+                "mode: {} (one of {})",
+                now.as_deref().unwrap_or("the CLI settings'"),
+                names.join(", ")
+            );
+            return Ok(());
+        }
+        let Some(mode) = Mode::parse(value) else {
+            self.message = format!("{value}: one of {}", names.join(", "));
+            return Ok(());
+        };
+        self.message_box = TextBox::default();
+        match selected {
+            Some(r) => {
+                self.store.set_run_mode(r.id, Some(mode.name()))?;
+                self.message = format!(
+                    "#{} mode → {} from its next message{}",
+                    r.id,
+                    mode.name(),
+                    if Self::is_running(&r) {
+                        " (the turn running now keeps its mode)"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            None => {
+                self.new_mode = Some(mode.name().to_owned());
+                self.message = format!("new tasks start in {} mode", mode.name());
+            }
+        }
+        self.refresh()
+    }
+
+    /// `U` twice: put back the files the selected session changed (`anchorleg undo`).
+    fn undo(&mut self) -> anyhow::Result<()> {
+        let Some(run) = self.selected_run().cloned() else {
+            self.message = "select a session to undo its changes".to_owned();
+            return Ok(());
+        };
+        if Self::is_running(&run) && self.is_alive(&run) {
+            self.message = format!("#{} is working; stop it (s) before undoing", run.id);
+            return Ok(());
+        }
+        if self.confirm_undo != Some(run.id) {
+            let chain = self.store.session_runs(run.id).unwrap_or_default();
+            let files = anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, true)
+                .ok()
+                .flatten()
+                .map_or(0, |s| s.lines().count().saturating_sub(1));
+            self.message = format!(
+                "Put back the {files} file(s) #{} changed? Press U again (a backup is kept).",
+                run.id
+            );
+            self.confirm_undo = Some(run.id);
+            return Ok(());
+        }
+        self.confirm_undo = None;
+        self.message = match crate::run::undo_session(&self.store, &self.log_dir, run.id, false) {
+            Ok(line) => format!("#{}: {line} (anchorleg undo {} --redo)", run.id, run.id),
+            Err(e) => format!("#{}: {e}", run.id),
+        };
+        self.load_conversation();
+        Ok(())
     }
 
     /// `v`: the selected session's changes since it started (`anchorleg diff`).
@@ -1640,11 +1897,18 @@ impl App {
         let title = match self.selected_run() {
             None => "New session".to_owned(),
             Some(r) => format!(
-                "#{} · {} · {} · {}",
+                "#{} · {} · {} · {}{}",
                 r.id,
                 r.account.as_deref().unwrap_or("-"),
                 format!("{:?}", r.state).to_lowercase(),
-                truncate(&r.cwd, 40)
+                truncate(&r.cwd, 40),
+                r.mode
+                    .as_deref()
+                    .map_or(String::new(), |m| format!(" · mode {m}"))
+                    + &self.context.map_or(String::new(), |(n, w)| format!(
+                        " · {}",
+                        context_meter(n, w)
+                    )),
             ),
         };
         let block = self.pane(&title, Focus::Conversation);
@@ -1783,13 +2047,13 @@ impl App {
         let lines: Vec<Line> = items
             .iter()
             .enumerate()
-            .map(|(i, (name, what))| {
+            .map(|(i, sug)| {
                 let line = Line::from(vec![
                     Span::styled(
-                        format!("/{name:<28}"),
+                        format!("{:<29}", sug.label),
                         Style::new().add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(what.clone(), Style::new().fg(Color::DarkGray)),
+                    Span::styled(sug.what.clone(), Style::new().fg(Color::DarkGray)),
                 ]);
                 if i == pick {
                     line.style(Style::new().add_modifier(Modifier::REVERSED))
@@ -2157,6 +2421,65 @@ impl App {
     }
 }
 
+/// `ctx 42k/200k (21%)`, or `ctx 42k` when the window isn't known.
+fn context_meter(tokens: u64, window: Option<u64>) -> String {
+    let short = |n: u64| match n {
+        n if n >= 1_000_000 && n % 1_000_000 == 0 => format!("{}M", n / 1_000_000),
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1e6),
+        n if n >= 1_000 => format!("{}k", (n + 500) / 1_000),
+        n => n.to_string(),
+    };
+    match window.filter(|w| *w > 0) {
+        Some(w) => format!("ctx {}/{} ({}%)", short(tokens), short(w), tokens * 100 / w),
+        None => format!("ctx {}", short(tokens)),
+    }
+}
+
+/// The files of `folder` for `@` completions: `git ls-files` (tracked and untracked, not ignored)
+/// in a repository, else a walk three levels deep that skips hidden folders. At most 5000.
+fn list_files(folder: &Path) -> Vec<String> {
+    const MAX: usize = 5000;
+    if let Ok(out) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(folder)
+        .args(["ls-files", "--cached", "--others", "--exclude-standard"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        && out.status.success()
+    {
+        return String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .take(MAX)
+            .map(str::to_owned)
+            .collect();
+    }
+    fn walk(base: &Path, dir: &Path, depth: usize, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            if out.len() >= MAX {
+                return;
+            }
+            let path = e.path();
+            if e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if path.is_dir() {
+                if depth > 0 {
+                    walk(base, &path, depth - 1, out);
+                }
+            } else if let Ok(rel) = path.strip_prefix(base) {
+                out.push(rel.display().to_string());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(folder, folder, 2, &mut out);
+    out.sort();
+    out
+}
+
 fn draw_help(f: &mut Frame) {
     let lines = [
         "Everywhere",
@@ -2166,6 +2489,7 @@ fn draw_help(f: &mut Frame) {
         "  s                 stop the selected session",
         "  u                 usage: tokens, API price, credits",
         "  v                 the selected session's changes since it started (a diff)",
+        "  U U               undo them: files go back to how the session found them",
         "Message box (more)  Ctrl+V paste an image · drop a file to attach it",
         "                    while a session works: Enter sends to it · Ctrl+X interrupts first",
         "  r                 refresh      ?  this help      q  quit",
@@ -2175,8 +2499,11 @@ fn draw_help(f: &mut Frame) {
         "Message box         Enter send · Esc leave · ↑↓ folder/message (new task)",
         "                    /model x · /effort x  set it for every account of the provider",
         "                    /plan <task>  new task, plan first: approve the plan, then it runs",
+        "                    /mode ask|edits  the session's permission mode (no session: new tasks')",
+        "                    /worktree <task>  new task in its own git worktree · /fork <msg>  branch the session",
         "                    /other  the CLI's own commands; Tab completes, ↑↓ choose",
         "                    Ctrl+A/E start/end · Ctrl+U clear",
+        "                    @file  complete a file of the task folder (Tab) · Ctrl+P/N or ↑ earlier messages",
         "Agents              ↑↓ select · Shift+↑↓ (K/J) reorder · space on/off",
         "                    i import aliases · d d remove",
         "                    p switch policy: drain → balance → save-weekly",
@@ -2598,9 +2925,17 @@ mod tests {
         key(&mut fx.app, KeyCode::Char('n'));
         typed(&mut fx.app, "/plan add a docs page");
         key(&mut fx.app, KeyCode::Enter);
-        let started = &fx.calls.borrow().started;
+        let started = fx.calls.borrow().started.clone();
         assert_eq!(started.len(), 2, "{started:?}");
         assert_eq!(started[1][4..], ["--plan", "--", "add a docs page"]);
+        key(&mut fx.app, KeyCode::Esc);
+        key(&mut fx.app, KeyCode::Char('n'));
+        typed(&mut fx.app, "/worktree /plan split it");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(
+            fx.calls.borrow().started[2][4..],
+            ["--worktree", "--plan", "--", "split it"]
+        );
     }
 
     #[test]
@@ -3127,9 +3462,12 @@ mod tests {
                 { "content": "Run the tests", "status": "pending" }
             ]}}
         ]}});
+        let usage =
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":42000},"content":[]}}"#;
+        let result = r#"{"type":"result","modelUsage":{"m":{"contextWindow":200000}}}"#;
         std::fs::write(
             fx.dir.path().join(format!("runs/run-{id}.jsonl")),
-            format!("{todo}\n"),
+            format!("{todo}\n{usage}\n{result}\n"),
         )
         .unwrap();
         fx.app.refresh().unwrap();
@@ -3137,6 +3475,7 @@ mod tests {
 
         let s = screen(&mut fx.app);
         assert!(s.contains("Tasks  1/3"), "{s}");
+        assert!(s.contains("ctx 42k/200k (21%)"), "{s}");
         assert!(
             s.contains("✔ Move the parser") && s.contains("▸ Update the imports"),
             "{s}"
@@ -3152,6 +3491,29 @@ mod tests {
         assert!(s.contains("+two"), "{s}");
         key(&mut fx.app, KeyCode::Char('x'));
         assert!(fx.app.diff_view.is_none());
+
+        // Undo asks first, then puts the file back.
+        key(&mut fx.app, KeyCode::Char('U'));
+        assert!(
+            fx.app.message.contains("Press U again"),
+            "{}",
+            fx.app.message
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        key(&mut fx.app, KeyCode::Char('U'));
+        assert!(
+            fx.app.message.contains("1 file(s) put back"),
+            "{}",
+            fx.app.message
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(screen(&mut fx.app).contains("undid the session's changes"));
     }
 
     #[test]
@@ -3224,6 +3586,90 @@ mod tests {
                 .next()
                 .is_some()
         );
+    }
+
+    #[test]
+    fn at_completes_files_and_ctrl_p_recalls() {
+        let mut fx = fixture(&[("sm", 1)], &[]);
+        std::fs::create_dir_all(fx.dir.path().join("src")).unwrap();
+        std::fs::write(fx.dir.path().join("src/parser.rs"), "").unwrap();
+        std::fs::write(fx.dir.path().join("src/sparse.rs"), "").unwrap();
+        key(&mut fx.app, KeyCode::Char('n'));
+        typed(&mut fx.app, "look at @pars");
+        let s = screen(&mut fx.app);
+        assert!(s.contains("@src/parser.rs"), "{s}");
+        // A name that starts with it comes first.
+        assert_eq!(fx.app.suggestions()[0].label, "@src/parser.rs");
+        key(&mut fx.app, KeyCode::Tab);
+        assert_eq!(fx.app.message_box.text, "look at @src/parser.rs ");
+        key(&mut fx.app, KeyCode::Enter);
+
+        // Ctrl+P brings back what was sent; Ctrl+N goes forward to an empty box.
+        key(&mut fx.app, KeyCode::Esc);
+        key(&mut fx.app, KeyCode::Char('n'));
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        fx.app.on_key(ctrl('p')).unwrap();
+        assert_eq!(fx.app.message_box.text, "look at @src/parser.rs");
+        fx.app.on_key(ctrl('n')).unwrap();
+        assert_eq!(fx.app.message_box.text, "");
+    }
+
+    #[test]
+    fn fork_from_the_composer() {
+        let mut fx = fixture(&[("sm", 1)], &[("first task", RunState::Done, Some("s1"))]);
+        fx.app.select_session(1);
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/fork try it with a macro instead");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.app.message, "forked #1");
+        assert_eq!(
+            fx.calls.borrow().started[0],
+            [
+                "run",
+                "--json",
+                "--fork",
+                "1",
+                "--",
+                "try it with a macro instead"
+            ]
+        );
+    }
+
+    #[test]
+    fn mode_per_session() {
+        let mut fx = fixture(&[("sm", 1)], &[("first task", RunState::Done, Some("s1"))]);
+        // No session: the next new task's mode.
+        key(&mut fx.app, KeyCode::Char('n'));
+        typed(&mut fx.app, "/mode edits");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.app.message, "new tasks start in edits mode");
+        typed(&mut fx.app, "fix it");
+        key(&mut fx.app, KeyCode::Enter);
+        let started = fx.calls.borrow().started[0].clone();
+        assert_eq!(started[4..6], ["--mode", "edits"], "{started:?}");
+        // A session: stored on it, shown in its title, inherited by its follow-ups.
+        key(&mut fx.app, KeyCode::Esc);
+        fx.app.select_session(1);
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/mode ask");
+        key(&mut fx.app, KeyCode::Enter);
+        assert!(fx.app.message.contains("mode → ask"), "{}", fx.app.message);
+        assert_eq!(
+            fx.app.store.run(1).unwrap().unwrap().mode.as_deref(),
+            Some("ask")
+        );
+        assert!(screen(&mut fx.app).contains("· mode ask"));
+        typed(&mut fx.app, "/mode yolo");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.app.message, "yolo: one of ask, edits");
+    }
+
+    #[test]
+    fn context_meters() {
+        assert_eq!(context_meter(42_003, Some(200_000)), "ctx 42k/200k (21%)");
+        assert_eq!(context_meter(150_000, Some(1_000_000)), "ctx 150k/1M (15%)");
+        assert_eq!(context_meter(900, None), "ctx 900");
+        assert_eq!(context_meter(1_260_000, Some(0)), "ctx 1.3M");
     }
 
     #[test]

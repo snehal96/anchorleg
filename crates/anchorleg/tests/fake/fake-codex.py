@@ -80,7 +80,7 @@ while True:
         else:
             send({"id": msg["id"], "result": {"rateLimits": None}})
         sys.exit(0)
-    elif method in ("thread/start", "thread/resume"):
+    elif method in ("thread/start", "thread/resume", "thread/fork"):
         log = os.environ["FAKE_LOG"]
         n = 1 + sum(1 for l in open(log) if l.startswith(account + " ")) if os.path.exists(log) else 1
         script = f"{fake}/{account}.{n}.jsonl"
@@ -88,7 +88,13 @@ while True:
             script = f"{fake}/{account}.jsonl"
         script_lines = [l for l in open(script).read().splitlines() if l.strip()]
         tid = params.get("threadId")
-        if method == "thread/resume" and not rollout(tid):
+        if method == "thread/fork" and rollout(tid):
+            # A new thread with the old one's history.
+            old = rollout(tid)
+            tid = tid + "-fork"
+            with open(old) as src, open(old.replace(tid[:-5], tid), "w") as dst:
+                dst.write(src.read())
+        elif method in ("thread/resume", "thread/fork") and not rollout(tid):
             with open(log, "a") as f:
                 f.write(f"{account} {' '.join(pre_args)} thread/resume {tid} (not found)\n".replace("  ", " "))
             send({"id": msg["id"], "error": {"code": -32600, "message": f"no rollout found for thread id {tid}"}})
@@ -112,7 +118,7 @@ while True:
         turns += 1
         how, tp, tid = thread
         text = " ".join(i.get("text", "") for i in params.get("input", [])).replace("\n", " ")
-        what = how + (f" {tid}" if how == "thread/resume" else "")
+        what = how + (f" {tid}" if how in ("thread/resume", "thread/fork") else "")
         line = (
             f"{account} {' '.join(pre_args)} {what} model={tp.get('model')} "
             f"effort={params.get('effort')} sandbox={tp.get('sandbox')} "
