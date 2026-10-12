@@ -108,6 +108,8 @@ pub enum HookMode {
     /// Planning (`anchorleg run --plan`, before the plan is approved): the task's files are
     /// left alone; agy's own artifact folder (where it writes plans) stays writable.
     Plan,
+    /// Reviewing (`anchorleg review`): the same, with a reviewer's reason.
+    Review,
 }
 
 /// The env var anchorleg sets on a hook-gated agy launch: `edits`, `ask` or `plan`.
@@ -119,6 +121,7 @@ impl HookMode {
             HookMode::Edits => "edits",
             HookMode::Ask => "ask",
             HookMode::Plan => "plan",
+            HookMode::Review => "review",
         }
     }
 
@@ -126,10 +129,15 @@ impl HookMode {
         match s {
             "ask" => HookMode::Ask,
             "plan" => HookMode::Plan,
+            "review" => HookMode::Review,
             _ => HookMode::Edits,
         }
     }
 }
+
+/// What a review tells agy when it tries to change a file.
+pub const REVIEW_DENY: &str =
+    "Review only: don't change any files. Report the findings in your reply instead.";
 
 /// What the plan stage tells agy when it tries to change a file.
 pub const PLAN_DENY: &str = "Planning only: don't change the task's files yet. Investigate, \
@@ -202,6 +210,7 @@ pub fn hook_verdict_in(req: &Value, mode: HookMode) -> HookVerdict {
     if EDIT_TOOLS.contains(&name) && !notes_only {
         match mode {
             HookMode::Plan => return HookVerdict::Deny(PLAN_DENY.to_owned()),
+            HookMode::Review => return HookVerdict::Deny(REVIEW_DENY.to_owned()),
             HookMode::Ask => {
                 let path = paths.first().map(|p| p.display().to_string());
                 return HookVerdict::Ask {

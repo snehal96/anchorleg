@@ -32,7 +32,8 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg status [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
-| `anchorleg run [--follow-up RUN \| --fork RUN] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--mode ask\|edits] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
+| `anchorleg run [--follow-up RUN \| --fork RUN \| --review RUN [--cli C] [--fix]] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--mode ask\|edits] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -348,6 +349,25 @@ Write the condition as something the agent can show in the conversation (a test 
 exit code, a file count): the agent judges its own work from what it ran. Claude Code's own
 `/goal` and Codex's thread goals loop inside one CLI, and Claude's verdicts don't show in `-p`
 output, so anchorleg keeps the loop itself, the same for every CLI.
+
+### Review a session's changes: `anchorleg review`
+
+`anchorleg review 12` starts a new, read-only session that reviews what session #12 changed since
+it started (its diff, capped at 60 KB, and the task it was given), preferably on another account
+than #12's last one, so a second pair of eyes reads it. `--cli codex` (or `claude`,
+`antigravity`) picks the reviewer's CLI; `--account A` picks the account. Text after `--` is
+added to the instructions ("focus on error handling"). The reviewer lists findings as
+`- [P0|P1|P2|P3] <title> — <path>:<line>` and ends with `VERDICT: approve` or
+`VERDICT: changes requested`. `--fix` sends the findings back to #12 as a follow-up when the
+review ends: the original session fixes the ones it agrees with and says why it skips the
+others. `anchorleg run --review 12` is the same thing.
+
+The review can't change files: Codex runs it with `review/start` in the read-only sandbox,
+Claude Code in its default permission mode with Edit/Write/NotebookEdit refused and only
+read-only git commands allowed, Antigravity with its edits refused. It needs a git folder and a
+session that changed something, and refuses while #12 is working. In `anchorleg ui`,
+`/review [fix] [notes]` reviews the selected session; the review's title shows `review of #12`.
+`anchorleg sessions --json` has `review_of`.
 
 ### Plan first: `--plan`
 

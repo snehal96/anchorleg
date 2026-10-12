@@ -249,9 +249,11 @@ pub struct Run {
     /// `active`, `met`, `impossible` or `unmet`.
     pub goal: Option<String>,
     pub goal_status: Option<String>,
+    /// The session this run reviews (`anchorleg review`, D49).
+    pub review_of: Option<RunId>,
 }
 
-const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status";
+const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status, review_of";
 
 fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -269,6 +271,7 @@ fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         answer_wait: r.get(11)?,
         goal: r.get(12)?,
         goal_status: r.get(13)?,
+        review_of: r.get(14)?,
     })
 }
 
@@ -386,6 +389,9 @@ ALTER TABLE runs ADD COLUMN answer_wait INTEGER;
     r#"
 ALTER TABLE runs ADD COLUMN goal TEXT;
 ALTER TABLE runs ADD COLUMN goal_status TEXT;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN review_of INTEGER;
 "#,
 ];
 
@@ -706,6 +712,14 @@ impl Store {
         self.conn.execute(
             "UPDATE runs SET goal = ?2, goal_status = ?3 WHERE id = ?1",
             params![id, goal, status],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_run_review_of(&self, id: RunId, of: Option<RunId>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET review_of = ?2 WHERE id = ?1",
+            params![id, of],
         )?;
         Ok(())
     }

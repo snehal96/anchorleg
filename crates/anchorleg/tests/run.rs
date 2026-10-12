@@ -813,6 +813,90 @@ fn a_goal_keeps_the_session_going_until_it_is_met() {
 }
 
 #[test]
+fn a_review_reads_the_sessions_changes_on_another_account_and_can_send_fixes() {
+    let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
+    let work = env.path("work");
+    git(&work, &["init", "-q"]);
+    std::fs::write(work.join("calc.py"), "return a + b\n").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "init"]);
+    env.script("a.1.jsonl", &ok("s1", "changed it"));
+    assert_eq!(env.run(&["--account", "a"]).0, 0);
+    // What the session "did".
+    std::fs::write(work.join("calc.py"), "return a - b\n").unwrap();
+
+    env.script(
+        "c.jsonl",
+        &codex_ok(
+            "t1",
+            "- [P1] add subtracts — calc.py:1  VERDICT: changes requested",
+        ),
+    );
+    env.script("a.2.jsonl", &ok("s1", "fixed"));
+    let out = env
+        .anchorleg()
+        .args(["review", "1", "--fix", "--json"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["outcome"], "done", "{r}");
+    assert_eq!(r["accounts_used"], serde_json::json!(["c"]));
+    let launches = env.launches();
+    // On the other account, read-only, in Codex's review mode, with the diff.
+    assert!(launches[1].starts_with("c "), "{launches:?}");
+    assert!(launches[1].contains("sandbox=read-only"), "{launches:?}");
+    assert!(launches[1].contains("[review] Review the changes anchorleg session #1 made"));
+    assert!(launches[1].contains("+return a - b"), "{launches:?}");
+    // --fix: the findings go back to the reviewed session.
+    wait_launches(&env, 3);
+    let launches = env.launches();
+    assert!(launches[2].starts_with("a "), "{launches:?}");
+    assert!(launches[2].contains("--resume s1"));
+    assert!(launches[2].contains("A reviewer (c) looked at the changes"));
+    let sessions = env
+        .anchorleg()
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let list: Value = serde_json::from_slice(&sessions.stdout).unwrap();
+    let review = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == 2)
+        .unwrap();
+    assert_eq!(review["review_of"], 1, "{review}");
+
+    // On Claude, a review runs in plan mode; nothing changed → nothing to review.
+    let env = Env::new(&["a", "b"]);
+    let work = env.path("work");
+    git(&work, &["init", "-q"]);
+    std::fs::write(work.join("x"), "1\n").unwrap();
+    env.script("a.jsonl", &ok("s1", "done"));
+    env.script("b.jsonl", &ok("s2", "VERDICT: approve"));
+    assert_eq!(env.run(&["--account", "a"]).0, 0);
+    let out = env.anchorleg().args(["review", "1"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("changed nothing"));
+    std::fs::write(work.join("x"), "2\n").unwrap();
+    let out = env
+        .anchorleg()
+        .args(["review", "1", "--json"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "VERDICT: approve", "{r}");
+    let launches = env.launches();
+    assert!(launches[1].starts_with("b "), "{launches:?}");
+    // Not plan mode (Claude would answer it with a bigger model); no editing tools instead.
+    assert!(
+        launches[1].contains("--permission-mode default"),
+        "{launches:?}"
+    );
+    assert!(launches[1].contains("--disallowedTools Edit,Write,NotebookEdit"));
+}
+
+#[test]
 fn a_goal_survives_a_switch_to_another_cli() {
     let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
     env.script("a.jsonl", &limit("s1", FAR));

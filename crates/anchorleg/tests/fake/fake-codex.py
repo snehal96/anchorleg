@@ -20,6 +20,7 @@ real app server (fixtures/codex-0.153.4-app-server-*).
   in the same launch plays $FAKE_DIR/X.followup.jsonl. A script line {"fake":"wait_steer"} holds
   the turn until anchorleg sends `turn/steer` (appended to $FAKE_DIR/steers.log; the turn goes
   on) or `turn/interrupt` (the turn ends interrupted), 10 s at most.
+- `review/start`: played like `turn/start`, its instructions logged as "[review] …".
 - `thread/compact/start`: logged like a turn, answered with a `contextCompaction` item and a
   completed turn.
 """
@@ -126,9 +127,12 @@ while True:
         send({"method": "turn/started", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "inProgress"}}})
         send({"method": "item/completed", "params": {"threadId": tid, "item": {"type": "contextCompaction", "id": "cc1"}}})
         send({"method": "turn/completed", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "completed", "error": None}}})
-    elif method == "turn/start":
+    elif method in ("turn/start", "review/start"):
         turns += 1
         how, tp, tid = thread
+        if method == "review/start":
+            # Codex's review mode: logged like a turn, with "[review]" before the instructions.
+            params = {"input": [{"type": "text", "text": "[review] " + params["target"]["instructions"]}]}
         text = " ".join(i.get("text", "") for i in params.get("input", [])).replace("\n", " ")
         what = how + (f" {tid}" if how in ("thread/resume", "thread/fork") else "")
         line = (

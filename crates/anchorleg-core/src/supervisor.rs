@@ -88,6 +88,15 @@ pub struct RunOptions {
     /// Keep the session going until this holds (D48), for at most `goal_turns` turns.
     pub goal: Option<String>,
     pub goal_turns: u32,
+    /// A review (`anchorleg review`, D49): read-only on every CLI, and Codex runs it in its
+    /// review mode.
+    pub review: bool,
+    /// The session under review, recorded on the run.
+    pub review_of: Option<i64>,
+    /// Start on another account than this one when one has room (a second opinion).
+    pub avoid: Option<String>,
+    /// Only accounts of this CLI.
+    pub vendor: Option<Vendor>,
 }
 
 /// How much the agent may do without asking, for one session (D41). Claude maps it to its
@@ -175,6 +184,10 @@ impl RunOptions {
             answer_wait: None,
             goal: None,
             goal_turns: crate::goal::DEFAULT_TURNS,
+            review: false,
+            review_of: None,
+            avoid: None,
+            vendor: None,
         }
     }
 }
@@ -266,6 +279,11 @@ pub const CONTINUE_PROMPT: &str = "Continue from where you stopped.";
 const PLAN_NOTE: &str = "Plan only for now: don't change any files. Investigate as needed, \
      then end your reply with the complete plan. anchorleg will ask me to approve it; you'll \
      get my answer as the next message.";
+
+/// A Claude review can't edit, and may read the history without asking.
+const REVIEW_DENIED_TOOLS: &str = "Edit,Write,NotebookEdit";
+const REVIEW_ALLOWED_TOOLS: &str =
+    "Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *),Bash(git status)";
 
 /// The message that ends planning.
 const PLAN_APPROVED: &str =
@@ -391,6 +409,9 @@ impl Supervisor<'_> {
             self.store
                 .set_run_goal(run_id, Some(g), Some(goal::Status::Active.name()))?;
         }
+        if opts.review_of.is_some() {
+            self.store.set_run_review_of(run_id, opts.review_of)?;
+        }
         // The folder as the run found it, so the session's own changes can be shown (D40).
         if let Err(e) = crate::checkpoint::save_start(&opts.cwd, run_id) {
             tracing::warn!(%e, "couldn't save the run's start");
@@ -422,6 +443,7 @@ impl Supervisor<'_> {
                 .clone()
                 .or_else(|| opts.follow_up.as_ref().map(|f| f.account.clone())),
             only: opts.only.clone(),
+            vendor: opts.vendor,
             ..PickOptions::default()
         };
         let mut current: Option<&Account> = None;
@@ -504,9 +526,28 @@ impl Supervisor<'_> {
                     }
                 };
 
+            // A review starts on another account than the session's when one has room.
+            let avoided = match (current, &opts.avoid) {
+                (None, Some(avoid)) => {
+                    let other = PickOptions {
+                        exclude: vec![avoid.clone()],
+                        ..pick_opts.clone()
+                    };
+                    match policy::pick(&ordered, &quota, self.now(), &other) {
+                        p @ Pick::Use {
+                            reason: policy::PickReason::Available,
+                            ..
+                        } => Some(p),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
             let account = match soft_choice {
                 Some(account) => account,
-                None => match policy::pick(&ordered, &quota, self.now(), &pick_opts) {
+                None => match avoided
+                    .unwrap_or_else(|| policy::pick(&ordered, &quota, self.now(), &pick_opts))
+                {
                     Pick::Use { account, reason } => {
                         if reason == policy::PickReason::Credits {
                             picked_for_credits = true;
@@ -1047,15 +1088,33 @@ impl Supervisor<'_> {
             // An exec-only flag `codex app-server` rejects; anchorleg's defaults do the same.
             launch.args.retain(|a| a != "--full-auto");
         }
+        // Planning and reviewing change nothing.
+        let read_only = plan || opts.review;
         if account.vendor == Vendor::Claude {
-            // Plan mode, then the session's own mode, replace the settings' permission mode.
-            let mode = if plan {
+            // Plan mode, then the session's own mode, replace the settings' permission mode. A
+            // review isn't a plan: Claude Code answers plan mode with a bigger model than the
+            // one picked (Sonnet for Haiku, seen on 2.1.296), so it runs in the normal mode with
+            // the editing tools taken away and read-only git commands allowed.
+            let mode = if opts.review {
+                Some("default")
+            } else if read_only {
                 Some("plan")
             } else {
                 opts.mode.map(Mode::claude)
             };
             if let Some(m) = mode {
                 launch.args = with_claude_mode(std::mem::take(&mut launch.args), m);
+            }
+            if opts.review {
+                launch.args.extend(
+                    [
+                        "--disallowedTools",
+                        REVIEW_DENIED_TOOLS,
+                        "--allowedTools",
+                        REVIEW_ALLOWED_TOOLS,
+                    ]
+                    .map(str::to_owned),
+                );
             }
         }
         // Claude's plan mode can't end with its ExitPlanMode tool in `-p`, and agy has no plan
@@ -1064,7 +1123,7 @@ impl Supervisor<'_> {
         let prompt = if plan && account.vendor != Vendor::Codex {
             planned = format!("{prompt}\n\n{PLAN_NOTE}");
             planned.as_str()
-        } else if !plan && let Some(g) = &opts.goal {
+        } else if !read_only && let Some(g) = &opts.goal {
             // Every goal turn is told the goal, so it holds on any account or CLI (D48).
             planned = format!("{prompt}\n\n{}", goal::note(g));
             planned.as_str()
@@ -1098,7 +1157,9 @@ impl Supervisor<'_> {
                 // The hook keeps the task's files alone while planning and asks before edits in
                 // `--mode ask` (agy's own `--mode plan` goes on to carry the plan out once
                 // permissions are skipped; seen on 1.3.3).
-                let mode = if plan {
+                let mode = if opts.review {
+                    agy::HookMode::Review
+                } else if plan {
                     agy::HookMode::Plan
                 } else if opts.mode == Some(Mode::Ask) {
                     agy::HookMode::Ask
@@ -1117,7 +1178,7 @@ impl Supervisor<'_> {
             if !gated && !agy::sets_mode(&launch.args) {
                 // Without the hook, agy's own plan mode keeps the files as they are: in `-p` it
                 // reads, writes its plan and has its edits refused (seen on 1.3.3).
-                if plan {
+                if read_only {
                     cmd.args(["--mode", "plan"]);
                 } else {
                     cmd.args(agy::ACCEPT_EDITS);
@@ -1162,7 +1223,7 @@ impl Supervisor<'_> {
                     .clone()
                     .or_else(|| shared.and_then(|s| s.model.clone())),
                 effort: shared.and_then(|s| s.effort.clone()),
-                sandbox: if plan {
+                sandbox: if read_only {
                     Some("read-only".to_owned())
                 } else {
                     (!codex::sets_sandbox(args)).then(|| "workspace-write".to_owned())
@@ -1187,6 +1248,7 @@ impl Supervisor<'_> {
                         .collect(),
                 },
                 plan,
+                review: opts.review,
                 fork,
             });
         } else {

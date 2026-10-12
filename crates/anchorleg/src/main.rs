@@ -24,7 +24,27 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Run a task, switching accounts when one runs out.
-    Run(RunArgs),
+    Run(Box<RunArgs>),
+    /// Review the changes a session made, read-only, on another account (a second opinion):
+    /// `anchorleg run --review RUN`. Extra instructions after `--`.
+    Review {
+        run: i64,
+        /// Only use accounts of this CLI: claude, codex or antigravity.
+        #[arg(long, value_parser = ["claude", "codex", "antigravity"])]
+        cli: Option<String>,
+        /// Only use this account.
+        #[arg(long, value_name = "ACCOUNT")]
+        account: Option<String>,
+        /// Send the findings to the reviewed session to fix.
+        #[arg(long)]
+        fix: bool,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        no_wait: bool,
+        #[arg(last = true)]
+        extra: Vec<String>,
+    },
     /// Show quota and blocked state for every account.
     Status {
         #[arg(long)]
@@ -215,8 +235,20 @@ pub struct RunArgs {
     /// At most this many turns toward the goal (default 10); then the run fails as unmet.
     #[arg(long, value_name = "N")]
     pub goal_turns: Option<u32>,
+    /// Review the changes this run's session made, read-only, on another account when one has
+    /// room (a second opinion). The task after `--`, if any, adds to the review's instructions.
+    #[arg(long, value_name = "RUN",
+          conflicts_with_all = ["follow_up", "fork", "worktree", "plan", "goal"])]
+    pub review: Option<i64>,
+    /// Only use accounts of this CLI: claude, codex or antigravity.
+    #[arg(long, value_parser = ["claude", "codex", "antigravity"])]
+    pub cli: Option<String>,
+    /// With `--review`: once the review is in, send its findings to the reviewed session, which
+    /// fixes the ones it agrees with.
+    #[arg(long, requires = "review")]
+    pub fix: bool,
     /// The task, after `--`.
-    #[arg(last = true, required_unless_present = "goal")]
+    #[arg(last = true, required_unless_present_any = ["goal", "review"])]
     pub prompt: Vec<String>,
 }
 
@@ -316,8 +348,48 @@ fn main() -> ExitCode {
         Command::Sessions { json, limit } => status::sessions(json, limit),
         Command::Usage { since, json } => usage::run(since, json),
         Command::Report { json: _ } => status::report(),
+        Command::Review {
+            run,
+            cli,
+            account,
+            fix,
+            json,
+            no_wait,
+            extra,
+        } => {
+            let mut argv = vec![
+                "anchorleg".to_owned(),
+                "run".to_owned(),
+                "--review".to_owned(),
+                run.to_string(),
+            ];
+            for (flag, value) in [("--cli", cli), ("--account", account)] {
+                if let Some(v) = value {
+                    argv.extend([flag.to_owned(), v]);
+                }
+            }
+            for (flag, on) in [("--fix", fix), ("--json", json), ("--no-wait", no_wait)] {
+                if on {
+                    argv.push(flag.to_owned());
+                }
+            }
+            if !extra.is_empty() {
+                argv.push("--".to_owned());
+                argv.extend(extra);
+            }
+            let Command::Run(args) = Cli::parse_from(argv).command else {
+                unreachable!("parsed as run");
+            };
+            return match run::run(*args) {
+                Ok(report) => ExitCode::from(report.outcome.exit_code()),
+                Err(e) => {
+                    eprintln!("anchorleg: {e:#}");
+                    ExitCode::from(exit::FAILED)
+                }
+            };
+        }
         Command::Run(args) => {
-            return match run::run(args) {
+            return match run::run(*args) {
                 Ok(report) => ExitCode::from(report.outcome.exit_code()),
                 Err(e) => {
                     eprintln!("anchorleg: {e:#}");

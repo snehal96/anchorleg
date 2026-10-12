@@ -50,6 +50,9 @@ pub struct Turn {
     pub images: Vec<String>,
     /// Plan only: Codex's plan collaboration mode (experimental API), read-only sandbox.
     pub plan: bool,
+    /// A review: the first turn is Codex's review mode (`review/start`) with the prompt as its
+    /// instructions.
+    pub review: bool,
     /// Fork `resume` into a new thread (`thread/fork`) instead of continuing it.
     pub fork: bool,
 }
@@ -156,6 +159,19 @@ pub fn turn_request(id: i64, thread: &str, text: &str, effort: Option<&str>) -> 
         params["effort"] = e.into();
     }
     json!({ "id": id, "method": "turn/start", "params": params })
+}
+
+/// `review/start` on the thread, inline, with `instructions` as a custom target.
+pub fn review_request(id: i64, thread: &str, instructions: &str) -> Value {
+    json!({
+        "id": id,
+        "method": "review/start",
+        "params": {
+            "threadId": thread,
+            "target": { "type": "custom", "instructions": instructions },
+            "delivery": "inline",
+        },
+    })
 }
 
 /// `thread/compact/start`: Codex summarises the thread so far to free its context.
@@ -786,6 +802,11 @@ where
             // Codex's own `/compact`: summarise the thread to free context, as a turn.
             return compact_request(id, thread);
         }
+        if turn.review && id == TURN {
+            // Codex's review mode; it streams like a turn and ends with the findings as the
+            // agent's message (0.153.4).
+            return review_request(id, thread, text);
+        }
         let r = turn_request(id, thread, text, turn.effort.as_deref());
         match (turn.plan, model) {
             (true, Some(m)) => with_plan_mode(r, m, turn.effort.as_deref()),
@@ -1378,6 +1399,7 @@ mod tests {
             stop_at: 0.9,
             images: Vec::new(),
             plan: false,
+            review: false,
             fork: false,
         };
         let r = thread_request(&turn);

@@ -8,7 +8,7 @@ use anchorleg_core::attachments;
 use anchorleg_core::notify::{self, Kind, Notice, NotifySettings};
 use anchorleg_core::output::SCHEMA;
 use anchorleg_core::output::{Outcome, RunReport};
-use anchorleg_core::registry::{Config, Keychain};
+use anchorleg_core::registry::{Config, Keychain, Vendor};
 use anchorleg_core::store::{RunState, Store};
 use anchorleg_core::supervisor::{FollowUp, Progress, Quiet, RunOptions, Supervisor};
 
@@ -47,6 +47,42 @@ impl Progress for Notifying<'_> {
     }
 }
 
+/// How much of a session's diff goes into the review prompt; beyond it the reviewer reads the
+/// rest with git.
+const REVIEW_DIFF_CAP: usize = 60 * 1024;
+
+/// What a reviewer is asked: the session's task and its diff since the session started.
+fn review_prompt(id: i64, first: i64, diff: &str, extra: &str) -> String {
+    let start = anchorleg_core::checkpoint::start_ref(first);
+    let shown = if diff.len() > REVIEW_DIFF_CAP {
+        let mut cut = REVIEW_DIFF_CAP;
+        while !diff.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!(
+            "{}\n… (cut; run `git diff {start}` for the rest)",
+            &diff[..cut]
+        )
+    } else {
+        diff.to_owned()
+    };
+    let extra = if extra.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\nAlso: {}\n", extra.trim())
+    };
+    format!(
+        "Review the changes anchorleg session #{id} made in this folder (its diff since it \
+         started is below; `git diff {start}` shows it too). Don't change any files, and \
+         you don't need commands beyond reading files and git diff/log/show/status (run each git \
+         command on its own, not chained, so nobody has to approve it).\n\
+         Look for bugs, regressions, missing tests and risky changes. List each finding as \
+         `- [P0|P1|P2|P3] <title> — <path>:<line>` with a short explanation and the fix; P0 is \
+         the worst. Skip style nits. End with one line: `VERDICT: approve` or \
+         `VERDICT: changes requested`.\n{extra}\n```diff\n{shown}\n```"
+    )
+}
+
 /// Run the task; returns the report so `main` can pick the exit code.
 pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let config = Config::load(&Config::default_path()?)?;
@@ -63,6 +99,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         ),
         None => None,
     };
+    let cwd_given = args.cwd.is_some();
     let mut cwd = match (args.cwd, &parent) {
         (Some(dir), _) => dir,
         (None, Some(p)) => PathBuf::from(&p.cwd),
@@ -96,12 +133,52 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
             })
             .and_then(|p| p.goal.clone())
     });
-    let task = match (args.prompt.join(" "), &goal) {
-        (t, Some(g)) if t.trim().is_empty() => g.clone(),
-        (t, _) => t,
+    // `--review RUN`: the session's changes, read-only, on another account (D49).
+    let reviewed = match args.review {
+        Some(id) => {
+            let r = store
+                .run(id)?
+                .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+            if matches!(r.state, RunState::Running | RunState::Waiting)
+                && r.pid.is_some_and(pid_alive)
+            {
+                anyhow::bail!("#{id} is still working; review it once it's done");
+            }
+            if !cwd_given {
+                cwd = PathBuf::from(&r.cwd);
+            }
+            let chain = store.session_runs(id)?;
+            let diff = match anchorleg_core::checkpoint::session_diff(&cwd, &chain, false)? {
+                Some(d) if d.trim().is_empty() => anyhow::bail!("#{id}'s session changed nothing"),
+                Some(d) => d,
+                None => anyhow::bail!(
+                    "nothing to review: {} isn't a git repository, or #{id}'s session started \
+                     before anchorleg recorded starts",
+                    r.cwd
+                ),
+            };
+            let first = chain.iter().min().copied().unwrap_or(id);
+            Some((r, review_prompt(id, first, &diff, &args.prompt.join(" "))))
+        }
+        None => None,
+    };
+    let task = match (args.prompt.join(" "), &goal, &reviewed) {
+        (_, _, Some((_, prompt))) => prompt.clone(),
+        (t, Some(g), _) if t.trim().is_empty() => g.clone(),
+        (t, _, _) => t,
     };
     let mut opts = RunOptions::new(attachments::with_note(&task, &staged), &cwd);
     opts.goal = goal;
+    opts.vendor = args.cli.as_deref().map(|c| match c {
+        "codex" => Vendor::Codex,
+        "antigravity" => Vendor::Antigravity,
+        _ => Vendor::Claude,
+    });
+    if let Some((r, _)) = &reviewed {
+        opts.review = true;
+        opts.review_of = Some(r.id);
+        opts.avoid = r.account.clone();
+    }
     if let Some(n) = args.goal_turns {
         opts.goal_turns = n.max(1);
     }
@@ -228,6 +305,41 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
             &config.notify,
             &Notice::new(kind, report.run_id, &title, &format!("{id}{what}: {text}")),
         );
+    }
+
+    // `--fix`: the reviewed session gets the findings, in a follow-up of its own.
+    if args.fix
+        && report.outcome == Outcome::Done
+        && let (Some((r, _)), Some(findings)) = (&reviewed, &report.result)
+    {
+        let text = format!(
+            "A reviewer ({}) looked at the changes this session made. Its findings:\n\n{findings}\n\n\
+             Fix the ones you agree with; for each one you skip, say why.",
+            report
+                .accounts_used
+                .last()
+                .map_or("another account", String::as_str)
+        );
+        let mut cmd = std::process::Command::new(std::env::current_exe()?);
+        cmd.args([
+            "run",
+            "--json",
+            "--follow-up",
+            &r.id.to_string(),
+            "--",
+            &text,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+        {
+            use std::os::unix::process::CommandExt as _;
+            cmd.process_group(0);
+        }
+        cmd.spawn()?;
+        if !args.json {
+            eprintln!("anchorleg: sent the findings to #{} to fix", r.id);
+        }
     }
 
     if args.json {

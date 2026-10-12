@@ -10,6 +10,9 @@ All notable changes are listed here. The format follows
 - `anchorleg run --goal "<condition>" [--goal-turns N]` (`/goal` in `anchorleg ui`): the session
   keeps working, turn after turn, until the agent shows the condition holds, across accounts and
   CLIs. The JSON report and `sessions --json` show the goal and its status.
+- `anchorleg review <run> [--cli C] [--fix]` (`/review` in `anchorleg ui`): a read-only session,
+  preferably on another account or CLI, reviews what a session changed and lists findings with a
+  verdict; `--fix` sends them back to the session to fix.
 - Homebrew tap (in progress).
 
 ## [0.4.0] — 2026-10-12

@@ -761,6 +761,10 @@ impl App {
                 "goal",
                 "anchorleg: keep working until a condition holds".to_owned(),
             ),
+            (
+                "review",
+                "anchorleg: review this session's changes on another account".to_owned(),
+            ),
         ];
         own.into_iter()
             .map(|(n, d)| (n.to_owned(), d))
@@ -1229,6 +1233,7 @@ impl App {
                     | "clear"
                     | "compact"
                     | "goal"
+                    | "review"
             )
         {
             let cmd = rest.split(' ').next().unwrap_or("");
@@ -1255,6 +1260,38 @@ impl App {
             .filter(|a| a.is_empty() || a.starts_with(' '))
         {
             return self.set_mode(arg.trim());
+        }
+        // `/review [fix] [notes]`: the selected session's changes, reviewed read-only on another
+        // account (`anchorleg review`); `fix` sends the findings back to it.
+        if let Some(rest) = text
+            .strip_prefix("/review")
+            .filter(|r| r.is_empty() || r.starts_with(' '))
+        {
+            let Some(run) = self.selected_run().cloned() else {
+                self.message = "select the session to review first".to_owned();
+                return Ok(());
+            };
+            if Self::is_running(&run) && self.is_alive(&run) {
+                self.message = format!("#{} is working; review it once it's done", run.id);
+                return Ok(());
+            }
+            let rest = rest.trim();
+            let (fix, notes) = match rest.strip_prefix("fix") {
+                Some(n) if n.is_empty() || n.starts_with(' ') => (true, n.trim()),
+                _ => (false, rest),
+            };
+            let mut args = vec!["review".to_owned(), run.id.to_string(), "--json".to_owned()];
+            if fix {
+                args.push("--fix".to_owned());
+            }
+            if !notes.is_empty() {
+                args.extend(["--".to_owned(), notes.to_owned()]);
+            }
+            let pid = self.launcher.start(&args)?;
+            self.pending_pid = Some(i64::from(pid));
+            self.message_box = TextBox::default();
+            self.message = format!("reviewing #{}", run.id);
+            return self.refresh();
         }
         // `/fork <message>`: a new session from the selected one's history.
         if let Some(message) = text.strip_prefix("/fork ") {
@@ -2162,6 +2199,8 @@ impl App {
                     + &r.goal_status
                         .as_deref()
                         .map_or(String::new(), |g| format!(" · ◎ goal {g}"))
+                    + &r.review_of
+                        .map_or(String::new(), |id| format!(" · review of #{id}"))
                     + &self.context.map_or(String::new(), |(n, w)| format!(
                         " · {}",
                         context_meter(n, w)
@@ -2831,6 +2870,7 @@ fn draw_help(f: &mut Frame) {
         "                    /worktree <task>  new task in its own git worktree · /fork <msg>  branch the session",
         "                    /clear  new session in this folder · /compact  free the session's context",
         "                    /goal <condition>  keep working until it holds (new task or the session)",
+        "                    /review [fix]  review the session's changes on another account (fix: send findings back)",
         "                    /other  the CLI's own commands; Tab completes, ↑↓ choose",
         "                    Ctrl+A/E start/end · Ctrl+U clear",
         "                    @file  complete a file of the task folder (Tab) · Ctrl+P/N or ↑ earlier messages",
@@ -2978,7 +3018,10 @@ fn message_lines(m: &Message, width: usize) -> Vec<Line<'static>> {
 /// A tool's output under its call: `⎿` before the first line, each line cut to the width.
 /// Slash commands anchorleg lists itself, ahead of the CLI's.
 fn own_command(name: &str) -> bool {
-    matches!(name, "model" | "effort" | "clear" | "compact" | "goal")
+    matches!(
+        name,
+        "model" | "effort" | "clear" | "compact" | "goal" | "review"
+    )
 }
 
 fn output_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -3377,6 +3420,31 @@ mod tests {
                 ""
             ]
         );
+    }
+
+    #[test]
+    fn slash_review_reviews_the_selected_session() {
+        let mut fx = fixture(
+            &[("sm", 1)],
+            &[("fix the tests", RunState::Done, Some("s1"))],
+        );
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/review fix check the error paths");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(
+            fx.calls.borrow().started[0],
+            [
+                "review",
+                "1",
+                "--json",
+                "--fix",
+                "--",
+                "check the error paths"
+            ]
+        );
+        typed(&mut fx.app, "/review");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.calls.borrow().started[1], ["review", "1", "--json"]);
     }
 
     #[test]
