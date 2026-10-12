@@ -7,6 +7,9 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- `anchorleg run --goal "<condition>" [--goal-turns N]` (`/goal` in `anchorleg ui`): the session
+  keeps working, turn after turn, until the agent shows the condition holds, across accounts and
+  CLIs. The JSON report and `sessions --json` show the goal and its status.
 - Homebrew tap (in progress).
 
 ## [0.4.0] — 2026-10-12

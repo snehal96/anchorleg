@@ -757,6 +757,10 @@ impl App {
                 "compact",
                 "summarise the session to free context".to_owned(),
             ),
+            (
+                "goal",
+                "anchorleg: keep working until a condition holds".to_owned(),
+            ),
         ];
         own.into_iter()
             .map(|(n, d)| (n.to_owned(), d))
@@ -1216,7 +1220,15 @@ impl App {
             && self.provider() == Vendor::Codex
             && !matches!(
                 rest.split(' ').next().unwrap_or(""),
-                "model" | "effort" | "mode" | "fork" | "plan" | "worktree" | "clear" | "compact"
+                "model"
+                    | "effort"
+                    | "mode"
+                    | "fork"
+                    | "plan"
+                    | "worktree"
+                    | "clear"
+                    | "compact"
+                    | "goal"
             )
         {
             let cmd = rest.split(' ').next().unwrap_or("");
@@ -1268,6 +1280,14 @@ impl App {
             self.message = format!("forked #{}", run.id);
             return self.refresh();
         }
+        if text.starts_with("/goal ")
+            && let Some(r) = self.selected_run()
+            && Self::is_running(r)
+            && self.is_alive(r)
+        {
+            self.message = format!("#{} is working; set the goal once it's done", r.id);
+            return Ok(());
+        }
         let mut args = vec!["run".to_owned(), "--json".to_owned()];
         match self.selected_run() {
             None => {
@@ -1300,6 +1320,12 @@ impl App {
         }
         if new_task && let Some(m) = &self.new_mode {
             args.extend(["--mode".to_owned(), m.clone()]);
+        }
+        // `/goal <condition>`: keep the session working until it holds (`anchorleg run --goal`);
+        // the condition is the task too.
+        if let Some(cond) = text.strip_prefix("/goal ") {
+            args.extend(["--goal".to_owned(), cond.trim().to_owned()]);
+            text = String::new();
         }
         // `/plan <task>`: plan first, approve, then carry it out (`anchorleg run --plan`).
         // `/worktree <task>`: in a git worktree of its own. Both may be given.
@@ -2133,6 +2159,9 @@ impl App {
                 r.mode
                     .as_deref()
                     .map_or(String::new(), |m| format!(" · mode {m}"))
+                    + &r.goal_status
+                        .as_deref()
+                        .map_or(String::new(), |g| format!(" · ◎ goal {g}"))
                     + &self.context.map_or(String::new(), |(n, w)| format!(
                         " · {}",
                         context_meter(n, w)
@@ -2801,6 +2830,7 @@ fn draw_help(f: &mut Frame) {
         "                    /mode ask|edits  the session's permission mode (no session: new tasks')",
         "                    /worktree <task>  new task in its own git worktree · /fork <msg>  branch the session",
         "                    /clear  new session in this folder · /compact  free the session's context",
+        "                    /goal <condition>  keep working until it holds (new task or the session)",
         "                    /other  the CLI's own commands; Tab completes, ↑↓ choose",
         "                    Ctrl+A/E start/end · Ctrl+U clear",
         "                    @file  complete a file of the task folder (Tab) · Ctrl+P/N or ↑ earlier messages",
@@ -2948,7 +2978,7 @@ fn message_lines(m: &Message, width: usize) -> Vec<Line<'static>> {
 /// A tool's output under its call: `⎿` before the first line, each line cut to the width.
 /// Slash commands anchorleg lists itself, ahead of the CLI's.
 fn own_command(name: &str) -> bool {
-    matches!(name, "model" | "effort" | "clear" | "compact")
+    matches!(name, "model" | "effort" | "clear" | "compact" | "goal")
 }
 
 fn output_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
@@ -3315,6 +3345,38 @@ mod tests {
         key(&mut fx.app, KeyCode::Enter);
         assert!(fx.calls.borrow().started.is_empty());
         assert_eq!(fx.app.message, "no such folder: /repo");
+    }
+
+    #[test]
+    fn slash_goal_starts_a_task_or_sets_the_sessions_goal() {
+        let mut fx = fixture(&[("sm", 1)], &[]);
+        key(&mut fx.app, KeyCode::Char('n'));
+        typed(&mut fx.app, "/goal cargo test passes");
+        key(&mut fx.app, KeyCode::Enter);
+        let started = fx.calls.borrow().started.clone();
+        assert_eq!(started[0][4..], ["--goal", "cargo test passes", "--", ""]);
+
+        let mut fx = fixture(
+            &[("sm", 1)],
+            &[("fix the tests", RunState::Done, Some("s1"))],
+        );
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/goal lint is clean");
+        key(&mut fx.app, KeyCode::Enter);
+        let started = fx.calls.borrow().started.clone();
+        assert_eq!(
+            started[0],
+            [
+                "run",
+                "--json",
+                "--follow-up",
+                "1",
+                "--goal",
+                "lint is clean",
+                "--",
+                ""
+            ]
+        );
     }
 
     #[test]

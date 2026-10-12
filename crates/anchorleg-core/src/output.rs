@@ -174,6 +174,19 @@ pub struct RunReport {
     pub switches: Vec<Switch>,
     /// Set when `outcome` is `all_blocked`: the earliest time an account frees up.
     pub wait_until: Option<EpochSecs>,
+    /// The run's goal and how it ended (`anchorleg run --goal`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<GoalReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GoalReport {
+    pub condition: String,
+    pub status: crate::goal::Status,
+    /// Turns spent on it in this run.
+    pub turns: u32,
+    /// The agent's last word on it.
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

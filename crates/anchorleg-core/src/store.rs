@@ -245,9 +245,13 @@ pub struct Run {
     /// How long a question or approval waits for the person (seconds) before the agent goes on
     /// without an answer; `None`: anchorleg's default.
     pub answer_wait: Option<i64>,
+    /// The condition the session works toward (`anchorleg run --goal`, D48), and how it stands:
+    /// `active`, `met`, `impossible` or `unmet`.
+    pub goal: Option<String>,
+    pub goal_status: Option<String>,
 }
 
-const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait";
+const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status";
 
 fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -263,6 +267,8 @@ fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         pid: r.get(9)?,
         mode: r.get(10)?,
         answer_wait: r.get(11)?,
+        goal: r.get(12)?,
+        goal_status: r.get(13)?,
     })
 }
 
@@ -376,6 +382,10 @@ ALTER TABLE runs ADD COLUMN mode TEXT;
 "#,
     r#"
 ALTER TABLE runs ADD COLUMN answer_wait INTEGER;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN goal TEXT;
+ALTER TABLE runs ADD COLUMN goal_status TEXT;
 "#,
 ];
 
@@ -688,6 +698,14 @@ impl Store {
         self.conn.execute(
             "UPDATE runs SET answer_wait = ?2 WHERE id = ?1",
             params![id, secs],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_run_goal(&self, id: RunId, goal: Option<&str>, status: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET goal = ?2, goal_status = ?3 WHERE id = ?1",
+            params![id, goal, status],
         )?;
         Ok(())
     }

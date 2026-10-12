@@ -417,6 +417,8 @@ pub struct Handoff<'a> {
     pub checkpoint: Option<&'a str>,
     /// The agents' own notes from the previous `TASK.md`.
     pub notes: Option<&'a str>,
+    /// The condition the session works toward (`anchorleg run --goal`).
+    pub done_when: Option<&'a str>,
 }
 
 const MAX_COMMANDS: usize = 15;
@@ -447,6 +449,15 @@ pub fn render(h: &Handoff) -> String {
                 }
             }
         }
+    }
+
+    if let Some(cond) = h.done_when {
+        s += &format!(
+            "\n## Done when\n\n{}\n\nKeep working until this holds, and prove it in the \
+             conversation. End each reply with `GOAL: MET — …`, `GOAL: NOT MET — …` or \
+             `GOAL: IMPOSSIBLE — …`.\n",
+            cond.trim()
+        );
     }
 
     let t = h.transcript;
@@ -766,6 +777,7 @@ mod tests {
             git_status: Some(" M src/a.rs\n"),
             checkpoint: Some("refs/anchorleg/run-3/1"),
             notes: None,
+            done_when: None,
         });
         insta::assert_snapshot!(md);
         assert_eq!(notes_of(&md), None);
@@ -791,6 +803,7 @@ mod tests {
                 git_status: None,
                 checkpoint: None,
                 notes,
+                done_when: None,
             })
         };
         let path = write(dir.path(), h).unwrap();

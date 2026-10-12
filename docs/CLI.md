@@ -32,7 +32,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg status [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
-| `anchorleg run [--follow-up RUN \| --fork RUN] [--worktree [NAME]] [--cwd DIR] [--plan] [--mode ask\|edits] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--mode ask\|edits] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -324,6 +324,30 @@ are the same there. On an Antigravity account with its own `HOME`, `--mode ask` 
 anchorleg's hook ask before every change to the task's files; on your own `HOME` (no hook) agy
 accepts edits either way. In `anchorleg ui`, `/mode edits` sets the selected session's mode (from its next
 message) or, with no session selected, the mode new tasks start in; the conversation title shows it.
+
+### Work toward a goal: `--goal`
+
+`anchorleg run --goal "cargo test passes" -- "migrate the auth module to the new API"` keeps the
+session working until the condition holds. With no task after `--`, the goal is the task. Every
+turn is told the goal and ends its reply with one line:
+
+- `GOAL: MET — <evidence>`: the run ends, done.
+- `GOAL: NOT MET — <what is left>` (or no `GOAL:` line): anchorleg continues the same session
+  with "The goal isn't met yet (<what is left>)", on whichever account it is on by then.
+- `GOAL: IMPOSSIBLE — <why>`: the run ends, failed.
+
+`--goal-turns N` (default 10) caps the turns; out of turns, the run fails with the goal `unmet`.
+The goal is part of the session, not of one account: a switch to another account or another
+CLI carries it (the handoff's **Done when** section, and the note on every turn), and a
+follow-up of a session whose goal isn't met keeps working toward it. The JSON report has
+`goal: {condition, status, turns, reason}`; `anchorleg sessions --json` has `goal` and
+`goal_status`. In `anchorleg ui`, `/goal <condition>` starts a new task with that goal, or sets it
+on the selected session (once it isn't working); the title shows `◎ goal <status>`.
+
+Write the condition as something the agent can show in the conversation (a test run, a build's
+exit code, a file count): the agent judges its own work from what it ran. Claude Code's own
+`/goal` and Codex's thread goals loop inside one CLI, and Claude's verdicts don't show in `-p`
+output, so anchorleg keeps the loop itself, the same for every CLI.
 
 ### Plan first: `--plan`
 

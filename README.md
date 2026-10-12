@@ -71,6 +71,9 @@ watches every account's quota, and when one gets close to its limit it:
 - **Tells you when it needs you.** A desktop notification when a session waits for an answer,
   finishes, fails or switches accounts; `anchorleg notify --command …` sends the same to your own
   script (a chat bot, a phone push).
+- **Work toward a goal.** `--goal "cargo test passes"` (or `/goal` in the UI): the session keeps
+  going, turn after turn, until the agent shows the condition holds, even when it moves to another
+  account or another CLI on the way.
 - **Plan first.** `--plan` (or `/plan` in the UI): the agent plans in Claude's or Codex's plan
   mode, you approve or say what to change, then the same session carries it out.
 - **The agent can ask you.** When Claude or Codex needs a decision, the question and its options
@@ -225,6 +228,7 @@ anchorleg usage                     # tokens and API-price cost per account and 
 anchorleg send 12 -- "also update the docs"   # message a working session (--interrupt: now)
 anchorleg run --attach error.png -- "fix this crash"   # attach images or files (also on send)
 anchorleg run --plan -- "split the auth module"         # plan first; approve, then it runs
+anchorleg run --goal "cargo test passes" -- "migrate to the new API"   # keep going until it holds
 anchorleg run --worktree -- "try the new parser"        # in a git worktree of its own
 anchorleg run --fork 12 -- "now try it with a macro"    # a new session from #12's history
 anchorleg stop 12                   # stop a session and its CLI

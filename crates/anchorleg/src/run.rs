@@ -84,10 +84,27 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     }
 
     let staged = attachments::stage(&cwd, &args.attach, now())?;
-    let mut opts = RunOptions::new(
-        attachments::with_note(&args.prompt.join(" "), &staged),
-        &cwd,
-    );
+    // An unmet goal carries on into the session's follow-ups (D48).
+    let goal = args.goal.clone().or_else(|| {
+        parent
+            .as_ref()
+            .filter(|p| {
+                p.goal_status
+                    .as_deref()
+                    .and_then(anchorleg_core::goal::Status::parse)
+                    .is_some_and(anchorleg_core::goal::Status::open)
+            })
+            .and_then(|p| p.goal.clone())
+    });
+    let task = match (args.prompt.join(" "), &goal) {
+        (t, Some(g)) if t.trim().is_empty() => g.clone(),
+        (t, _) => t,
+    };
+    let mut opts = RunOptions::new(attachments::with_note(&task, &staged), &cwd);
+    opts.goal = goal;
+    if let Some(n) = args.goal_turns {
+        opts.goal_turns = n.max(1);
+    }
     opts.images = staged
         .iter()
         .filter(|p| attachments::is_image(p))
@@ -305,6 +322,7 @@ fn stopped(
             .collect(),
         switches: Vec::new(),
         wait_until: None,
+        goal: None,
     })
 }
 

@@ -8,6 +8,7 @@ pub mod anchorleg_mod;
 pub mod attachments;
 pub mod checkpoint;
 pub mod conversation;
+pub mod goal;
 pub mod handoff;
 pub mod notify;
 pub mod output;

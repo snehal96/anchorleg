@@ -207,8 +207,16 @@ pub struct RunArgs {
     /// go ahead). Follow-ups keep their session's mode unless given.
     #[arg(long, value_parser = ["ask", "edits"])]
     pub mode: Option<String>,
+    /// Keep the session working until this condition holds (e.g. "cargo test passes"), across
+    /// turns, accounts and CLIs. Each turn ends with the agent's GOAL: MET / NOT MET line.
+    /// Follow-ups keep an unmet goal. With no task, the goal is the task.
+    #[arg(long, value_name = "CONDITION")]
+    pub goal: Option<String>,
+    /// At most this many turns toward the goal (default 10); then the run fails as unmet.
+    #[arg(long, value_name = "N")]
+    pub goal_turns: Option<u32>,
     /// The task, after `--`.
-    #[arg(last = true, required = true)]
+    #[arg(last = true, required_unless_present = "goal")]
     pub prompt: Vec<String>,
 }
 

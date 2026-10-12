@@ -754,6 +754,83 @@ fn claude_limit_continues_on_codex_from_the_handoff() {
     assert!(launches[1].contains("# Task handoff"));
 }
 
+#[test]
+fn a_goal_keeps_the_session_going_until_it_is_met() {
+    let env = Env::new(&["a"]);
+    env.script(
+        "a.1.jsonl",
+        &ok("s1", "Ran the tests.\\nGOAL: NOT MET — 1 test fails"),
+    );
+    env.script("a.2.jsonl", &ok("s1", "Fixed it.\\nGOAL: MET — 14 passed"));
+    let (code, r) = env.run(&["--goal", "cargo test passes"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["goal"]["status"], "met", "{r}");
+    assert_eq!(r["goal"]["turns"], 2);
+    assert_eq!(r["goal"]["reason"], "14 passed");
+    let launches = env.launches();
+    assert_eq!(launches.len(), 2, "{launches:?}");
+    // Every turn is told the goal; the second continues the same session.
+    assert!(
+        launches[0].contains(
+            "Goal (anchorleg keeps this session going until it holds): cargo test passes"
+        )
+    );
+    assert!(
+        launches[1].contains("The goal isn't met yet (1 test fails)"),
+        "{launches:?}"
+    );
+    assert!(launches[1].contains("--resume s1"));
+    assert!(launches[1].contains("GOAL: MET —"));
+    let sessions = env
+        .anchorleg()
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let list: Value = serde_json::from_slice(&sessions.stdout).unwrap();
+    assert_eq!(list[0]["goal_status"], "met", "{list}");
+
+    // Out of turns: the run fails, and a follow-up keeps working toward the goal.
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "GOAL: NOT MET — still red"));
+    let (code, r) = env.run(&["--goal", "cargo test passes", "--goal-turns", "2"]);
+    assert_ne!(code, 0, "{r}");
+    assert_eq!(r["outcome"], "failed");
+    assert_eq!(r["goal"]["status"], "unmet");
+    assert_eq!(env.launches().len(), 2);
+    let (_, r) = env.run(&["--follow-up", "1", "--goal-turns", "1"]);
+    assert_eq!(r["goal"]["condition"], "cargo test passes", "{r}");
+
+    // "Impossible" ends it at once.
+    let env = Env::new(&["a"]);
+    env.script(
+        "a.jsonl",
+        &ok("s1", "GOAL: IMPOSSIBLE — the API was removed"),
+    );
+    let (code, r) = env.run(&["--goal", "use the old API"]);
+    assert_ne!(code, 0);
+    assert_eq!(r["goal"]["status"], "impossible");
+    assert_eq!(env.launches().len(), 1);
+}
+
+#[test]
+fn a_goal_survives_a_switch_to_another_cli() {
+    let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
+    env.script("a.jsonl", &limit("s1", FAR));
+    env.script(
+        "c.jsonl",
+        &codex_ok("t9", "GOAL: MET — tests pass on codex"),
+    );
+    let (code, r) = env.run(&["--goal", "cargo test passes"]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["goal"]["status"], "met", "{r}");
+    let launches = env.launches();
+    assert!(
+        launches[1].contains("## Done when cargo test passes"),
+        "{launches:?}"
+    );
+    assert!(launches[1].contains("Goal (anchorleg keeps this session going"));
+}
+
 fn codex_limits(used_5h: u32, reached: bool) -> String {
     let reached = if reached {
         r#""rate_limit_reached""#

@@ -20,11 +20,11 @@ use crate::adapters::claude::{self, sync_context};
 use crate::adapters::codex_server::{self, Asker, Event, Steer};
 use crate::adapters::{AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus};
 use crate::adapters::{agy, codex};
-use crate::output::{Outcome, RunReport, SCHEMA, Switch};
+use crate::output::{GoalReport, Outcome, RunReport, SCHEMA, Switch};
 use crate::policy::{self, Pick, PickOptions};
 use crate::registry::{Account, Config, SecretStore, Vendor};
 use crate::store::{Decision, RunState, Source, Store};
-use crate::{checkpoint, handoff};
+use crate::{checkpoint, goal, handoff};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -85,6 +85,9 @@ pub struct RunOptions {
     pub mode: Option<Mode>,
     /// How long questions and approvals wait for the person (seconds) before the agent goes on.
     pub answer_wait: Option<i64>,
+    /// Keep the session going until this holds (D48), for at most `goal_turns` turns.
+    pub goal: Option<String>,
+    pub goal_turns: u32,
 }
 
 /// How much the agent may do without asking, for one session (D41). Claude maps it to its
@@ -170,6 +173,8 @@ impl RunOptions {
             plan: false,
             mode: None,
             answer_wait: None,
+            goal: None,
+            goal_turns: crate::goal::DEFAULT_TURNS,
         }
     }
 }
@@ -382,6 +387,10 @@ impl Supervisor<'_> {
         if opts.answer_wait.is_some() {
             self.store.set_run_answer_wait(run_id, opts.answer_wait)?;
         }
+        if let Some(g) = &opts.goal {
+            self.store
+                .set_run_goal(run_id, Some(g), Some(goal::Status::Active.name()))?;
+        }
         // The folder as the run found it, so the session's own changes can be shown (D40).
         if let Err(e) = crate::checkpoint::save_start(&opts.cwd, run_id) {
             tracing::warn!(%e, "couldn't save the run's start");
@@ -395,6 +404,12 @@ impl Supervisor<'_> {
             accounts_used: Vec::new(),
             switches: Vec::new(),
             wait_until: None,
+            goal: opts.goal.as_ref().map(|g| GoalReport {
+                condition: g.clone(),
+                status: goal::Status::Active,
+                turns: 0,
+                reason: None,
+            }),
         };
         let mut ordered = self.config.by_priority();
         ordered.retain(|a| DRIVEN.contains(&a.vendor));
@@ -737,6 +752,69 @@ impl Supervisor<'_> {
                 next = Continue::Message(sid, text);
                 continue;
             }
+            // A goal: the agent's `GOAL:` line decides whether the session goes on (D48).
+            if !planning
+                && let Some(g) = report.goal.as_mut()
+                && let Some((true, text)) = &attempt.finished
+            {
+                g.turns += 1;
+                let verdict = goal::verdict(text.as_deref().unwrap_or(""));
+                let (status, reason) = match verdict {
+                    Some(goal::Verdict::Met(r)) => (goal::Status::Met, r),
+                    Some(goal::Verdict::Impossible(r)) => (goal::Status::Impossible, r),
+                    Some(goal::Verdict::NotMet(r)) => (goal::Status::Active, r),
+                    None => (goal::Status::Active, String::new()),
+                };
+                g.reason = (!reason.is_empty()).then(|| reason.clone());
+                let status = if status == goal::Status::Active && g.turns >= opts.goal_turns {
+                    goal::Status::Unmet
+                } else {
+                    status
+                };
+                g.status = status;
+                self.store
+                    .set_run_goal(run_id, Some(&g.condition), Some(status.name()))?;
+                let turns = g.turns;
+                let with_reason = |s: &str| {
+                    if reason.is_empty() {
+                        s.to_owned()
+                    } else {
+                        format!("{s}: {reason}")
+                    }
+                };
+                match status {
+                    goal::Status::Met => self.note(opts, run_id, &with_reason("goal met")),
+                    goal::Status::Impossible => {
+                        self.note(opts, run_id, &with_reason("goal can't be met"));
+                    }
+                    goal::Status::Unmet => self.note(
+                        opts,
+                        run_id,
+                        &with_reason(&format!("goal not met after {turns} turns")),
+                    ),
+                    goal::Status::Active => {
+                        if let Some(sid) = report.session_id.clone() {
+                            self.note(
+                                opts,
+                                run_id,
+                                &with_reason(&format!(
+                                    "goal not met yet ({turns}/{})",
+                                    opts.goal_turns
+                                )),
+                            );
+                            let text = goal::continue_text(&reason);
+                            self.log_line(
+                                opts,
+                                run_id,
+                                &json!({ "type": "anchorleg_user", "text": text }),
+                            );
+                            launches = 0;
+                            next = Continue::Message(sid, text);
+                            continue;
+                        }
+                    }
+                }
+            }
             match attempt.finished {
                 Some((ok, text)) => {
                     report.result = text;
@@ -757,6 +835,15 @@ impl Supervisor<'_> {
             break;
         }
 
+        // A goal that ended unmet fails the run, so scripts can tell.
+        if report.outcome == Outcome::Done
+            && report
+                .goal
+                .as_ref()
+                .is_some_and(|g| matches!(g.status, goal::Status::Impossible | goal::Status::Unmet))
+        {
+            report.outcome = Outcome::Failed;
+        }
         let state = match report.outcome {
             Outcome::Done => RunState::Done,
             _ => RunState::Failed,
@@ -976,6 +1063,10 @@ impl Supervisor<'_> {
         let planned;
         let prompt = if plan && account.vendor != Vendor::Codex {
             planned = format!("{prompt}\n\n{PLAN_NOTE}");
+            planned.as_str()
+        } else if !plan && let Some(g) = &opts.goal {
+            // Every goal turn is told the goal, so it holds on any account or CLI (D48).
+            planned = format!("{prompt}\n\n{}", goal::note(g));
             planned.as_str()
         } else {
             prompt
@@ -1499,6 +1590,7 @@ impl Supervisor<'_> {
                 git_status: git_status.as_deref(),
                 checkpoint: cp.as_ref().map(|c| c.refname.as_str()),
                 notes,
+                done_when: opts.goal.as_deref(),
             })
         });
         let path = match written {
