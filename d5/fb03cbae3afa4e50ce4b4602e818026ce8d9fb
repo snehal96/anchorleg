@@ -1,0 +1,30 @@
+README.md
+  s_3c59a91d489536::t_52ed57ae540bcd 147-148
+Cargo.toml
+  s_3c59a91d489536::t_52ed57ae540bcd 6
+CHANGELOG.md
+  s_3c59a91d489536::t_52ed57ae540bcd 10-13
+  s_3c59a91d489536::t_02746a22a5392d 9
+site/index.html
+  s_3c59a91d489536::t_89438a9aa8cda4 308-315
+  s_3c59a91d489536::t_52ed57ae540bcd 28
+  s_3c59a91d489536::t_50c97369ac890b 307
+Cargo.lock
+  s_3c59a91d489536::t_752862abee3081 33,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5fb03cbae3afa4e50ce4b4602e818026ce8d9fb",
+  "prompts": {},
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
