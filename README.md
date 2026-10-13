@@ -77,14 +77,32 @@ watches every account's quota, and when one gets close to its limit it:
 - **A second opinion.** `anchorleg review 12` (or `/review` in the UI): another account, or
   another CLI with `--cli codex`, reviews what session #12 changed, without touching files;
   `--fix` sends the findings back to #12 to fix.
+- **A budget per task.** `--budget 2M` caps the tokens a task uses across every account and
+  CLI; the agent stops at a clean point when it's spent.
+- **Typed answers.** `--json-schema schema.json` makes the final answer follow your schema and
+  returns it parsed in the JSON report, for scripts and task delegators.
 - **Plan first.** `--plan` (or `/plan` in the UI): the agent plans in Claude's or Codex's plan
-  mode, you approve or say what to change, then the same session carries it out.
+  mode, you approve, say what to change or edit the plan yourself (`e`), then the same session
+  carries it out.
+- **Side questions and rewind.** `anchorleg btw 12 -- "why this approach?"` (`/btw`): a read-only
+  copy of the session answers while the session keeps working. `anchorleg rewind 14 -- "…"`
+  (`/rewind`): back to just before run #14, conversation and files, and on from there.
+- **Named sessions.** `--name "auth fix"`, `anchorleg rename` or `/rename`; the CLI gets the name
+  too.
 - **The agent can ask you.** When Claude or Codex needs a decision, the question and its options
   show up in `anchorleg ui` (or `anchorleg permission list`) and the run waits for your answer.
 - **You approve what the agent may do.** A background run can't show the CLI's permission
-  prompt, so anchorleg asks you: the session waits until you press **1** yes, **2** yes for this
-  session or **3** no. Works for Claude Code and Codex. Nobody watching? `--mode auto` lets
-  Claude Code's auto mode or Codex's auto-review decide instead, and shows what it decided.
+  prompt, so anchorleg asks you, with the diff for an edit: the session waits until you press
+  **1** yes, **2** yes for this session, **3** no or **4** always, as a lasting rule
+  (`anchorleg rules`, in Claude Code's syntax, e.g. `Bash(cargo test *)`, applied to every CLI).
+  Nobody watching? `--mode auto` lets Claude Code's auto mode or Codex's auto-review decide
+  instead, and shows what it decided.
+- **No surprises from the CLI.** The conversation notes when the CLI answers with another model
+  than you asked for, what your hooks blocked or said, and background commands that ended with
+  a run.
+- **One setup for every CLI.** `anchorleg sync mcp` gives every account the same MCP servers,
+  through each CLI's own `mcp add`; a session that moves to another CLI takes the project's
+  instructions for the old one (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`) along.
 - **See what you're using.** `anchorleg usage` (and `u` in `anchorleg ui`) shows tokens and
   cost per account and model, tokens per day, quota bars and each account's usage credits.
   Cost is the API list price of the same tokens, so you can see what your subscriptions save.
@@ -144,8 +162,8 @@ version. Run it again to update; delete the binary to remove it.
 
 ```bash
 arch=$(dpkg --print-architecture)   # amd64 or arm64
-curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.5.0-1_${arch}.deb"
-sudo apt install "./anchorleg_0.5.0-1_${arch}.deb"
+curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.6.0-1_${arch}.deb"
+sudo apt install "./anchorleg_0.6.0-1_${arch}.deb"
 ```
 
 **Prebuilt binaries:** every [release](https://github.com/snehal96/anchorleg/releases/latest)
@@ -234,12 +252,18 @@ anchorleg run --attach error.png -- "fix this crash"   # attach images or files 
 anchorleg run --plan -- "split the auth module"         # plan first; approve, then it runs
 anchorleg run --goal "cargo test passes" -- "migrate to the new API"   # keep going until it holds
 anchorleg review 12 --cli codex --fix                   # another CLI reviews #12; #12 fixes the findings
+anchorleg run --budget 2M -- "port the CLI to clap 5"   # stop once the task has used 2M tokens
+anchorleg run --json --json-schema out.json -- "list the flaky tests"   # typed result in the report
 anchorleg run --worktree -- "try the new parser"        # in a git worktree of its own
 anchorleg run --fork 12 -- "now try it with a macro"    # a new session from #12's history
+anchorleg btw 12 -- "which database does this use?"     # a side question; #12 isn't disturbed
+anchorleg rewind 14 -- "use a macro instead"            # back to before run #14, talk and files
+anchorleg rules --add "Bash(cargo test *)"              # allowed in every session, on every CLI
+anchorleg sync mcp --yes                                # the same MCP servers on every account
 anchorleg stop 12                   # stop a session and its CLI
 anchorleg diff 12 --stat            # what the session changed since it started
 anchorleg permission list           # tool calls waiting for you
-anchorleg permission answer 3 yes   # yes | always | no
+anchorleg permission answer 3 yes   # yes | always | rule | no
 anchorleg permission answer 4 2     # an agent's question: option number, label or your own words
 ```
 
@@ -300,6 +324,7 @@ anchorleg run --account work -- "…"             # only this account, no switch
 anchorleg accounts set work --pinned true       # always first while it has room
 anchorleg accounts set home --reserve-7d 0.2    # keep its last 20% of the week for emergencies
 anchorleg accounts set work --stop-at 0.4       # move off this account once it's 40% used
+anchorleg accounts set work --strict true       # …and never go past it: wait for the reset instead
 anchorleg accounts set side --priority 3 --enabled false
 anchorleg accounts set home --credits last-resort  # pay from extra usage only when all are out
 ```
@@ -362,7 +387,7 @@ You are responsible for using your accounts within each provider's terms.
 |---|---|
 | Claude Code (`claude`) | Supported: switching, handoff, approvals, model and effort |
 | Codex (`codex`, also bundled with the ChatGPT app) | Supported: live quota before and during every turn, switching, handoff, model and effort, approvals and the soft stop at `--stop-at`. Runs through `codex app-server` with a workspace-write sandbox: edits inside the task folder go ahead, and what Codex asks about (network, writes elsewhere) waits for you |
-| Antigravity (`agy`) | **Under development**, not yet validated end to end: switching on quota errors, handoff, model and effort. Quota isn't visible. One account per `HOME`. An account with its own `HOME` gets approvals: edits inside the task folder go ahead, and shell commands and anything else wait for you (anchorleg adds an `anchorleg` hook to that `HOME`'s `.gemini/config/hooks.json`). On your own `HOME`, edits are allowed (`--mode accept-edits`) and shell commands need an allow rule in agy's settings |
+| Antigravity (`agy`) | **Under development**, not yet validated end to end: switching on quota errors, handoff, model and effort. Quota isn't visible. One account per `HOME`. An account with its own `HOME` gets approvals: edits inside the task folder go ahead, and shell commands and anything else wait for you (anchorleg adds an `anchorleg` hook to that `HOME`'s `.gemini/config/hooks.json`), and the agent can ask you questions through anchorleg's `ask_user` MCP tool (added to `.gemini/config/mcp_config.json`; not yet seen in a real run). On your own `HOME`, edits are allowed (`--mode accept-edits`) and shell commands need an allow rule in agy's settings |
 | Kimi, Cursor (`cursor-agent`) | Planned |
 
 `anchorleg ui` shows which of these are installed.

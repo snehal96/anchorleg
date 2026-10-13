@@ -13,7 +13,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::claude::{self, sync_context};
@@ -62,6 +62,9 @@ pub struct RunOptions {
     /// anchorleg's data folder, passed as `ANCHORLEG_HOME` to agy's hook: an agy account runs
     /// with its own `HOME`, so the hook couldn't find anchorleg's database from it.
     pub data_dir: Option<PathBuf>,
+    /// anchorleg's `config.toml`, passed as `ANCHORLEG_CONFIG` to agy's hook for the same
+    /// reason, so it finds the person's lasting rules.
+    pub config_path: Option<PathBuf>,
     /// The mod stops a run at a clean point once any window reaches this fraction.
     pub stop_at: f64,
     /// Send `prompt` as a new message to an existing session instead of starting one.
@@ -88,11 +91,23 @@ pub struct RunOptions {
     /// Keep the session going until this holds (D48), for at most `goal_turns` turns.
     pub goal: Option<String>,
     pub goal_turns: u32,
+    /// The most tokens the task may use, across every launch and account (`--budget`); counted
+    /// as input, output, cache writes and a tenth of cache reads.
+    pub budget: Option<u64>,
+    /// A JSON Schema the final answer must follow (`--json-schema`); the answer comes back as
+    /// `structured_output` in the report. Not used while planning.
+    pub json_schema: Option<Value>,
+    /// The session's name (`--name`, or the one it already has): shown in anchorleg and given
+    /// to the CLI (Claude `--name`, Codex `thread/name/set`).
+    pub name: Option<String>,
     /// A review (`anchorleg review`, D49): read-only on every CLI, and Codex runs it in its
     /// review mode.
     pub review: bool,
     /// The session under review, recorded on the run.
     pub review_of: Option<i64>,
+    /// A side question (`anchorleg btw`): a read-only fork of the session answers it, and the
+    /// session itself goes on untouched.
+    pub side: bool,
     /// Start on another account than this one when one has room (a second opinion).
     pub avoid: Option<String>,
     /// Only accounts of this CLI.
@@ -137,6 +152,9 @@ impl Mode {
     }
 }
 
+/// The env var that gives anchorleg-mod the tokens the task may still use (`--budget`).
+const BUDGET_ENV: &str = "ANCHORLEG_BUDGET_LEFT";
+
 /// The env var that tells anchorleg-mod the launch's permission mode, when it's `auto`.
 const PERMISSION_MODE_ENV: &str = "ANCHORLEG_PERMISSION_MODE";
 
@@ -173,6 +191,10 @@ pub struct FollowUp {
     /// Start a new session from this one's history instead of continuing it (Claude
     /// `--fork-session`, Codex `thread/fork`).
     pub fork: bool,
+    /// Fork from this point of the session instead of its end (`anchorleg rewind`): the last
+    /// message kept, Claude's message uuid (`--resume-session-at`) or Codex's turn id
+    /// (`thread/fork` `lastTurnId`).
+    pub at: Option<String>,
 }
 
 impl RunOptions {
@@ -188,6 +210,7 @@ impl RunOptions {
             mod_dir: None,
             relay_bin: None,
             data_dir: None,
+            config_path: None,
             stop_at: 0.9,
             follow_up: None,
             fresh_above: 100_000,
@@ -200,8 +223,12 @@ impl RunOptions {
             answer_wait: None,
             goal: None,
             goal_turns: crate::goal::DEFAULT_TURNS,
+            budget: None,
+            json_schema: None,
+            name: None,
             review: false,
             review_of: None,
+            side: false,
             avoid: None,
             vendor: None,
         }
@@ -305,9 +332,14 @@ const REVIEW_ALLOWED_TOOLS: &str =
 const PLAN_APPROVED: &str =
     "The plan is approved. Plan mode is over: carry out the plan now, step by step.";
 
+/// The message that ends planning with the plan the person edited.
+const PLAN_EDITED: &str = "The plan is approved, with my edits. Plan mode is over: carry out \
+     this version of the plan now, step by step, in place of yours:";
+
 /// The person's answer to a finished plan.
 enum PlanAnswer {
     Approved,
+    Edited(String),
     Change(String),
 }
 
@@ -379,12 +411,20 @@ struct Attempt {
     limit_deferred: bool,
     /// Stopped because the CLI began paying from credits it may not use: stop at once.
     stop_now: bool,
+    /// The answer as JSON (`--json-schema`), when the CLI gave it.
+    structured: Option<Value>,
+    /// The model the session answers with, as far as anchorleg knows.
+    model: Option<String>,
+    /// Commands the agent left running in the background; they end with the CLI.
+    background: Vec<String>,
 }
 
 /// How far a launch may go: where the soft stop sits, and whether it may run on usage credits.
 #[derive(Debug, Clone, Copy)]
 struct Spend {
     stop_at: f64,
+    /// Tokens the task may still use, when it has a budget.
+    budget_left: Option<u64>,
     may_spend: bool,
     /// Plan only: nothing may change yet.
     plan: bool,
@@ -418,6 +458,14 @@ impl Supervisor<'_> {
         if let Some(m) = opts.mode {
             self.store.set_run_mode(run_id, Some(m.name()))?;
         }
+        // A follow-up's name lives on the run that gave it; a new one goes on this run.
+        if let Some(n) = &opts.name
+            && opts.follow_up.as_ref().is_none_or(|f| {
+                self.store.session_name(f.parent).ok().flatten().as_ref() != Some(n)
+            })
+        {
+            self.store.set_run_name(run_id, Some(n))?;
+        }
         if opts.answer_wait.is_some() {
             self.store.set_run_answer_wait(run_id, opts.answer_wait)?;
         }
@@ -441,6 +489,8 @@ impl Supervisor<'_> {
             accounts_used: Vec::new(),
             switches: Vec::new(),
             wait_until: None,
+            budget: None,
+            structured_output: None,
             goal: opts.goal.as_ref().map(|g| GoalReport {
                 condition: g.clone(),
                 status: goal::Status::Active,
@@ -484,8 +534,30 @@ impl Supervisor<'_> {
         let mut stop_off_for: Option<String> = None;
         let mut written: Option<Written> = None;
         let mut handoffs = 0;
+        // The last launch's background commands, for the next handoff.
+        let mut background_note: Option<String> = None;
 
         loop {
+            // The budget is checked between launches; inside one, anchorleg-mod (Claude) and the
+            // Codex driver stop the turn at a clean point once it's used up.
+            if let Some(budget) = opts.budget {
+                let spent = self.store.run_tokens(run_id)?;
+                if spent >= budget {
+                    report.outcome = Outcome::OverBudget;
+                    report.result = Some(format!(
+                        "stopped: the task used {spent} of its {budget}-token budget"
+                    ));
+                    self.decide(
+                        run_id,
+                        current,
+                        None,
+                        "budget",
+                        json!({ "budget": budget, "spent": spent }),
+                    )?;
+                    self.note(opts, run_id, "the task's token budget is used up");
+                    break;
+                }
+            }
             self.refresh_codex(&ordered, opts, run_id).await?;
             let quota = self.store.quota(None)?;
             pick_opts.has_credits = self
@@ -522,6 +594,28 @@ impl Supervisor<'_> {
                                     opts,
                                 )?;
                                 Some(account)
+                            }
+                            // A strict account past its own limit doesn't carry on: the normal
+                            // pick below treats it as blocked and finds another or waits.
+                            _ if from.strict
+                                && policy::strict_until(
+                                    from,
+                                    &quota
+                                        .iter()
+                                        .filter(|r| r.account == from.name)
+                                        .collect::<Vec<_>>(),
+                                    self.now(),
+                                    &pick_opts,
+                                )
+                                .is_some() =>
+                            {
+                                self.decide(run_id, Some(from), None, "strict_limit", json!({}))?;
+                                self.note(
+                                    opts,
+                                    run_id,
+                                    &format!("{} reached its strict limit", from.name),
+                                );
+                                None
                             }
                             _ => {
                                 self.decide(
@@ -660,10 +754,24 @@ impl Supervisor<'_> {
                 Continue::Reply(sid) => (opts.prompt.clone(), Some(sid.as_str())),
                 Continue::Message(sid, text) => (text.clone(), Some(sid.as_str())),
                 Continue::Resume(sid) => (CONTINUE_PROMPT.to_owned(), Some(sid.as_str())),
-                Continue::Fresh => (
-                    handoff_prompt(written.as_ref().map(|w| w.task_md.as_str()), &opts.prompt),
-                    None,
-                ),
+                Continue::Fresh => {
+                    let mut prompt =
+                        handoff_prompt(written.as_ref().map(|w| w.task_md.as_str()), &opts.prompt);
+                    // On another CLI than the session started on: the instructions it won't
+                    // read by itself.
+                    let started_on = report
+                        .accounts_used
+                        .first()
+                        .and_then(|n| self.config.get(n))
+                        .map(|a| a.vendor);
+                    if started_on.is_some_and(|v| v != account.vendor)
+                        && let Some(more) =
+                            crate::handoff::instructions_for(&opts.cwd, account.vendor)
+                    {
+                        prompt += &more;
+                    }
+                    (prompt, None)
+                }
             };
             self.note(
                 opts,
@@ -688,6 +796,9 @@ impl Supervisor<'_> {
                     resume,
                     Spend {
                         stop_at,
+                        budget_left: opts
+                            .budget
+                            .map(|b| b.saturating_sub(self.store.run_tokens(run_id).unwrap_or(0))),
                         may_spend,
                         plan: planning,
                         fork: matches!(next, Continue::Reply(_))
@@ -696,6 +807,24 @@ impl Supervisor<'_> {
                     opts,
                 )
                 .await?;
+            if let Some(v) = attempt.structured.clone() {
+                report.structured_output = Some(v);
+            }
+            // Background commands end with the CLI: say so, and tell the next launch.
+            if !attempt.background.is_empty() {
+                let list = attempt.background.join("; ");
+                self.note(
+                    opts,
+                    run_id,
+                    &format!(
+                        "background commands the agent started on {} ended with it: {list}",
+                        account.name
+                    ),
+                );
+                background_note = Some(format!(
+                    "background commands that were running and have stopped: {list}"
+                ));
+            }
             if let Some(sid) = &attempt.session_id {
                 report.session_id = Some(sid.clone());
                 self.store
@@ -710,11 +839,15 @@ impl Supervisor<'_> {
                 };
                 self.note(opts, run_id, &format!("{} {why}", account.name));
                 handoffs += 1;
+                let why = match background_note.take() {
+                    Some(b) => format!("limit reached; {b}"),
+                    None => "limit reached".to_owned(),
+                };
                 written = self.write_handoff(
                     run_id,
                     opts,
                     account,
-                    "limit reached",
+                    &why,
                     report.session_id.as_deref(),
                     handoffs,
                 );
@@ -735,11 +868,15 @@ impl Supervisor<'_> {
                     &format!("{} paused at a clean point ({reason})", account.name),
                 );
                 handoffs += 1;
+                let why = match background_note.take() {
+                    Some(b) => format!("paused, {reason}; {b}"),
+                    None => format!("paused, {reason}"),
+                };
                 written = self.write_handoff(
                     run_id,
                     opts,
                     account,
-                    &format!("paused, {reason}"),
+                    &why,
                     report.session_id.as_deref(),
                     handoffs,
                 );
@@ -789,15 +926,19 @@ impl Supervisor<'_> {
             // A finished plan waits for the person: approved → the same session carries it out;
             // their words → it revises the plan. No answer: the run ends with the plan.
             if planning
-                && let Some((true, Some(_))) = &attempt.finished
+                && let Some((true, Some(plan))) = &attempt.finished
                 && let Some(sid) = report.session_id.clone()
-                && let Some(answer) = self.approve_plan(opts, run_id).await
+                && let Some(answer) = self.approve_plan(opts, run_id, plan).await
             {
                 launches = 0;
                 let text = match answer {
                     PlanAnswer::Approved => {
                         planning = false;
                         PLAN_APPROVED.to_owned()
+                    }
+                    PlanAnswer::Edited(plan) => {
+                        planning = false;
+                        format!("{PLAN_EDITED}\n\n{plan}")
                     }
                     PlanAnswer::Change(words) => format!("Change the plan: {words}"),
                 };
@@ -900,6 +1041,21 @@ impl Supervisor<'_> {
                 .is_some_and(|g| matches!(g.status, goal::Status::Impossible | goal::Status::Unmet))
         {
             report.outcome = Outcome::Failed;
+        }
+        if opts.json_schema.is_some()
+            && report.structured_output.is_none()
+            && report.outcome == Outcome::Done
+        {
+            report.structured_output = report
+                .result
+                .as_deref()
+                .and_then(|t| serde_json::from_str::<Value>(t.trim()).ok());
+        }
+        if let Some(tokens) = opts.budget {
+            report.budget = Some(crate::output::BudgetReport {
+                tokens,
+                spent: self.store.run_tokens(run_id)?,
+            });
         }
         let state = match report.outcome {
             Outcome::Done => RunState::Done,
@@ -1068,6 +1224,17 @@ impl Supervisor<'_> {
         if home == self.home {
             return false;
         }
+        // Questions: agy's `-p` drops its own tool, so anchorleg's MCP server offers `ask_user`.
+        if let Err(e) = agy::install_mcp(&home, bin) {
+            self.note(
+                opts,
+                run_id,
+                &format!(
+                    "couldn't add anchorleg's question tool for {} ({e}); the agent can't ask you",
+                    account.name
+                ),
+            );
+        }
         match agy::install_hook(&home, bin) {
             Ok(()) => true,
             Err(e) => {
@@ -1093,6 +1260,7 @@ impl Supervisor<'_> {
         resume: Option<&str>,
         Spend {
             stop_at,
+            budget_left,
             may_spend,
             plan,
             fork,
@@ -1105,13 +1273,13 @@ impl Supervisor<'_> {
             launch.args.retain(|a| a != "--full-auto");
         }
         // Planning and reviewing change nothing.
-        let read_only = plan || opts.review;
+        let read_only = plan || opts.review || opts.side;
         if account.vendor == Vendor::Claude {
             // Plan mode, then the session's own mode, replace the settings' permission mode. A
             // review isn't a plan: Claude Code answers plan mode with a bigger model than the
             // one picked (Sonnet for Haiku, seen on 2.1.296), so it runs in the normal mode with
             // the editing tools taken away and read-only git commands allowed.
-            let mode = if opts.review {
+            let mode = if opts.review || opts.side {
                 Some("default")
             } else if read_only {
                 Some("plan")
@@ -1131,6 +1299,24 @@ impl Supervisor<'_> {
                     ]
                     .map(str::to_owned),
                 );
+            } else if opts.side {
+                launch
+                    .args
+                    .extend(["--disallowedTools", REVIEW_DENIED_TOOLS].map(str::to_owned));
+            }
+            if let Some(schema) = opts.json_schema.as_ref().filter(|_| !plan) {
+                launch.args.push("--json-schema".to_owned());
+                launch.args.push(schema.to_string());
+            }
+            if let Some(name) = &opts.name {
+                launch.args.push("--name".to_owned());
+                launch.args.push(name.clone());
+            }
+            // The person's lasting allow rules; Claude applies them itself. Not while planning
+            // or reviewing, which stay read-only.
+            if !read_only && !self.config.allow.is_empty() {
+                launch.args.push("--allowedTools".to_owned());
+                launch.args.push(self.config.allow.join(","));
             }
         }
         // Claude's plan mode can't end with its ExitPlanMode tool in `-p`, and agy has no plan
@@ -1173,7 +1359,7 @@ impl Supervisor<'_> {
                 // The hook keeps the task's files alone while planning and asks before edits in
                 // `--mode ask` (agy's own `--mode plan` goes on to carry the plan out once
                 // permissions are skipped; seen on 1.3.3).
-                let mode = if opts.review {
+                let mode = if opts.review || opts.side {
                     agy::HookMode::Review
                 } else if plan {
                     agy::HookMode::Plan
@@ -1188,9 +1374,15 @@ impl Supervisor<'_> {
                 if let Some(dir) = &opts.data_dir {
                     cmd.env("ANCHORLEG_HOME", dir);
                 }
+                if let Some(path) = &opts.config_path {
+                    cmd.env("ANCHORLEG_CONFIG", path);
+                }
             }
             cmd.arg("-p").arg(prompt);
             cmd.args(["--output-format", "stream-json"]);
+            if let Some(schema) = opts.json_schema.as_ref().filter(|_| !plan) {
+                cmd.arg("--json-schema").arg(schema.to_string());
+            }
             if !gated && !agy::sets_mode(&launch.args) {
                 // Without the hook, agy's own plan mode keeps the files as they are: in `-p` it
                 // reads, writes its plan and has its edits refused (seen on 1.3.3).
@@ -1266,7 +1458,15 @@ impl Supervisor<'_> {
                 plan,
                 review: opts.review,
                 fork,
+                fork_at: opts
+                    .follow_up
+                    .as_ref()
+                    .and_then(|f| f.at.clone())
+                    .filter(|_| fork),
                 auto_review: !read_only && opts.mode == Some(Mode::Auto),
+                budget_left,
+                output_schema: opts.json_schema.clone().filter(|_| !plan),
+                name: opts.name.clone(),
             });
         } else {
             if let Some(dir) = &opts.mod_dir {
@@ -1274,6 +1474,9 @@ impl Supervisor<'_> {
                 cmd.env("ANCHORLEG_ACCOUNT", &account.name)
                     .env("ANCHORLEG_RUN_ID", run_id.to_string())
                     .env("ANCHORLEG_STOP_AT", stop_at.to_string());
+                if let Some(left) = budget_left {
+                    cmd.env(BUDGET_ENV, left.to_string());
+                }
                 // In auto mode Claude's classifier answers what it would ask about; the mod
                 // leaves those to it instead of asking the person.
                 if claude_mode(&launch.args) == Some("auto") {
@@ -1285,10 +1488,17 @@ impl Supervisor<'_> {
             }
             cmd.arg("-p").arg(prompt);
             cmd.args(["--output-format", "stream-json", "--verbose"]);
+            // The person's hooks: what they block or say shows in the conversation.
+            if !launch.args.iter().any(|a| a == "--include-hook-events") {
+                cmd.arg("--include-hook-events");
+            }
             cmd.args(&model_args);
             if let Some(sid) = resume {
                 cmd.args(["--resume", sid]);
                 if fork {
+                    if let Some(at) = opts.follow_up.as_ref().and_then(|f| f.at.as_deref()) {
+                        cmd.args(["--resume-session-at", at]);
+                    }
                     cmd.arg("--fork-session");
                 }
             }
@@ -1407,7 +1617,7 @@ impl Supervisor<'_> {
                     continue;
                 }
                 Some(Event::Credits(c)) => {
-                    self.on_signal(run_id, account, AgentSignal::Credits(c), &mut attempt)?;
+                    self.on_signal(run_id, account, AgentSignal::Credits(c), &mut attempt, opts)?;
                     continue;
                 }
                 Some(Event::NotFound) => {
@@ -1444,10 +1654,23 @@ impl Supervisor<'_> {
             let signals = match account.vendor {
                 Vendor::Codex => codex_stream.feed(&line),
                 Vendor::Antigravity => agy::signals(&line),
-                _ => claude::signals(&claude::parse_line(&line)),
+                _ => {
+                    let mut s = claude::signals(&claude::parse_line(&line));
+                    // Claude says nothing when it answers with another model; compare.
+                    if let Some(model) = claude::reply_model(&line)
+                        && attempt.model.as_ref().is_some_and(|m| *m != model)
+                    {
+                        s.push(AgentSignal::Rerouted {
+                            from: attempt.model.clone(),
+                            to: model,
+                            reason: None,
+                        });
+                    }
+                    s
+                }
             };
             for signal in signals {
-                self.on_signal(run_id, account, signal, &mut attempt)?;
+                self.on_signal(run_id, account, signal, &mut attempt, opts)?;
             }
             if attempt.limit_hit && deadline.is_none() {
                 // Every extra second on unpermitted credits costs money; otherwise give the CLI
@@ -1517,9 +1740,39 @@ impl Supervisor<'_> {
         account: &Account,
         signal: AgentSignal,
         attempt: &mut Attempt,
+        opts: &RunOptions,
     ) -> Result<(), RunError> {
         match signal {
-            AgentSignal::Started { session_id, .. } => {
+            AgentSignal::Background(cmd) => {
+                if !attempt.background.contains(&cmd) {
+                    attempt.background.push(cmd);
+                }
+            }
+            AgentSignal::Rerouted { from, to, reason } => {
+                self.note(
+                    opts,
+                    run_id,
+                    &format!(
+                        "{} answers with {to}{}{}",
+                        account.name,
+                        from.as_deref()
+                            .map_or(String::new(), |f| format!(" instead of {f}")),
+                        reason
+                            .as_deref()
+                            .map_or(String::new(), |r| format!(" ({r})"))
+                    ),
+                );
+                self.decide(
+                    run_id,
+                    Some(account),
+                    Some(account),
+                    "model_rerouted",
+                    json!({ "from": from, "to": to, "reason": reason }),
+                )?;
+                attempt.model = Some(to);
+            }
+            AgentSignal::Started { session_id, model } => {
+                attempt.model = attempt.model.take().or(model);
                 // Saved right away so a live session can be watched and replied to.
                 self.store
                     .set_run_account(run_id, &account.name, Some(&session_id))?;
@@ -1560,6 +1813,7 @@ impl Supervisor<'_> {
                     .record_quota(&account.name, &reading, Source::Stream, self.now())?;
             }
             AgentSignal::SessionNotFound => attempt.session_not_found = true,
+            AgentSignal::Structured(v) => attempt.structured = Some(v),
             AgentSignal::Finished { ok, text, .. } => {
                 if !ok && attempt.limit_deferred {
                     attempt.limit_hit = true;
@@ -1573,11 +1827,13 @@ impl Supervisor<'_> {
 
     /// Ask the person to approve the plan the agent just finished. `None`: nobody to ask, or
     /// no answer (skipped, expired).
-    async fn approve_plan(&self, opts: &RunOptions, run_id: i64) -> Option<PlanAnswer> {
+    async fn approve_plan(&self, opts: &RunOptions, run_id: i64, plan: &str) -> Option<PlanAnswer> {
         let bin = opts.relay_bin.as_ref()?;
         self.note(opts, run_id, "plan ready; waiting for your approval");
         let q = crate::questions::plan_question();
-        let answers = codex_server::ask_questions_of(bin, run_id, std::slice::from_ref(&q)).await?;
+        let answers =
+            codex_server::ask_questions_of(bin, run_id, std::slice::from_ref(&q), Some(plan))
+                .await?;
         let answer = answers.get(&q.id)?.first()?.trim().to_owned();
         match answer.as_str() {
             "" => None,
@@ -1585,7 +1841,10 @@ impl Supervisor<'_> {
             crate::questions::PLAN_REVISE => Some(PlanAnswer::Change(
                 "look again and improve it; ask me if anything is unclear.".to_owned(),
             )),
-            _ => Some(PlanAnswer::Change(answer)),
+            _ => match answer.strip_prefix(crate::questions::PLAN_EDITED) {
+                Some(edited) => Some(PlanAnswer::Edited(edited.trim().to_owned())),
+                None => Some(PlanAnswer::Change(answer)),
+            },
         }
     }
 

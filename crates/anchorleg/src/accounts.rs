@@ -52,6 +52,10 @@ pub struct SetArgs {
     /// room. 0 turns it off.
     #[arg(long, value_parser = parse_limit)]
     stop_at: Option<f64>,
+    /// With --stop-at: never go past it (wait for the window to reset instead of carrying on
+    /// when no other account has room).
+    #[arg(long)]
+    strict: Option<bool>,
     /// Use this account first whenever it has room, whatever the policy.
     #[arg(long)]
     pinned: Option<bool>,
@@ -156,6 +160,12 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             if let Some(s) = args.stop_at {
                 account.stop_at = (s > 0.0).then_some(s);
             }
+            if let Some(s) = args.strict {
+                account.strict = s;
+            }
+            if account.stop_at.is_none() {
+                account.strict = false;
+            }
             if let Some(p) = args.pinned {
                 account.pinned = p;
             }
@@ -202,7 +212,13 @@ fn list(config: &Config, json: bool) -> anyhow::Result<()> {
             a.pinned.then(|| "pinned".to_owned()),
             a.reserve_7d
                 .map(|r| format!("weekly reserve {:.0}%", r * 100.0)),
-            a.stop_at.map(|s| format!("stops at {:.0}%", s * 100.0)),
+            a.stop_at.map(|s| {
+                format!(
+                    "stops at {:.0}%{}",
+                    s * 100.0,
+                    if a.strict { " (strict)" } else { "" }
+                )
+            }),
             (a.credits != CreditsUse::Never).then(|| format!("credits: {}", a.credits.name())),
         ]
         .into_iter()
@@ -236,7 +252,11 @@ fn describe_use(a: &anchorleg_core::registry::Account) -> String {
         parts.push(format!("weekly reserve {:.0}%", r * 100.0));
     }
     if let Some(s) = a.stop_at {
-        parts.push(format!("stops at {:.0}%", s * 100.0));
+        parts.push(format!(
+            "stops at {:.0}%{}",
+            s * 100.0,
+            if a.strict { " (strict)" } else { "" }
+        ));
     }
     parts.push(format!("credits {}", a.credits.name()));
     parts.join(", ")

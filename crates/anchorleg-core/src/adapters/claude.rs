@@ -147,6 +147,9 @@ pub struct RunResult {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub total_cost_usd: Option<f64>,
+    /// The answer as JSON, with `--json-schema`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<Value>,
     /// Token counts for the whole run (`input_tokens`, `output_tokens`, `cache_*`).
     #[serde(default)]
     pub usage: Option<Value>,
@@ -209,6 +212,22 @@ fn malformed(error: String) -> ClaudeEvent {
 
 /// What this event means for the supervisor. Most events mean nothing; a rejected rate limit
 /// means both a quota reading and a limit hit.
+/// The model that wrote a line, if it's one of the session's own replies (not a subagent's or
+/// a synthetic one): to notice when Claude answers with another model than the session's.
+pub fn reply_model(line: &str) -> Option<String> {
+    if !line.contains(r#""type":"assistant""#) {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    if v.get("parent_tool_use_id").is_some_and(|p| !p.is_null()) {
+        return None;
+    }
+    v.pointer("/message/model")
+        .and_then(Value::as_str)
+        .filter(|m| !m.starts_with('<'))
+        .map(str::to_owned)
+}
+
 pub fn signals(event: &ClaudeEvent) -> Vec<AgentSignal> {
     match event {
         ClaudeEvent::Init(init) => vec![AgentSignal::Started {
@@ -221,8 +240,25 @@ pub fn signals(event: &ClaudeEvent) -> Vec<AgentSignal> {
         }],
         ClaudeEvent::RateLimit(info) => rate_limit_signals(info),
         ClaudeEvent::Result(result) => result_signals(result),
-        ClaudeEvent::Assistant(_)
-        | ClaudeEvent::Other { .. }
+        ClaudeEvent::Assistant(a) => a
+            .message
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { name, input, .. }
+                    if name == "Bash"
+                        && input.get("run_in_background").and_then(Value::as_bool)
+                            == Some(true) =>
+                {
+                    input
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .map(|c| AgentSignal::Background(c.to_owned()))
+                }
+                _ => None,
+            })
+            .collect(),
+        ClaudeEvent::Other { .. }
         | ClaudeEvent::Unrecognized { .. }
         | ClaudeEvent::Malformed { .. } => Vec::new(),
     }
@@ -342,6 +378,13 @@ fn usage_signals(result: &RunResult) -> Vec<AgentSignal> {
 
 fn result_signals(result: &RunResult) -> Vec<AgentSignal> {
     let mut out = usage_signals(result);
+    out.extend(
+        result
+            .structured_output
+            .clone()
+            .filter(|v| !v.is_null())
+            .map(AgentSignal::Structured),
+    );
     let text = result
         .result
         .clone()

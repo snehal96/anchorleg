@@ -3,6 +3,7 @@ mod permission;
 mod run;
 mod settings;
 mod status;
+mod sync;
 mod ui;
 mod usage;
 
@@ -45,6 +46,35 @@ enum Command {
         #[arg(last = true)]
         extra: Vec<String>,
     },
+    /// Ask a session a side question without disturbing it: a read-only copy of the session
+    /// answers (`anchorleg run --btw RUN`); the session goes on as if nothing was asked.
+    Btw {
+        run: i64,
+        #[arg(long)]
+        json: bool,
+        /// Model to answer with.
+        #[arg(long)]
+        model: Option<String>,
+        /// The question, after `--`.
+        #[arg(last = true, required = true)]
+        question: Vec<String>,
+    },
+    /// Go back to just before a run and continue from there with a new message: the
+    /// conversation and the files return to that point (`anchorleg run --rewind RUN`).
+    Rewind {
+        run: i64,
+        /// Only the conversation goes back; the files stay as they are.
+        #[arg(long)]
+        keep_files: bool,
+        #[arg(long)]
+        json: bool,
+        /// Model to go on with.
+        #[arg(long)]
+        model: Option<String>,
+        /// The new message, after `--`.
+        #[arg(last = true, required = true)]
+        message: Vec<String>,
+    },
     /// Show quota and blocked state for every account.
     Status {
         #[arg(long)]
@@ -84,6 +114,21 @@ enum Command {
     Policy {
         #[arg(value_parser = parse_policy)]
         policy: Option<Policy>,
+    },
+    /// Bring every account's setup in line, whatever its CLI.
+    #[command(subcommand)]
+    Sync(SyncCmd),
+    /// Tool calls every session may make without asking, in Claude Code's rule syntax:
+    /// `Bash(cargo test *)`, `Edit(src/**)`, `WebFetch(domain:docs.rs)`. Claude Code applies them
+    /// itself; anchorleg applies them to Codex's and Antigravity's approvals. With no options:
+    /// list them.
+    Rules {
+        /// Add a rule.
+        #[arg(long, value_name = "RULE")]
+        add: Vec<String>,
+        /// Remove a rule.
+        #[arg(long, value_name = "RULE")]
+        rm: Vec<String>,
     },
     /// What a session changed in its folder since it started (new files included), as a diff.
     Diff {
@@ -151,6 +196,8 @@ enum Command {
     /// Exit 0 if the person asked this run to stop for a new message (called by anchorleg-mod).
     #[command(hide = true)]
     InterruptCheck { run: i64 },
+    /// Name a session (the run and its follow-ups); an empty name clears it.
+    Rename { run: i64, name: String },
     /// Stop a running session (its `anchorleg run` process and the CLI under it).
     Stop {
         /// The run id, as `anchorleg status`, `anchorleg ui` or `anchorleg run --json` show it.
@@ -164,6 +211,20 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum SyncCmd {
+    /// The same MCP servers on every account: each account's servers are read from its own
+    /// config, and the ones another account lacks are added through its CLI's `mcp add`. Shows
+    /// what it would do; `--yes` does it.
+    Mcp {
+        /// Also copy servers with env values or headers (often tokens) into more configs.
+        #[arg(long)]
+        with_env: bool,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
 #[derive(Args)]
 pub struct RunArgs {
     /// Send the prompt as a new message to this run's session instead of starting a new one.
@@ -173,6 +234,10 @@ pub struct RunArgs {
     /// try another direction from the same point. Claude and Codex.
     #[arg(long, value_name = "RUN", conflicts_with = "follow_up")]
     pub fork: Option<i64>,
+    /// A name for the session, shown in `anchorleg sessions` and `anchorleg ui` and given to
+    /// the CLI. Follow-ups keep it.
+    #[arg(long)]
+    pub name: Option<String>,
     /// Directory the task runs in. Defaults to the current one (or the followed-up run's).
     #[arg(long)]
     pub cwd: Option<PathBuf>,
@@ -242,6 +307,20 @@ pub struct RunArgs {
     #[arg(long, value_name = "RUN",
           conflicts_with_all = ["follow_up", "fork", "worktree", "plan", "goal"])]
     pub review: Option<i64>,
+    /// Ask this run's session a side question: a read-only fork of it answers, on the same
+    /// account, and the session itself is left alone. Claude and Codex.
+    #[arg(long, value_name = "RUN",
+          conflicts_with_all = ["follow_up", "fork", "review", "worktree", "plan", "goal", "json_schema"])]
+    pub btw: Option<i64>,
+    /// Go back to just before this run: its session continues from where it was then (a new
+    /// session; the old one is kept), and the files go back to how they were when the run
+    /// started (a backup is kept). The new message after `--`. Claude and Codex.
+    #[arg(long, value_name = "RUN",
+          conflicts_with_all = ["follow_up", "fork", "btw", "review", "worktree"])]
+    pub rewind: Option<i64>,
+    /// With `--rewind`: leave the files as they are; only the conversation goes back.
+    #[arg(long, requires = "rewind")]
+    pub keep_files: bool,
     /// Only use accounts of this CLI: claude, codex or antigravity.
     #[arg(long, value_parser = ["claude", "codex", "antigravity"])]
     pub cli: Option<String>,
@@ -249,9 +328,48 @@ pub struct RunArgs {
     /// fixes the ones it agrees with.
     #[arg(long, requires = "review")]
     pub fix: bool,
+    /// The most tokens the task may use, across every account and CLI: e.g. 500k or 2M (input,
+    /// output and cache writes, and a tenth of cache reads, which cost about a tenth). Once it's
+    /// used up the agent stops at its next clean point and the run ends `over_budget` (exit 3).
+    #[arg(long, value_name = "TOKENS", value_parser = parse_tokens)]
+    pub budget: Option<u64>,
+    /// A JSON Schema (a file, or the JSON itself) the agent's final answer must follow. The
+    /// answer comes back parsed as `structured_output` in the `--json` report. Claude Code,
+    /// Codex and Antigravity each enforce it themselves.
+    #[arg(long, value_name = "SCHEMA", value_parser = parse_schema,
+          conflicts_with_all = ["goal", "review", "plan"])]
+    pub json_schema: Option<serde_json::Value>,
     /// The task, after `--`.
     #[arg(last = true, required_unless_present_any = ["goal", "review"])]
     pub prompt: Vec<String>,
+}
+
+fn parse_schema(s: &str) -> Result<serde_json::Value, String> {
+    let text = match std::fs::read_to_string(s) {
+        Ok(t) => t,
+        Err(_) if s.trim_start().starts_with('{') => s.to_owned(),
+        Err(e) => return Err(format!("{s}: {e}")),
+    };
+    match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) if v.is_object() => Ok(v),
+        Ok(_) => Err("a JSON Schema is a JSON object".to_owned()),
+        Err(e) => Err(format!("not JSON: {e}")),
+    }
+}
+
+fn parse_tokens(s: &str) -> Result<u64, String> {
+    let lower = s.trim().to_ascii_lowercase();
+    let (n, mult) = match lower.strip_suffix('m') {
+        Some(n) => (n, 1_000_000.0),
+        None => match lower.strip_suffix('k') {
+            Some(n) => (n, 1_000.0),
+            None => (lower.as_str(), 1.0),
+        },
+    };
+    match n.parse::<f64>() {
+        Ok(v) if v > 0.0 => Ok((v * mult) as u64),
+        _ => Err(format!("{s}: a token count like 500k, 2M or 150000")),
+    }
 }
 
 fn parse_wait(s: &str) -> Result<i64, String> {
@@ -322,6 +440,7 @@ fn main() -> ExitCode {
             },
         ),
         Command::Stop { run } => run::stop(run),
+        Command::Rename { run, name } => run::rename(run, &name),
         Command::Send {
             run,
             interrupt,
@@ -339,6 +458,8 @@ fn main() -> ExitCode {
             };
         }
         Command::Policy { policy } => settings::policy(policy),
+        Command::Rules { add, rm } => settings::rules(add, rm),
+        Command::Sync(SyncCmd::Mcp { with_env, yes }) => sync::mcp(with_env, yes),
         Command::Diff { run, stat } => run::diff(run, stat),
         Command::Undo { run, yes, redo } => run::undo(run, redo, yes),
         Command::Notify {
@@ -379,6 +500,71 @@ fn main() -> ExitCode {
                 argv.push("--".to_owned());
                 argv.extend(extra);
             }
+            let Command::Run(args) = Cli::parse_from(argv).command else {
+                unreachable!("parsed as run");
+            };
+            return match run::run(*args) {
+                Ok(report) => ExitCode::from(report.outcome.exit_code()),
+                Err(e) => {
+                    eprintln!("anchorleg: {e:#}");
+                    ExitCode::from(exit::FAILED)
+                }
+            };
+        }
+        Command::Btw {
+            run,
+            json,
+            model,
+            question,
+        } => {
+            let mut argv = vec![
+                "anchorleg".to_owned(),
+                "run".to_owned(),
+                "--btw".to_owned(),
+                run.to_string(),
+            ];
+            if json {
+                argv.push("--json".to_owned());
+            }
+            if let Some(m) = model {
+                argv.extend(["--model".to_owned(), m]);
+            }
+            argv.push("--".to_owned());
+            argv.extend(question);
+            let Command::Run(args) = Cli::parse_from(argv).command else {
+                unreachable!("parsed as run");
+            };
+            return match run::run(*args) {
+                Ok(report) => ExitCode::from(report.outcome.exit_code()),
+                Err(e) => {
+                    eprintln!("anchorleg: {e:#}");
+                    ExitCode::from(exit::FAILED)
+                }
+            };
+        }
+        Command::Rewind {
+            run,
+            keep_files,
+            json,
+            model,
+            message,
+        } => {
+            let mut argv = vec![
+                "anchorleg".to_owned(),
+                "run".to_owned(),
+                "--rewind".to_owned(),
+                run.to_string(),
+            ];
+            for (flag, on) in [("--keep-files", keep_files), ("--json", json)] {
+                if on {
+                    argv.push(flag.to_owned());
+                }
+            }
+            if let Some(m) = model {
+                argv.extend(["--model".to_owned(), m]);
+            }
+            argv.push("--".to_owned());
+            argv.extend(message);
             let Command::Run(args) = Cli::parse_from(argv).command else {
                 unreachable!("parsed as run");
             };

@@ -96,6 +96,32 @@ pub fn from_log(log: &str) -> Vec<Message> {
                     }
                 }
             }
+            // A hook of the person's that did something visible: blocked, failed or said
+            // something. Quiet successes stay out of the way.
+            Some("system") if text_of("subtype") == "hook_response" => {
+                let said = [text_of("stderr"), text_of("output"), text_of("stdout")]
+                    .into_iter()
+                    .find(|t| !t.trim().is_empty())
+                    .map(|t| first_line(t, 160));
+                let code = v.get("exit_code").and_then(Value::as_i64).unwrap_or(0);
+                let outcome = text_of("outcome");
+                let ok = code == 0 && matches!(outcome, "" | "success");
+                if !ok || said.is_some() {
+                    let what = if ok {
+                        String::new()
+                    } else if outcome.is_empty() || outcome == "success" {
+                        format!(" exited {code}")
+                    } else {
+                        format!(" {outcome}")
+                    };
+                    let text = format!(
+                        "hook {}{what}{}",
+                        text_of("hook_name"),
+                        said.map_or(String::new(), |s| format!(": {s}"))
+                    );
+                    out.push(msg(if ok { Role::Thinking } else { Role::ToolError }, text));
+                }
+            }
             // Claude's `/compact`.
             Some("system") if text_of("subtype") == "compact_boundary" => {
                 let tokens = |k: &str| {
@@ -217,6 +243,27 @@ fn codex_item(v: &Value, out: &mut Vec<Message>) {
             out.push(msg(Role::Thinking, field("text").trim()));
         }
         "context_compaction" => out.push(msg(Role::Anchorleg, COMPACTED)),
+        "hook" => {
+            let ok = field("status") == "completed";
+            let said = first_line(field("text"), 160);
+            out.push(msg(
+                if ok { Role::Thinking } else { Role::ToolError },
+                format!(
+                    "hook {}{}{}",
+                    field("event"),
+                    if ok {
+                        String::new()
+                    } else {
+                        format!(" {}", field("status"))
+                    },
+                    if said.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {said}")
+                    }
+                ),
+            ));
+        }
         "auto_review" => {
             let risk = item
                 .get("risk")
@@ -818,8 +865,101 @@ fn first_line(s: &str, max: usize) -> String {
     }
 }
 
+/// Lines shown under an edit's approval: what goes (`-`) and what comes (`+`), from Claude's
+/// `old_string`/`new_string`/`content` or Codex's diff; `.` marks context or elided lines.
+pub fn change_preview(tool: &str, input: &serde_json::Value) -> Vec<(char, String)> {
+    use serde_json::Value;
+    const MAX: usize = 10;
+    fn edit(old: &str, new: &str, lines: &mut Vec<(char, String)>) {
+        lines.extend(old.lines().map(|l| ('-', l.to_owned())));
+        lines.extend(new.lines().map(|l| ('+', l.to_owned())));
+    }
+    let text = |k: &str| input.get(k).and_then(Value::as_str);
+    let mut lines: Vec<(char, String)> = Vec::new();
+    if let Some(diff) = text("diff") {
+        for l in diff.lines() {
+            lines.push(match l.chars().next() {
+                Some('+') if !l.starts_with("+++") => ('+', l[1..].to_owned()),
+                Some('-') if !l.starts_with("---") => ('-', l[1..].to_owned()),
+                _ => ('.', l.strip_prefix(' ').unwrap_or(l).to_owned()),
+            });
+        }
+    } else {
+        match tool {
+            "Edit" => edit(
+                text("old_string").unwrap_or_default(),
+                text("new_string").unwrap_or_default(),
+                &mut lines,
+            ),
+            "MultiEdit" => {
+                for e in input
+                    .get("edits")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let s = |k: &str| e.get(k).and_then(Value::as_str).unwrap_or_default();
+                    edit(s("old_string"), s("new_string"), &mut lines);
+                }
+            }
+            "Write" => edit("", text("content").unwrap_or_default(), &mut lines),
+            _ => {}
+        }
+    }
+    if lines.len() > MAX {
+        let more = lines.len() - (MAX - 1);
+        lines.truncate(MAX - 1);
+        lines.push(('.', format!("… {more} more lines")));
+    }
+    lines
+}
+
+/// Where a run left session `session`, read from its log: the uuid of Claude's last main-thread
+/// message in it, or the id of Codex's last completed turn. A rewind forks from there.
+pub fn fork_point(log: &str, session: &str) -> Option<String> {
+    let mut point = None;
+    for line in log.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let field = |k: &str| v.get(k).and_then(serde_json::Value::as_str);
+        match field("type") {
+            Some("assistant")
+                if field("session_id") == Some(session)
+                    && v.get("parent_tool_use_id")
+                        .is_none_or(serde_json::Value::is_null) =>
+            {
+                point = field("uuid").map(str::to_owned).or(point);
+            }
+            Some("turn.completed") => point = field("turn_id").map(str::to_owned).or(point),
+            _ => {}
+        }
+    }
+    point
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_rewind_forks_from_the_last_main_thread_message_or_turn() {
+        let claude = [
+            r#"{"type":"assistant","uuid":"a","session_id":"s1","parent_tool_use_id":null}"#,
+            r#"{"type":"assistant","uuid":"sub","session_id":"s1","parent_tool_use_id":"t"}"#,
+            r#"{"type":"assistant","uuid":"other","session_id":"s0"}"#,
+            r#"{"type":"result","session_id":"s1"}"#,
+        ]
+        .join("\n");
+        assert_eq!(fork_point(&claude, "s1").as_deref(), Some("a"));
+        let codex = [
+            r#"{"type":"turn.completed","turn_id":"u1"}"#,
+            r#"{"type":"turn.completed","turn_id":"u2"}"#,
+            r#"{"type":"turn.failed"}"#,
+        ]
+        .join("\n");
+        assert_eq!(fork_point(&codex, "t1").as_deref(), Some("u2"));
+        assert_eq!(fork_point("", "s1"), None);
+    }
     use super::*;
 
     #[test]
@@ -846,6 +986,28 @@ mod tests {
                 msg(Role::ToolError, "error: 2 tests failed"),
                 msg(Role::Output, "ok"),
                 msg(Role::Error, "No conversation found"),
+            ]
+        );
+    }
+
+    #[test]
+    fn hooks_show_when_they_block_fail_or_say_something() {
+        let log = [
+            r#"{"type":"system","subtype":"hook_response","hook_name":"SessionStart:startup","output":"","stdout":"","stderr":"","exit_code":0,"outcome":"success"}"#,
+            r#"{"type":"system","subtype":"hook_response","hook_name":"PreToolUse:Bash","stderr":"no rm -rf here\nmore","exit_code":2,"outcome":"blocked"}"#,
+            r#"{"type":"system","subtype":"hook_response","hook_name":"Stop","stdout":"lint clean","exit_code":0,"outcome":"success"}"#,
+            r#"{"type":"item.completed","item":{"type":"hook","status":"blocked","event":"preToolUse","text":"no network"}}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            from_log(&log),
+            vec![
+                msg(
+                    Role::ToolError,
+                    "hook PreToolUse:Bash blocked: no rm -rf here"
+                ),
+                msg(Role::Thinking, "hook Stop: lint clean"),
+                msg(Role::ToolError, "hook preToolUse blocked: no network"),
             ]
         );
     }

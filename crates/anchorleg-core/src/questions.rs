@@ -138,6 +138,18 @@ pub fn codex_response(answers: &Answers) -> Value {
 /// The answers to [`plan_question`]; anything else is the person's change to the plan.
 pub const PLAN_APPROVE: &str = "Approve";
 pub const PLAN_REVISE: &str = "Keep planning";
+/// An answer starting with this line approves the plan the person edited, which follows it.
+pub const PLAN_EDITED: &str = "Approve, as edited:";
+
+/// The answer that approves `plan` as the person edited it.
+pub fn plan_edited(plan: &str) -> String {
+    format!("{PLAN_EDITED}\n{}", plan.trim())
+}
+
+/// The plan a plan question is about, stored beside the question so it can be edited.
+pub fn plan_of(input: &Value) -> Option<&str> {
+    input.get("plan").and_then(Value::as_str)
+}
 
 /// Asked when a plan-first run's plan is ready (D38). The plan itself is the agent's last
 /// message, just above in the conversation.

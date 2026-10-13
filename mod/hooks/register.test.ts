@@ -16,7 +16,7 @@ const limits = (fiveHour: number): SessionRateLimit[] => [
 ]
 
 /** Answers the engine beneath the plugin; records every `anchorleg` call the mod makes. */
-function engine(on: On, rateLimits: SessionRateLimit[], exitCode = 0, interrupted = false) {
+function engine(on: On, rateLimits: SessionRateLimit[], exitCode = 0, interrupted = false, tokens = 0) {
   const calls: { argv: readonly string[]; stdin?: string }[] = []
   let requests = 0
   on('process.run', (_$, e) => {
@@ -41,7 +41,15 @@ function engine(on: On, rateLimits: SessionRateLimit[], exitCode = 0, interrupte
       answer: 'model answered',
       toolUses: [],
       stopReason: 'end_turn',
-      usage: null,
+      usage: tokens
+        ? {
+            model: 'claude-haiku-5-5',
+            input_tokens: tokens / 2,
+            output_tokens: tokens / 4,
+            cache_creation_input_tokens: tokens / 4,
+            cache_read_input_tokens: 10_000,
+          }
+        : null,
     }
   })
   return { calls, requests: () => requests }
@@ -103,6 +111,19 @@ test('at the threshold it records a stop and ends the turn without a request', a
   // Only once per session: the next step goes through.
   await runStep($, 3)
   expect(requests()).toBe(1)
+})
+
+test('once the task has used its token budget the turn ends with a stop', async ($, on) => {
+  mock.env(on, { ...ENV, ANCHORLEG_BUDGET_LEFT: '2000' })
+  // Every request counts 1,200 tokens: 200, and a tenth of its 10,000 cache reads.
+  const { calls, requests } = engine(on, limits(10), 0, false, 200)
+  await runStep($, 0)
+  await runStep($, 1)
+  expect(requests()).toBe(2)
+  const result = await runStep($, 2)
+  expect(requests()).toBe(2)
+  expect(result.answer).toContain('token budget')
+  expect(JSON.parse(calls[0].stdin ?? '').stop_reason).toBe('token budget used up')
 })
 
 test('the first step and subagent steps are never stopped', async ($, on) => {

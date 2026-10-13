@@ -8,9 +8,16 @@
 # $FAKE_NO_SESSION_FILE is set, which makes every resume fail).
 set -uo pipefail
 
+# `mcp …` (anchorleg sync mcp): logged as "<account> mcp …" to $FAKE_DIR/mcp.log, nothing else.
+if [[ "${1:-}" == mcp ]]; then
+  printf '%s %s\n' "$(basename "$CLAUDE_CONFIG_DIR")" "$*" >>"$FAKE_DIR/mcp.log"
+  exit 0
+fi
+
 account="$(basename "$CLAUDE_CONFIG_DIR")"
 printf '%s %s [stop_at=%s]%s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" \
-  "${ANCHORLEG_PERMISSION_MODE:+ [permission_mode=$ANCHORLEG_PERMISSION_MODE]}" >>"$FAKE_LOG"  # one line per launch
+  "${ANCHORLEG_PERMISSION_MODE:+ [permission_mode=$ANCHORLEG_PERMISSION_MODE]}${ANCHORLEG_BUDGET_LEFT:+ [budget_left=$ANCHORLEG_BUDGET_LEFT]}" \
+  >>"$FAKE_LOG"  # one line per launch
 n="$(grep -c "^$account " "$FAKE_LOG")"
 
 resume=""

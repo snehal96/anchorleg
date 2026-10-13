@@ -83,6 +83,38 @@ fn review_prompt(id: i64, first: i64, diff: &str, extra: &str) -> String {
     )
 }
 
+/// Opens a side question (`anchorleg btw`), so the fork answers instead of carrying on.
+const BTW_NOTE: &str = "A side question about this session, asked while you work on the task. \
+     Answer it briefly from what you know and can read; don't change any files and don't go on \
+     with the task here.";
+
+/// For `--rewind RUN`: the run before it in its session and the point there to fork from.
+fn rewind_point(store: &Store, db: &Path, id: i64) -> anyhow::Result<(i64, String)> {
+    let run = store
+        .run(id)?
+        .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+    let Some(parent) = run.parent_id.and_then(|p| store.run(p).ok().flatten()) else {
+        anyhow::bail!(
+            "#{id} is its session's first run: nothing to go back to (`anchorleg undo {id}` puts \
+             the files back)"
+        );
+    };
+    let Some(session) = parent.session_id.as_deref() else {
+        anyhow::bail!("#{} never started a session", parent.id);
+    };
+    let log = db
+        .with_file_name("runs")
+        .join(format!("run-{}.jsonl", parent.id));
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    let at = anchorleg_core::conversation::fork_point(&text, session).ok_or_else(|| {
+        anyhow::anyhow!(
+            "#{}'s log doesn't say where its session stood; only Claude and Codex sessions rewind",
+            parent.id
+        )
+    })?;
+    Ok((parent.id, at))
+}
+
 /// Run the task; returns the report so `main` can pick the exit code.
 pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let config = Config::load(&Config::default_path()?)?;
@@ -91,7 +123,17 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    let parent = match args.follow_up.or(args.fork) {
+    // `--rewind R`: R's session as it was when R started, i.e. where R's parent left it.
+    let rewound = match args.rewind {
+        Some(id) => Some(rewind_point(&store, &db, id)?),
+        None => None,
+    };
+    let parent_id = args
+        .follow_up
+        .or(args.fork)
+        .or(args.btw)
+        .or(rewound.as_ref().map(|(p, _)| *p));
+    let parent = match parent_id {
         Some(id) => Some(
             store
                 .run(id)?
@@ -120,6 +162,39 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
         }
     }
 
+    if let Some(id) = args.rewind {
+        for r in store.session_runs(id)? {
+            if let Some(run) = store.run(r)?
+                && matches!(run.state, RunState::Running | RunState::Waiting)
+                && run.pid.is_some_and(pid_alive)
+            {
+                anyhow::bail!(
+                    "#{} is still working; stop it first (anchorleg stop {})",
+                    run.id,
+                    run.id
+                );
+            }
+        }
+        if !args.keep_files {
+            let line = match anchorleg_core::checkpoint::rewind_files(&cwd, id)? {
+                Some(r) => format!(
+                    "files back to how they were when #{id} started: {} put back, {} removed \
+                     (backup: {})",
+                    r.restored.len(),
+                    r.removed.len(),
+                    r.backup
+                ),
+                None => format!(
+                    "the files stay as they are: {} isn't a git repository, or #{id} started \
+                     before anchorleg recorded starts",
+                    cwd.display()
+                ),
+            };
+            if !args.json {
+                eprintln!("anchorleg: {line}");
+            }
+        }
+    }
     let staged = attachments::stage(&cwd, &args.attach, now())?;
     // An unmet goal carries on into the session's follow-ups (D48).
     let goal = args.goal.clone().or_else(|| {
@@ -164,6 +239,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     };
     let task = match (args.prompt.join(" "), &goal, &reviewed) {
         (_, _, Some((_, prompt))) => prompt.clone(),
+        (q, _, _) if args.btw.is_some() => format!("{q}\n\n({BTW_NOTE})"),
         (t, Some(g), _) if t.trim().is_empty() => g.clone(),
         (t, _, _) => t,
     };
@@ -182,6 +258,8 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     if let Some(n) = args.goal_turns {
         opts.goal_turns = n.max(1);
     }
+    opts.budget = args.budget;
+    opts.json_schema = args.json_schema;
     opts.images = staged
         .iter()
         .filter(|p| attachments::is_image(p))
@@ -204,13 +282,14 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
                 p.id
             );
         };
-        if args.fork.is_some()
+        let fork = args.fork.is_some() || args.btw.is_some() || rewound.is_some();
+        if fork
             && config
                 .get(&account)
                 .is_some_and(|a| a.vendor == anchorleg_core::registry::Vendor::Antigravity)
         {
             anyhow::bail!(
-                "forking needs a Claude or Codex session; #{} ran on {account}",
+                "forking or a side question needs a Claude or Codex session; #{} ran on {account}",
                 p.id
             );
         }
@@ -218,9 +297,22 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
             parent: p.id,
             session_id,
             account,
-            fork: args.fork.is_some(),
+            fork,
+            at: rewound.as_ref().map(|(_, at)| at.clone()),
         });
+        opts.side = args.btw.is_some();
     }
+    // A follow-up keeps its session's name; a fork is a new session.
+    opts.name = match (args.name.filter(|n| !n.trim().is_empty()), &parent) {
+        (Some(n), _) => Some(n.trim().to_owned()),
+        (None, Some(p)) if args.follow_up.is_some() || args.rewind.is_some() => {
+            store.session_name(p.id)?
+        }
+        (None, Some(p)) if args.btw.is_some() => {
+            store.session_name(p.id)?.map(|n| format!("btw: {n}"))
+        }
+        (None, _) => None,
+    };
     opts.model = args.model;
     opts.no_wait = args.no_wait;
     opts.log_dir = db.parent().map(|d| d.join("runs"));
@@ -236,6 +328,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     opts.only = args.account;
     opts.relay_bin = Some(std::env::current_exe()?);
     opts.data_dir = db.parent().map(Path::to_owned);
+    opts.config_path = Some(Config::default_path()?);
     if !args.no_mod
         && let Some(dir) = db.parent()
     {
@@ -283,7 +376,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
 
     let ended = match report.outcome {
         Outcome::Done => Some((Kind::Done, report.result.clone().unwrap_or_default())),
-        Outcome::Failed => Some((
+        Outcome::Failed | Outcome::OverBudget => Some((
             Kind::Failed,
             report
                 .result
@@ -361,6 +454,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
                 )
             }
             Outcome::Stopped => eprintln!("anchorleg: stopped"),
+            Outcome::OverBudget => eprintln!("anchorleg: the task's token budget is used up"),
         }
     }
     Ok(report)
@@ -434,8 +528,26 @@ fn stopped(
             .collect(),
         switches: Vec::new(),
         wait_until: None,
+        budget: None,
+        structured_output: None,
         goal: None,
     })
+}
+
+/// `anchorleg rename <run> <name>`: name the session (an empty name clears it). The CLI learns
+/// the new name with the session's next message.
+pub fn rename(id: i64, name: &str) -> anyhow::Result<()> {
+    let store = Store::open(&Store::default_path()?)?;
+    store
+        .run(id)?
+        .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
+    let name = name.trim();
+    store.set_run_name(id, (!name.is_empty()).then_some(name))?;
+    match store.session_name(id)? {
+        Some(n) => println!("#{id}: {n}"),
+        None => println!("#{id}: no name"),
+    }
+    Ok(())
 }
 
 /// `anchorleg stop <run>`: signal the run's process group (started by `anchorleg ui`) or process.

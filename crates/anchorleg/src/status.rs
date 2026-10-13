@@ -196,8 +196,11 @@ pub fn sessions(json: bool, limit: usize) -> anyhow::Result<()> {
     for r in runs {
         let state = format!("{:?}", r.state).to_lowercase();
         let follow = r.parent_id.map(|p| format!(" ↳#{p}")).unwrap_or_default();
+        let name = store
+            .session_name(r.id)?
+            .map_or(String::new(), |n| format!("[{n}] "));
         println!(
-            "#{:<4} {:<9} {:<16} {:>8} ago  {}{follow}",
+            "#{:<4} {:<9} {:<16} {:>8} ago  {name}{}{follow}",
             r.id,
             state,
             r.account.unwrap_or_default(),

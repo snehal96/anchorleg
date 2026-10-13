@@ -183,6 +183,25 @@ pub fn blocked_until(rows: &[&QuotaRow], now: EpochSecs, opts: &PickOptions) -> 
         .max()
 }
 
+/// Until when a `strict` account past its own `stop_at` is off limits: the latest reset of the
+/// windows at or over it. `None` when it isn't strict or has room.
+pub fn strict_until(
+    account: &Account,
+    rows: &[&QuotaRow],
+    now: EpochSecs,
+    opts: &PickOptions,
+) -> Option<EpochSecs> {
+    let limit = account.stop_at.filter(|_| account.strict)?;
+    rows.iter()
+        .filter(|r| r.used.is_some_and(|u| u >= limit))
+        .map(|r| {
+            r.resets_at
+                .unwrap_or(r.updated_at + opts.unknown_reset_wait)
+        })
+        .filter(|&until| until > now)
+        .max()
+}
+
 fn max_used(rows: &[&QuotaRow]) -> f64 {
     rows.iter().filter_map(|r| r.used).fold(0.0, f64::max)
 }
@@ -232,6 +251,13 @@ pub fn pick<'a>(
             {
                 on_credits = Some(account);
             }
+            if earliest.is_none_or(|(_, t)| until < t) {
+                earliest = Some((account, until));
+            }
+            continue;
+        }
+        // Past a strict limit it's as good as blocked, credits or not.
+        if let Some(until) = strict_until(account, account_rows, now, opts) {
             if earliest.is_none_or(|(_, t)| until < t) {
                 earliest = Some((account, until));
             }
@@ -581,6 +607,26 @@ mod tests {
         assert_eq!(a.stop_at(0.3), 0.3);
         assert_eq!(a.stop_at(0.0), 0.4);
         assert_eq!(b.stop_at(0.9), 0.9);
+
+        // Strict: past its limit it's never used; the run waits for the window's reset.
+        a.strict = true;
+        let quota = vec![
+            row("a", "five_hour", None, Some(0.45), Some(NOW + 600)),
+            row(
+                "b",
+                "five_hour",
+                Some("rejected"),
+                Some(1.0),
+                Some(NOW + 900),
+            ),
+        ];
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &drain)),
+            name(&Pick::WaitUntil {
+                at: NOW + 600,
+                account: &a
+            })
+        );
         assert!("fastest".parse::<Policy>().is_err());
     }
 

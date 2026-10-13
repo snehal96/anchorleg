@@ -9,6 +9,49 @@ All notable changes are listed here. The format follows
 ### Added
 - Homebrew tap (in progress).
 
+## [0.6.0] — 2026-10-12
+
+### Added
+- `anchorleg btw <run> -- <question>` (`/btw` in `anchorleg ui`): a read-only fork of the session
+  answers a side question, even while the session works; the session never sees it.
+- `anchorleg rewind <run> -- <message>` (`/rewind <run> <message>`): back to just before that run
+  and on from there. The conversation forks from where the run before it left the session
+  (Claude Code `--resume-session-at`, Codex `thread/fork` `lastTurnId`); the files go back to the
+  run's start point, with a backup ref (`--keep-files` leaves them).
+- Lasting allow rules: `anchorleg rules --add "Bash(cargo test *)"`, in Claude Code's rule syntax.
+  Claude Code gets them as `--allowedTools`; anchorleg applies them to Codex's and Antigravity's
+  approvals. **4** in `anchorleg ui` (or `permission answer <id> rule`) allows a call and saves a
+  rule for it.
+- Approvals show the change: an edit's old and new text, or Codex's diff, under the question in
+  `anchorleg ui` and in `anchorleg permission list`.
+- Edit a plan before approving it: **e** in `anchorleg ui` or `permission answer <id> edit` opens
+  it in `$VISUAL`/`$EDITOR` (`--plan-file F` for scripts); the agent carries out your version.
+- Session names: `run --name`, `anchorleg rename`, `/rename`. Follow-ups keep the name; Claude Code
+  (`--name`) and Codex (`thread/name/set`) get it too.
+- The conversation notes model reroutes (the CLI answering with another model than asked for,
+  also recorded as a `model_rerouted` decision), what your hooks blocked or said, and background
+  commands that ended with a run (the next launch is told).
+- `anchorleg sync mcp [--with-env] [--yes]`: the same MCP servers on every account, added through
+  each CLI's own `mcp add`. Servers with env values or headers are copied only with `--with-env`.
+- A session that moves to another CLI takes the project's instructions for the old one along
+  (`CLAUDE.md` for Codex, `AGENTS.md` for Claude Code, …) in its handoff prompt.
+- `anchorleg run --budget TOKENS` (e.g. `2M`): caps the tokens a task uses across every launch,
+  account and CLI. Claude Code stops at the next step and Codex after the model call that went
+  over; the run ends `over_budget` (exit 3) and the report has `budget: {tokens, spent}`.
+- `anchorleg run --json-schema SCHEMA`: the final answer follows a JSON Schema (each CLI enforces
+  it) and comes back parsed as `structured_output` in the report.
+- Strict per-account limits: `anchorleg accounts set <name> --stop-at 0.4 --strict true`. Past
+  its limit the account counts as blocked until the window resets; the run moves on or waits.
+- Antigravity: questions from the agent reach you through an `ask_user` tool (an MCP server,
+  `anchorleg permission mcp-ask`, added to accounts with their own `HOME`).
+
+### Fixed
+- Codex: a turn anchorleg stopped (quota or budget) or that failed now counts the tokens it used;
+  before, they were missing from `anchorleg usage`.
+- Antigravity's approval hook now finds `config.toml` (it runs with the account's own `HOME`).
+- File rules and paths match when the folder is reached through a symlink (macOS `/var` →
+  `/private/var`).
+
 ## [0.5.0] — 2026-10-12
 
 ### Added

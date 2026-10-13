@@ -86,6 +86,50 @@ pub fn install_hook(home: &Path, bin: &Path) -> std::io::Result<()> {
     std::fs::rename(&tmp, &path)
 }
 
+/// agy's MCP servers file, relative to `HOME` (written by `agy mcp add`, 1.3.3).
+pub const MCP_FILE: &str = ".gemini/config/mcp_config.json";
+
+/// Put anchorleg's question server (`anchorleg permission mcp-ask`, tool `ask_user`) into this
+/// `HOME`'s MCP servers, keeping the others. Like the hook: only an account's own `HOME`.
+pub fn install_mcp(home: &Path, bin: &Path) -> std::io::Result<()> {
+    let path = home.join(MCP_FILE);
+    let mut config = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(m)) => m,
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "{} isn't a JSON object; not touching it",
+                    path.display()
+                )));
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => return Err(e),
+    };
+    let entry = serde_json::json!({
+        "command": bin.display().to_string(),
+        "args": ["permission", "mcp-ask"],
+        "disabled": false,
+    });
+    let servers = config
+        .entry("mcpServers")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(servers) = servers.as_object_mut() else {
+        return Err(std::io::Error::other(format!(
+            "{}: mcpServers isn't an object; not touching it",
+            path.display()
+        )));
+    };
+    if servers.get(HOOK_NAME) == Some(&entry) {
+        return Ok(());
+    }
+    servers.insert(HOOK_NAME.to_owned(), entry);
+    std::fs::create_dir_all(path.parent().expect("has a parent"))?;
+    let tmp = path.with_extension("json.anchorleg-tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Object(config))?)?;
+    std::fs::rename(&tmp, &path)
+}
+
 /// What anchorleg's hook does with one agy tool call.
 #[derive(Debug, PartialEq)]
 pub enum HookVerdict {
@@ -184,6 +228,15 @@ pub fn hook_verdict_in(req: &Value, mode: HookMode) -> HookVerdict {
         .unwrap_or(Value::Null);
     if QUIET_TOOLS.contains(&name) {
         return HookVerdict::Allow;
+    }
+    // anchorleg's own question tool (`install_mcp`): asking the person needs no approval. agy
+    // calls MCP tools through `call_mcp_tool`; its argument names aren't verified, so any
+    // mention of the server and tool counts.
+    if name == "call_mcp_tool" {
+        let text = args.to_string();
+        if text.contains(HOOK_NAME) && text.contains("ask_user") {
+            return HookVerdict::Allow;
+        }
     }
     let mut roots: Vec<PathBuf> = req
         .get("workspacePaths")
@@ -347,6 +400,13 @@ pub fn signals(line: &str) -> Vec<AgentSignal> {
                 .map(AgentSignal::Usage)
                 .into_iter()
                 .collect::<Vec<_>>();
+            // With `--json-schema`: the answer as JSON (its `response` text carries extra fields).
+            out.extend(
+                v.pointer("/result/structured_output")
+                    .filter(|s| !s.is_null())
+                    .cloned()
+                    .map(AgentSignal::Structured),
+            );
             out.extend(result_signals(&v, &text));
             out
         }
@@ -778,5 +838,47 @@ mod tests {
         assert!(has_conversation(&b, "c1"));
         assert!(b.join(DATA_DIR).join("brain/c1/sub/plan.md").is_file());
         assert!(!sync_session(&a, &b, "nope").unwrap());
+    }
+
+    #[test]
+    fn a_json_schema_answer_comes_from_structured_output() {
+        let capture = include_str!(
+            "../../../../fixtures/agy-1.3.3-structured-output-20261012/structured.jsonl"
+        );
+        let sig: Vec<AgentSignal> = capture.lines().flat_map(signals).collect();
+        assert!(
+            sig.contains(&AgentSignal::Structured(
+                serde_json::json!({ "answer": 42, "word": "Joyful" })
+            )),
+            "{sig:?}"
+        );
+    }
+
+    #[test]
+    fn the_question_server_is_added_beside_other_servers_and_allowed() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(MCP_FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"mcpServers":{"fs":{"command":"npx"}}}"#).unwrap();
+        install_mcp(home.path(), Path::new("/bin/anchorleg")).unwrap();
+        install_mcp(home.path(), Path::new("/bin/anchorleg")).unwrap();
+        let config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(config["mcpServers"]["fs"]["command"], "npx");
+        assert_eq!(
+            config["mcpServers"]["anchorleg"]["args"],
+            serde_json::json!(["permission", "mcp-ask"])
+        );
+        let call = |server: &str| {
+            serde_json::json!({ "toolCall": { "name": "call_mcp_tool", "args": {
+                "ServerName": server, "ToolName": "ask_user", "Arguments": "{}" } } })
+        };
+        assert_eq!(
+            hook_verdict_in(&call("anchorleg"), HookMode::Ask),
+            HookVerdict::Allow
+        );
+        assert_ne!(
+            hook_verdict_in(&call("other"), HookMode::Ask),
+            HookVerdict::Allow
+        );
     }
 }

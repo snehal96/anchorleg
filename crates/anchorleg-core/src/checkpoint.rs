@@ -275,6 +275,32 @@ pub fn undo_session(cwd: &Path, runs: &[i64]) -> Result<Option<Restored>, GitErr
     restore(&top, &start_ref(first), &now, backup.refname).map(Some)
 }
 
+/// Where the folder is kept before a rewind to run `run`'s start.
+pub fn rewind_ref(run: i64) -> String {
+    format!("refs/anchorleg/run-{run}/before-rewind")
+}
+
+/// Put the files back as they were when run `run` started (`anchorleg rewind`), the same way as
+/// [`undo_session`]: the folder is saved first under [`rewind_ref`]. `Ok(None)`: not a
+/// repository, or that run saved no start.
+pub fn rewind_files(cwd: &Path, run: i64) -> Result<Option<Restored>, GitError> {
+    let Some(top) = toplevel(cwd) else {
+        return Ok(None);
+    };
+    if first_start(&top, &[run]).is_none() {
+        return Ok(None);
+    }
+    let now = snapshot_tree(&top)?;
+    let backup = commit_ref(
+        &top,
+        &now,
+        head(&top).as_deref(),
+        &format!("anchorleg: before rewinding to run {run}"),
+        &rewind_ref(run),
+    )?;
+    restore(&top, &start_ref(run), &now, backup.refname).map(Some)
+}
+
 /// Undo the last [`undo_session`]: the files it touched go back to how they were before it.
 pub fn redo_session(cwd: &Path, runs: &[i64]) -> Result<Option<Restored>, GitError> {
     let Some(top) = toplevel(cwd) else {

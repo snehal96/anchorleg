@@ -8,6 +8,10 @@
 // - turn.step also checks `anchorleg interrupt-check`: when the person sent a message with
 //   "interrupt", the turn ends before the next request and anchorleg continues the session with
 //   that message (Claude has no way to take a message mid-turn).
+// - turn.step also keeps the task's token budget (ANCHORLEG_BUDGET_LEFT, from `--budget`): it adds
+//   up every step's input, output and cache-write tokens and a tenth of its cache reads, and once
+//   they reach it records a stop
+//   ("token budget used up") and ends the turn the same way. anchorleg then ends the run.
 // - tool.check: when Claude would ask the person about a tool call (in `-p` that ask becomes a
 //   refusal), asks anchorleg instead (`anchorleg permission ask`) and waits for the person's answer in
 //   `anchorleg ui` or `anchorleg permission answer`. Nothing is allowed without that answer; if anchorleg
@@ -23,7 +27,7 @@
 // It never touches credentials (D8): anchorleg does the switch by relaunching the CLI.
 // Outside anchorleg (no ANCHORLEG_ACCOUNT) it does nothing.
 
-import type { EngineInterface, Register, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, Register, SessionRateLimit, TurnUsage } from 'claude-code'
 
 type Reading = { window: string; used: number; resets_at?: number }
 
@@ -170,6 +174,8 @@ async function askQuestions(
 
 export const register: Register = (on) => {
   let stopped = false
+  // Tokens this launch has used so far (input, output, cache writes), for the budget.
+  let spent = 0
 
   on('session.start', async ($, e, next) => {
     if (await $.env.get('ANCHORLEG_RUN_ID')) await $.tool.register(ASK_SPEC)
@@ -199,8 +205,16 @@ export const register: Register = (on) => {
     return result
   })
 
+  // A step sent on to the model, its tokens (subagents' too) added up for the task's budget.
+  async function* counted<Y, R extends { usage: TurnUsage | null }>(step: AsyncGenerator<Y, R>) {
+    const result = yield* step
+    const u = result.usage
+    if (u) spent += u.input_tokens + u.output_tokens + u.cache_creation_input_tokens + Math.floor(u.cache_read_input_tokens / 10)
+    return result
+  }
+
   on('turn.step', async function* ($, e, next) {
-    if (stopped || e.index === 0 || e.agentId !== undefined) return yield* next(e)
+    if (stopped || e.index === 0 || e.agentId !== undefined) return yield* counted(next(e))
     const account = await $.env.get('ANCHORLEG_ACCOUNT')
     const bin = await $.env.get('ANCHORLEG_BIN')
     const runId = await $.env.get('ANCHORLEG_RUN_ID')
@@ -219,11 +233,31 @@ export const register: Register = (on) => {
         }
       }
     }
-    if (!account || !bin || !runId || !(stopAt > 0)) return yield* next(e)
+    const budgetLeft = Number((await $.env.get('ANCHORLEG_BUDGET_LEFT')) ?? 'NaN')
+    if (account && bin && runId && spent >= budgetLeft) {
+      const report = { account, readings: [], run_id: Number(runId), stop_reason: 'token budget used up' }
+      const run = await $.process.run([bin, 'report', '--json'], {
+        stdin: JSON.stringify(report),
+        timeoutMs: 10_000,
+      })
+      if (run.exitCode === 0) {
+        stopped = true
+        return {
+          turnId: e.turnId,
+          index: e.index,
+          answer: "[anchorleg] Stopping here: the task's token budget is used up.",
+          toolUses: [],
+          stopReason: null,
+          usage: null,
+        }
+      }
+      $.ui.log(`anchorleg report failed: ${run.stderr.trim()}`, { to: 'debug' })
+    }
+    if (!account || !bin || !runId || !(stopAt > 0)) return yield* counted(next(e))
 
     const { rateLimits } = await $.session.usage()
     const used = maxUsed(rateLimits)
-    if (used < stopAt) return yield* next(e)
+    if (used < stopAt) return yield* counted(next(e))
 
     const report = {
       account,
@@ -238,7 +272,7 @@ export const register: Register = (on) => {
     if (run.exitCode !== 0) {
       // anchorleg didn't get the stop; carry on rather than end a turn nobody will resume.
       $.ui.log(`anchorleg report failed: ${run.stderr.trim()}`, { to: 'debug' })
-      return yield* next(e)
+      return yield* counted(next(e))
     }
     stopped = true
     // Answer the step ourselves: no request, no tool calls, so the turn ends here.

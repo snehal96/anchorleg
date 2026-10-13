@@ -16,6 +16,8 @@ pub mod exit {
     pub const OK: u8 = 0;
     /// The task ran and failed, or anchorleg hit an error.
     pub const FAILED: u8 = 1;
+    /// The task used up its `--budget` before it finished.
+    pub const OVER_BUDGET: u8 = 3;
     /// Bad arguments (clap's default).
     pub const USAGE: u8 = 2;
     /// Every account is blocked and `--no-wait` was given (EX_TEMPFAIL).
@@ -177,6 +179,19 @@ pub struct RunReport {
     /// The run's goal and how it ended (`anchorleg run --goal`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<GoalReport>,
+    /// The task's token budget and what it used (`anchorleg run --budget`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<BudgetReport>,
+    /// The answer as JSON, with `--json-schema`; `null` if the agent didn't give one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BudgetReport {
+    pub tokens: u64,
+    /// Input, output and cache-write tokens of every launch, and a tenth of its cache reads.
+    pub spent: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -197,6 +212,8 @@ pub enum Outcome {
     AllBlocked,
     NoAccounts,
     Stopped,
+    /// The task used up its `--budget` before it finished.
+    OverBudget,
 }
 
 impl Outcome {
@@ -207,6 +224,7 @@ impl Outcome {
             Self::AllBlocked => exit::ALL_BLOCKED,
             Self::NoAccounts => exit::NO_ACCOUNTS,
             Self::Stopped => exit::STOPPED,
+            Self::OverBudget => exit::OVER_BUDGET,
         }
     }
 }

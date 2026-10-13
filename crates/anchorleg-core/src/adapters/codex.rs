@@ -78,6 +78,14 @@ impl Stream {
                     .map(AgentSignal::Usage)
                     .into_iter()
                     .collect();
+                out.extend(
+                    v.get("background")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(|c| AgentSignal::Background(c.to_owned())),
+                );
                 out.push(AgentSignal::Finished {
                     ok: true,
                     session_id: self.thread_id.clone(),
@@ -85,7 +93,28 @@ impl Stream {
                 });
                 out
             }
+            Some("model.rerouted") => text("/to")
+                .map(|to| AgentSignal::Rerouted {
+                    from: text("/from"),
+                    to,
+                    reason: text("/reason"),
+                })
+                .into_iter()
+                .collect(),
+            // anchorleg stopped the turn (quota or budget): count what it used.
+            Some("turn.stopped") => v
+                .get("turn_usage")
+                .map(turn_usage)
+                .filter(|u| !u.is_empty())
+                .map(AgentSignal::Usage)
+                .into_iter()
+                .collect(),
             Some("turn.failed") => {
+                let usage = v
+                    .get("turn_usage")
+                    .map(turn_usage)
+                    .filter(|u| !u.is_empty())
+                    .map(AgentSignal::Usage);
                 let message = text("/error/message").unwrap_or_default();
                 // Turns run through `codex app-server` carry Codex's own error code (D27).
                 let code = text("/error/codex_error_info");
@@ -94,17 +123,18 @@ impl Stream {
                     Some(_) => None,
                     None => limit_reset(&message),
                 };
-                match limit {
-                    Some(resets_at) => vec![AgentSignal::LimitHit {
+                let end = match limit {
+                    Some(resets_at) => AgentSignal::LimitHit {
                         window: None,
                         resets_at,
-                    }],
-                    None => vec![AgentSignal::Finished {
+                    },
+                    None => AgentSignal::Finished {
                         ok: false,
                         session_id: self.thread_id.clone(),
                         text: Some(message),
-                    }],
-                }
+                    },
+                };
+                usage.into_iter().chain([end]).collect()
             }
             Some("error") => {
                 let message = text("/message").unwrap_or_default();
@@ -468,6 +498,42 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, AgentSignal::LimitHit { .. }))
         );
+    }
+
+    #[test]
+    fn a_reroute_is_a_signal() {
+        let line = r#"{"type":"model.rerouted","from":"gpt-5.6","to":"gpt-5.6-mini","reason":"highRiskCyberActivity"}"#;
+        assert_eq!(
+            run(line),
+            vec![AgentSignal::Rerouted {
+                from: Some("gpt-5.6".into()),
+                to: "gpt-5.6-mini".into(),
+                reason: Some("highRiskCyberActivity".into())
+            }]
+        );
+    }
+
+    #[test]
+    fn stopped_and_failed_turns_still_count_their_tokens() {
+        let usage = AgentSignal::Usage(Usage {
+            model: None,
+            input_tokens: 50,
+            output_tokens: 5,
+            cache_read_tokens: 50,
+            cache_write_tokens: 0,
+            cost_usd: None,
+        });
+        let tokens =
+            r#""turn_usage":{"input_tokens":100,"cached_input_tokens":50,"output_tokens":5}"#;
+        assert_eq!(
+            run(&format!(r#"{{"type":"turn.stopped",{tokens}}}"#)),
+            vec![usage.clone()]
+        );
+        let failed = run(&format!(
+            r#"{{"type":"turn.failed","error":{{"message":"boom"}},{tokens}}}"#
+        ));
+        assert_eq!(failed[0], usage);
+        assert!(matches!(failed[1], AgentSignal::Finished { ok: false, .. }));
     }
 
     #[test]

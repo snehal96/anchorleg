@@ -584,6 +584,60 @@ fn one_line(s: &str, max: usize) -> String {
     }
 }
 
+/// The project instruction files each CLI reads by itself.
+fn reads(vendor: crate::registry::Vendor) -> &'static [&'static str] {
+    use crate::registry::Vendor;
+    match vendor {
+        Vendor::Claude => &["CLAUDE.md"],
+        Vendor::Codex => &["AGENTS.md"],
+        Vendor::Antigravity => &["GEMINI.md", "AGENTS.md"],
+        _ => &[],
+    }
+}
+
+/// Most of an instruction file carried into a prompt.
+const INSTRUCTIONS_MAX: usize = 8000;
+
+/// The project's instructions for another CLI that `vendor` wouldn't read by itself (a session
+/// moving from Claude Code to Codex loses CLAUDE.md), as a section for the handoff prompt.
+/// Imports of files it does read (`@AGENTS.md`) are dropped. `None`: nothing to add.
+pub fn instructions_for(cwd: &std::path::Path, vendor: crate::registry::Vendor) -> Option<String> {
+    let own = reads(vendor);
+    let mut out = String::new();
+    for file in ["CLAUDE.md", "AGENTS.md", "GEMINI.md"] {
+        if own.contains(&file) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(cwd.join(file)) else {
+            continue;
+        };
+        let kept: Vec<&str> = text
+            .lines()
+            .filter(|l| {
+                !l.trim()
+                    .strip_prefix('@')
+                    .is_some_and(|f| own.contains(&f.trim()))
+            })
+            .collect();
+        let body = kept.join("\n");
+        let body = body.trim();
+        if body.is_empty() {
+            continue;
+        }
+        let cut = body
+            .char_indices()
+            .nth(INSTRUCTIONS_MAX)
+            .map_or(body, |(i, _)| &body[..i]);
+        out += &format!(
+            "\n\nThe project's {file} (instructions written for another CLI; follow them):\n\n{cut}"
+        );
+        if cut.len() < body.len() {
+            out += &format!("\n\n[… cut; the rest is in {file}]");
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

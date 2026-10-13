@@ -6,6 +6,7 @@
 //! For agy, anchorleg's `PreToolUse` hook calls `anchorleg permission agy-hook` the same way (D26).
 
 use std::io::Read as _;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anchorleg_core::adapters::agy::{self, HookVerdict};
@@ -38,22 +39,32 @@ pub enum PermissionCmd {
     /// needs it, and prints agy's `{decision, reason}`.
     #[command(hide = true)]
     AgyHook,
+    /// A stdio MCP server with one tool, `ask_user`, that puts the agent's questions to the
+    /// person (agy's `-p` drops its own question tool). Installed in an agy account's own `HOME`
+    /// next to the hook.
+    #[command(hide = true)]
+    McpAsk,
     /// List tool calls waiting for an answer.
     List {
         #[arg(long)]
         json: bool,
     },
-    /// Answer one. A tool call: yes, always (this tool, for the rest of the session) or no.
+    /// Answer one. A tool call: yes, always (this tool, for the rest of the session), rule
+    /// (always, in every session: saves a rule like `Bash(cargo test *)`) or no.
     /// A question: one answer per question, in order: an option number (`2`, or `1,3` when
     /// several may be picked), an option label, or your own words; `-` for a secret one
     /// (anchorleg never passes secrets); `--skip` declines.
+    /// A plan: `edit` opens it in `$VISUAL`/`$EDITOR`; the plan as you save it is approved.
     Answer {
         id: i64,
-        #[arg(required_unless_present = "skip")]
+        #[arg(required_unless_present_any = ["skip", "plan_file"])]
         answer: Vec<String>,
         /// Decline a question without answering.
         #[arg(long)]
         skip: bool,
+        /// Approve the plan as written in this file (your edit of it).
+        #[arg(long, conflicts_with_all = ["skip", "answer"])]
+        plan_file: Option<PathBuf>,
     },
 }
 
@@ -108,6 +119,22 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
             let out = agy_hook(&store, &text);
             println!("{}", serde_json::to_string(&out)?);
         }
+        PermissionCmd::McpAsk => {
+            use std::io::{BufRead as _, Write as _};
+            let run_id = std::env::var("ANCHORLEG_RUN_ID")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok());
+            let mut out = std::io::stdout().lock();
+            for line in std::io::stdin().lock().lines() {
+                let Ok(msg) = serde_json::from_str::<Value>(&line?) else {
+                    continue;
+                };
+                if let Some(reply) = mcp_reply(&store, run_id, &msg) {
+                    writeln!(out, "{reply}")?;
+                    out.flush()?;
+                }
+            }
+        }
         PermissionCmd::List { json } => {
             let pending = store.pending_permissions()?;
             if json {
@@ -138,9 +165,18 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
                     p.run_id,
                     describe(&p.tool, &p.input)
                 );
+                for (mark, line) in anchorleg_core::conversation::change_preview(&p.tool, &p.input)
+                {
+                    println!("        {mark} {line}");
+                }
             }
         }
-        PermissionCmd::Answer { id, answer, skip } => {
+        PermissionCmd::Answer {
+            id,
+            mut answer,
+            skip,
+            plan_file,
+        } => {
             let p = store
                 .permission(id)?
                 .filter(|p| p.state == PermissionState::Pending)
@@ -152,6 +188,23 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
                     return Ok(());
                 }
                 let qs = questions::from_input(&p.input);
+                let plan = questions::plan_of(&p.input)
+                    .filter(|_| qs.len() == 1 && qs[0].id == questions::plan_question().id);
+                if let Some(file) = &plan_file {
+                    plan.context("only a plan can be answered with --plan-file")?;
+                    let text = std::fs::read_to_string(file)
+                        .with_context(|| format!("reading {}", file.display()))?;
+                    answer = vec![questions::plan_edited(&text)];
+                } else if let Some(plan) = plan
+                    && answer == ["edit"]
+                {
+                    let edited = edit_text(plan)?;
+                    answer = vec![if edited.trim() == plan.trim() {
+                        questions::PLAN_APPROVE.to_owned()
+                    } else {
+                        questions::plan_edited(&edited)
+                    }];
+                }
                 if answer.len() != qs.len() {
                     bail!(
                         "{} question(s), {} answer(s): give one per question",
@@ -178,8 +231,14 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
             let state = match (skip, answer.as_str()) {
                 (false, "yes") => PermissionState::Allowed,
                 (false, "always") => PermissionState::Always,
+                (false, "rule") => {
+                    let cwd = store.run(p.run_id)?.map(|r| r.cwd).unwrap_or_default();
+                    let rule = save_rule(&anchorleg_core::rules::suggest(&p.tool, &p.input, &cwd))?;
+                    println!("saved the rule {rule} for every session");
+                    PermissionState::Always
+                }
                 (_, "no") | (true, _) => PermissionState::Denied,
-                _ => bail!("answer a tool call with yes, always or no"),
+                _ => bail!("answer a tool call with yes, always, rule or no"),
             };
             if !store.answer_permission(id, state, now())? {
                 bail!("request {id} isn't waiting for an answer");
@@ -230,6 +289,145 @@ fn agy_hook(store: &Store, text: &str) -> Value {
         }),
         Err(e) => json!({ "decision": "deny", "reason": format!("anchorleg: {e}") }),
     }
+}
+
+/// The tool `anchorleg permission mcp-ask` offers: the same as anchorleg-mod's `ask_user`.
+fn ask_user_tool() -> Value {
+    json!({
+        "name": "ask_user",
+        "description": "Ask the person running this task one to four questions and wait for \
+            their answers. Use it when you need a decision only they can make (a choice between \
+            approaches, a missing requirement); otherwise pick a sensible default and say so. Give \
+            2-4 options per question when you can; they may also answer in their own words.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "questions": {
+                    "type": "array", "minItems": 1, "maxItems": 4,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": { "type": "string", "description": "The full question, ending with a question mark." },
+                            "header": { "type": "string", "description": "A short label, up to 12 characters." },
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": { "label": { "type": "string" }, "description": { "type": "string" } },
+                                    "required": ["label"],
+                                },
+                            },
+                            "multiSelect": { "type": "boolean", "description": "Several options may be picked." },
+                        },
+                        "required": ["question"],
+                    },
+                },
+            },
+            "required": ["questions"],
+        },
+    })
+}
+
+/// The answer to one MCP message (JSON-RPC), `None` for notifications.
+fn mcp_reply(store: &Store, run_id: Option<i64>, msg: &Value) -> Option<Value> {
+    let id = msg.get("id")?.clone();
+    let method = msg
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let ok = |result: Value| json!({ "jsonrpc": "2.0", "id": id.clone(), "result": result });
+    let text = |text: String, error: bool| {
+        ok(json!({ "content": [{ "type": "text", "text": text }], "isError": error }))
+    };
+    Some(match method {
+        "initialize" => ok(json!({
+            "protocolVersion": msg
+                .pointer("/params/protocolVersion")
+                .cloned()
+                .unwrap_or_else(|| "2025-06-18".into()),
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "anchorleg", "version": env!("CARGO_PKG_VERSION") },
+        })),
+        "ping" => ok(json!({})),
+        "tools/list" => ok(json!({ "tools": [ask_user_tool()] })),
+        "tools/call" if msg.pointer("/params/name") == Some(&json!("ask_user")) => {
+            let Some(run_id) = run_id else {
+                return Some(text(
+                    "Not in an anchorleg run: nobody to ask. Decide yourself or ask in your reply."
+                        .to_owned(),
+                    true,
+                ));
+            };
+            let args = msg.pointer("/params/arguments").unwrap_or(&Value::Null);
+            let qs = questions::from_claude(args);
+            if qs.is_empty() {
+                return Some(text("No questions given.".to_owned(), true));
+            }
+            let req = AskInput {
+                run_id,
+                tool: questions::TOOL.to_owned(),
+                input: questions::to_input(&qs),
+                reason: None,
+                id: None,
+            };
+            match ask(store, &req, Duration::from_secs(u64::MAX / 4)) {
+                Ok(AskOutput {
+                    decision: "allow",
+                    answers: Some(answers),
+                    ..
+                }) => text(questions::summary(&qs, &answers), false),
+                Ok(out) => text(
+                    format!(
+                        "The user didn't answer: {} (asked through anchorleg). Decide yourself \
+                         or ask in your reply.",
+                        out.reason
+                    ),
+                    true,
+                ),
+                Err(e) => text(format!("anchorleg couldn't ask: {e}"), true),
+            }
+        }
+        _ => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32601, "message": format!("anchorleg doesn't answer {method}") },
+        }),
+    })
+}
+
+/// `text` as the person edits it in `$VISUAL` / `$EDITOR` (`vi` without either).
+pub fn edit_text(text: &str) -> anyhow::Result<String> {
+    let path = std::env::temp_dir().join(format!("anchorleg-plan-{}.md", std::process::id()));
+    std::fs::write(&path, text)?;
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_owned());
+    // `$EDITOR` may carry arguments (`code --wait`).
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("sh")
+        .arg(&path)
+        .status()
+        .with_context(|| format!("starting {editor}"));
+    let edited = std::fs::read_to_string(&path);
+    let _ = std::fs::remove_file(&path);
+    let status = status?;
+    if !status.success() {
+        bail!("{editor} exited with {status}: nothing was answered");
+    }
+    Ok(edited?)
+}
+
+/// Add `rule` to the lasting allow rules (once) and return it.
+pub fn save_rule(rule: &str) -> anyhow::Result<String> {
+    let path = Config::default_path()?;
+    let mut config = Config::load(&path)?;
+    if !config.allow.iter().any(|r| r == rule) {
+        config.allow.push(rule.to_owned());
+        config.save(&path)?;
+    }
+    Ok(rule.to_owned())
 }
 
 /// One line for a tool call, paths shown relative to the current folder.
@@ -294,6 +492,25 @@ fn ask(store: &Store, req: &AskInput, wait: Duration) -> anyhow::Result<AskOutpu
                     reason: format!("{} allowed for this session", req.tool),
                     answers: None,
                 });
+            }
+            // The person's lasting rules (`anchorleg rules`); a review stays read-only.
+            if !question && let Some(run) = store.run(req.run_id)?.filter(|r| r.review_of.is_none())
+            {
+                let rules = Config::default_path()
+                    .and_then(|p| Config::load(&p))
+                    .map(|c| c.allow)
+                    .unwrap_or_default();
+                if let Some(rule) = rules
+                    .iter()
+                    .find(|r| anchorleg_core::rules::matches(r, &req.tool, &req.input, &run.cwd))
+                {
+                    return Ok(AskOutput {
+                        decision: "allow",
+                        id: None,
+                        reason: format!("allowed by the rule {rule}"),
+                        answers: None,
+                    });
+                }
             }
             let id = store.ask_permission(
                 req.run_id,

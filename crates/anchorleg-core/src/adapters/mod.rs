@@ -7,6 +7,7 @@ pub mod codex;
 pub mod codex_server;
 
 use serde::Serialize;
+use serde_json::Value;
 
 /// Unix time in seconds.
 pub type EpochSecs = i64;
@@ -178,6 +179,18 @@ pub enum AgentSignal {
     /// `--resume` named a session this account can't see (e.g. it lives in another
     /// account's config dir).
     SessionNotFound,
+    /// The final answer as JSON, when the run asked for structured output (`--json-schema`).
+    Structured(Value),
+    /// The agent started a command that keeps running in the background (a dev server, a
+    /// watcher); it ends with the CLI, so a switch has to say so.
+    Background(String),
+    /// The CLI answered with another model than the session's (overload fallback, a plan-mode
+    /// upgrade, Codex's reroute).
+    Rerouted {
+        from: Option<String>,
+        to: String,
+        reason: Option<String>,
+    },
     Finished {
         ok: bool,
         session_id: Option<String>,

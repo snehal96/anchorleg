@@ -27,6 +27,8 @@ const TURN: i64 = 3;
 const INTERRUPT: i64 = 1000;
 /// `turn/steer` requests count up from here.
 const STEER: i64 = 2000;
+/// `thread/name/set`; its answer needs nothing.
+const NAME: i64 = 1100;
 
 /// How many times a turn stopped by a refusal is continued with a note about it.
 const MAX_REFUSAL_TURNS: usize = 3;
@@ -55,10 +57,22 @@ pub struct Turn {
     pub review: bool,
     /// Fork `resume` into a new thread (`thread/fork`) instead of continuing it.
     pub fork: bool,
+    /// With `fork`: the last turn the new thread keeps (`lastTurnId`), for a rewind.
+    pub fork_at: Option<String>,
     /// Approval requests go to Codex's own reviewer (`approvalsReviewer: auto_review`), not to
     /// the person (`--mode auto`).
     pub auto_review: bool,
+    /// Tokens the task may still use (`--budget`): past them the turn stops after the model call
+    /// that went over, like the quota stop.
+    pub budget_left: Option<u64>,
+    /// A JSON Schema for the turn's final message (`outputSchema`, `--json-schema`).
+    pub output_schema: Option<Value>,
+    /// The session's name, set on the thread (`thread/name/set`).
+    pub name: Option<String>,
 }
+
+/// Why anchorleg stopped a Codex turn when the task's budget ran out.
+pub const BUDGET_STOP: &str = "token budget used up";
 
 /// What the driver passes back to the supervisor.
 #[derive(Debug)]
@@ -144,6 +158,9 @@ pub fn thread_request(turn: &Turn) -> Value {
             params["threadId"] = id.as_str().into();
             params["excludeTurns"] = true.into();
             let method = if turn.fork {
+                if let Some(at) = &turn.fork_at {
+                    params["lastTurnId"] = at.as_str().into();
+                }
                 "thread/fork"
             } else {
                 "thread/resume"
@@ -238,15 +255,31 @@ pub struct Translator {
     context_window: Option<u64>,
     /// Command output already passed on, per item: live output is capped (D45).
     output_sent: HashMap<String, usize>,
+    /// Commands started and not finished yet: still running when the turn ends means they run
+    /// in the background.
+    running: HashMap<String, String>,
     /// This turn's tokens: the sum of every model call's `last`.
     turn_usage: HashMap<&'static str, u64>,
     /// Files of each file change, from `item/started`, for its approval request.
     changes: HashMap<String, Vec<String>>,
+    /// Their diffs, shown with the approval request.
+    diffs: HashMap<String, String>,
 }
 
 impl Translator {
     pub fn thread_id(&self) -> Option<&str> {
         self.thread_id.as_deref()
+    }
+
+    /// This turn's tokens that count toward a budget: new input, output, cache writes and a
+    /// tenth of cached input (as `Store::run_tokens` counts them).
+    pub fn turn_tokens(&self) -> u64 {
+        let n = |k: &str| self.turn_usage.get(k).copied().unwrap_or(0);
+        let cached = n("cached_input_tokens");
+        n("input_tokens").saturating_sub(cached)
+            + n("output_tokens")
+            + n("cache_write_input_tokens")
+            + cached / 10
     }
 
     /// The `thread/start` or `thread/resume` answer.
@@ -270,15 +303,25 @@ impl Translator {
                     Some("fileChange") => {
                         if let Some(id) = item.get("id").and_then(Value::as_str) {
                             self.changes.insert(id.to_owned(), change_paths(item));
+                            self.diffs.insert(id.to_owned(), change_diff(item));
                         }
                         Vec::new()
                     }
                     // A command starting, or subagents started or waited on: shown as running
                     // until it completes.
-                    Some("commandExecution" | "collabAgentToolCall") => exec_item(item)
-                        .map(|i| json!({ "type": "item.started", "item": i }))
-                        .into_iter()
-                        .collect(),
+                    Some("commandExecution" | "collabAgentToolCall") => {
+                        if let (Some(id), Some(cmd)) = (
+                            item.get("id").and_then(Value::as_str),
+                            item.get("command").and_then(Value::as_str),
+                        ) {
+                            self.running
+                                .insert(id.to_owned(), codex::unwrap_command(cmd).to_owned());
+                        }
+                        exec_item(item)
+                            .map(|i| json!({ "type": "item.started", "item": i }))
+                            .into_iter()
+                            .collect()
+                    }
                     _ => Vec::new(),
                 }
             }
@@ -303,10 +346,44 @@ impl Translator {
             }
             "item/completed" => params
                 .get("item")
+                .inspect(|i| {
+                    if let Some(id) = i.get("id").and_then(Value::as_str) {
+                        self.running.remove(id);
+                    }
+                })
                 .and_then(exec_item)
                 .map(|item| json!({ "type": "item.completed", "item": item }))
                 .into_iter()
                 .collect(),
+            // A hook of the person's that did something visible (blocked, failed, said something).
+            "hook/completed" => {
+                let run = params.get("run").unwrap_or(&Value::Null);
+                let status = run
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let text: Vec<&str> = run
+                    .get("entries")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.get("text").and_then(Value::as_str))
+                    .collect();
+                if status == "completed" && text.is_empty() {
+                    return Vec::new();
+                }
+                vec![json!({ "type": "item.completed", "item": {
+                    "id": run.get("id"), "type": "hook", "status": status,
+                    "event": run.get("eventName"), "text": text.join("\n"),
+                } })]
+            }
+            // Codex answers this turn with another model than asked for.
+            "model/rerouted" => vec![json!({
+                "type": "model.rerouted",
+                "from": params.get("fromModel"),
+                "to": params.get("toModel"),
+                "reason": params.get("reason"),
+            })],
             // Codex's reviewer decided on something it would have asked about (`--mode auto`).
             "item/autoApprovalReview/completed" => {
                 let field = |k: &str| {
@@ -463,6 +540,7 @@ impl Translator {
                 };
                 let mut done = json!({
                     "type": "turn.completed",
+                    "turn_id": turn.get("id").cloned().unwrap_or(Value::Null),
                     "usage": {
                         "input_tokens": n("inputTokens"),
                         "cached_input_tokens": n("cachedInputTokens"),
@@ -470,6 +548,9 @@ impl Translator {
                     },
                     "turn_usage": self.turn_usage,
                 });
+                if !self.running.is_empty() {
+                    done["background"] = json!(self.running.values().collect::<Vec<_>>());
+                }
                 if let Some(w) = self.context_window {
                     done["usage"]["model_context_window"] = w.into();
                 }
@@ -486,12 +567,21 @@ impl Translator {
                         _ => "the turn failed".to_owned(),
                     });
                 let mut failed = json!({ "type": "turn.failed", "error": { "message": message } });
+                // A stopped or failed turn still used tokens.
+                if !self.turn_usage.is_empty() {
+                    failed["turn_usage"] = json!(self.turn_usage);
+                }
                 if let Some(code) = error.get("codexErrorInfo").and_then(error_code) {
                     failed["error"]["codex_error_info"] = code.into();
                 }
                 failed
             }
         }
+    }
+
+    /// The turn anchorleg stopped at a clean point: only its tokens, as `turn.stopped`.
+    pub fn turn_stopped(&self) -> Value {
+        json!({ "type": "turn.stopped", "turn_usage": self.turn_usage })
     }
 
     /// An approval request from Codex. `None` for requests anchorleg doesn't answer.
@@ -529,6 +619,9 @@ impl Translator {
                 let mut input = json!({ "file_path": paths.first().cloned().unwrap_or_default() });
                 if paths.len() > 1 {
                     input["files"] = paths.into();
+                }
+                if let Some(diff) = self.diffs.get(item).filter(|d| !d.is_empty()) {
+                    input["diff"] = diff.as_str().into();
                 }
                 if let Some(root) = params.get("grantRoot").and_then(Value::as_str) {
                     input["grant_root"] = root.into();
@@ -599,6 +692,40 @@ fn change_paths(item: &Value) -> Vec<String> {
         .flatten()
         .filter_map(|c| c.get("path").and_then(Value::as_str).map(str::to_owned))
         .collect()
+}
+
+/// A file change's diffs as one unified diff: a new file's text as added lines, a header per
+/// file when there are several.
+fn change_diff(item: &Value) -> String {
+    let changes: Vec<&Value> = item
+        .get("changes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
+    let mut out = String::new();
+    for c in &changes {
+        let path = c.get("path").and_then(Value::as_str).unwrap_or_default();
+        let diff = c.get("diff").and_then(Value::as_str).unwrap_or_default();
+        if changes.len() > 1 {
+            out += &format!("--- {path}\n");
+        }
+        match c.pointer("/kind/type").and_then(Value::as_str) {
+            Some("add") => {
+                for line in diff.lines() {
+                    out += &format!("+{line}\n");
+                }
+            }
+            Some("delete") => out += &format!("-(deletes {path})\n"),
+            _ => {
+                out += diff;
+                if !diff.is_empty() && !diff.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    out
 }
 
 /// An app-server item as the `codex exec --json` item anchorleg's readers know. `None` for
@@ -743,11 +870,16 @@ pub(crate) async fn ask_questions_of(
     bin: &Path,
     run_id: i64,
     qs: &[questions::Question],
+    plan: Option<&str>,
 ) -> Option<questions::Answers> {
+    let mut input = questions::to_input(qs);
+    if let Some(plan) = plan {
+        input["plan"] = plan.into();
+    }
     let req = json!({
         "run_id": run_id,
         "tool": questions::TOOL,
-        "input": questions::to_input(qs),
+        "input": input,
         "reason": null,
     });
     ask(bin, req)
@@ -838,7 +970,10 @@ where
             // agent's message (0.153.4).
             return review_request(id, thread, text);
         }
-        let r = turn_request(id, thread, text, turn.effort.as_deref());
+        let mut r = turn_request(id, thread, text, turn.effort.as_deref());
+        if let Some(schema) = &turn.output_schema {
+            r["params"]["outputSchema"] = schema.clone();
+        }
         match (turn.plan, model) {
             (true, Some(m)) => with_plan_mode(r, m, turn.effort.as_deref()),
             _ => r,
@@ -926,6 +1061,14 @@ where
                                     .map(str::to_owned);
                             }
                             let thread = t.thread_id().unwrap_or_default().to_owned();
+                            if let Some(name) = &turn.name {
+                                send(
+                                    &mut stdin,
+                                    &json!({ "id": NAME, "method": "thread/name/set",
+                                        "params": { "threadId": thread, "name": name } }),
+                                )
+                                .await?;
+                            }
                             send(
                                 &mut stdin,
                                 &with_images(
@@ -942,8 +1085,8 @@ where
                         }
                         (None, None) => return Ok(()),
                     }
-                } else if id == INTERRUPT {
-                    // The answer to a soft stop; `turn/completed` follows.
+                } else if id == INTERRUPT || id == NAME {
+                    // The answer to a soft stop (`turn/completed` follows), or to the name.
                 } else if let Some(message) = id.as_i64().and_then(|i| steering.remove(&i)) {
                     // A refused steer (the turn ended meanwhile) stays queued for the next turn.
                     if error.is_none() {
@@ -1027,6 +1170,7 @@ where
                 if let Some(reason) = stopping.take() {
                     // Our soft stop. If the turn finished anyway, it's simply done.
                     if status == Some("interrupted") {
+                        emit(t.turn_stopped());
                         let _ = events.send(Event::Stopped(reason));
                         return Ok(());
                     }
@@ -1096,6 +1240,23 @@ where
                         .map(str::to_owned);
                 }
                 t.notification(method, params).into_iter().for_each(emit);
+                // Token usage comes after each model call: the same clean point as the quota stop.
+                if method == "thread/tokenUsage/updated"
+                    && stopping.is_none()
+                    && turn.budget_left.is_some_and(|left| t.turn_tokens() >= left)
+                    && let (Some(tid), Some(thread)) = (turn_id.as_deref(), t.thread_id())
+                {
+                    send(
+                        &mut stdin,
+                        &json!({
+                            "id": INTERRUPT,
+                            "method": "turn/interrupt",
+                            "params": { "threadId": thread, "turnId": tid },
+                        }),
+                    )
+                    .await?;
+                    stopping = Some(BUDGET_STOP.to_owned());
+                }
             }
             (None, None) => {}
         }
@@ -1124,6 +1285,18 @@ mod tests {
 
     const AUTO_REVIEW: &str =
         include_str!("../../../../fixtures/codex-0.153.4-auto-review-20261012/auto-review.jsonl");
+
+    #[test]
+    fn a_turns_budget_tokens_count_cache_reads_at_a_tenth() {
+        let mut t = Translator::default();
+        for m in incoming(AUTO_REVIEW) {
+            if let Some(method) = m.get("method").and_then(Value::as_str) {
+                t.notification(method, &m["params"]);
+            }
+        }
+        // Two model calls: 34,205 input (22,016 of it cached) and 113 output in all.
+        assert_eq!(t.turn_tokens(), 34_205 - 22_016 + 113 + 2_201);
+    }
 
     #[test]
     fn codex_reviewer_decisions_show_in_the_conversation() {
@@ -1369,7 +1542,7 @@ mod tests {
         let mut t = Translator::default();
         t.notification(
             "item/started",
-            &json!({ "item": { "type": "fileChange", "id": "f1", "changes": [{ "path": "/w/a.rs", "kind": { "type": "update" } }] } }),
+            &json!({ "item": { "type": "fileChange", "id": "f1", "changes": [{ "path": "/w/a.rs", "kind": { "type": "update" }, "diff": "@@ -1 +1 @@\n-a\n+b\n" }] } }),
         );
         let a = t
             .approval(
@@ -1379,6 +1552,7 @@ mod tests {
             .unwrap();
         assert_eq!((a.tool.as_str(), a.refuse), ("Edit", "decline"));
         assert_eq!(a.input["file_path"], "/w/a.rs");
+        assert_eq!(a.input["diff"], "@@ -1 +1 @@\n-a\n+b\n");
         assert!(
             t.approval("item/tool/requestUserInput", &json!({}))
                 .is_none()
@@ -1388,9 +1562,12 @@ mod tests {
     #[test]
     fn a_cancelled_turn_and_limit_errors() {
         let events = translate(CANCEL);
+        // A stopped turn still reports the tokens it used.
         assert_eq!(
             events.last().unwrap(),
-            &json!({ "type": "turn.failed", "error": { "message": "the turn was stopped" } })
+            &json!({ "type": "turn.failed", "error": { "message": "the turn was stopped" },
+                "turn_usage": { "input_tokens": 16932, "cached_input_tokens": 16128,
+                    "cache_write_input_tokens": 0, "output_tokens": 154 } })
         );
         let t = Translator::default();
         let failed = t.turn_completed(&json!({ "turn": { "status": "failed", "error": {
@@ -1456,7 +1633,11 @@ mod tests {
             plan: false,
             review: false,
             fork: false,
+            fork_at: None,
             auto_review: true,
+            budget_left: None,
+            output_schema: None,
+            name: None,
         };
         let r = thread_request(&turn);
         assert_eq!(r["method"], "thread/resume");

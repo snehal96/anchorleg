@@ -214,6 +214,10 @@ pub struct Account {
     /// when no other has room.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_at: Option<f64>,
+    /// With `stop_at`: never use the account past it. Instead of carrying on there when no other
+    /// account has room, the run waits for the window to reset.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub strict: bool,
     /// Task roles this account is for (later: role routing). Parsed, not used yet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
@@ -243,6 +247,7 @@ impl Account {
             shell: None,
             reserve_7d: None,
             stop_at: None,
+            strict: false,
             roles: Vec::new(),
             pinned: false,
             credits: crate::policy::CreditsUse::default(),
@@ -279,6 +284,9 @@ impl Account {
             && !(s > 0.0 && s <= 1.0)
         {
             return invalid("stop_at must be above 0 and at most 1");
+        }
+        if self.strict && self.stop_at.is_none() {
+            return invalid("`strict` needs a `stop_at`");
         }
         Ok(())
     }
@@ -547,6 +555,10 @@ pub struct Config {
         skip_serializing_if = "crate::notify::NotifySettings::is_default"
     )]
     pub notify: crate::notify::NotifySettings,
+    /// Tool calls every session may make without asking (`anchorleg rules`), in Claude Code's
+    /// rule syntax: `Bash(cargo test *)`, `Edit(src/**)`, `WebFetch(domain:docs.rs)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
 }
 
 fn is_default_policy(p: &crate::policy::Policy) -> bool {

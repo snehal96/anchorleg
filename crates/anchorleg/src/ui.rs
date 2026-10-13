@@ -177,6 +177,10 @@ impl TextBox {
 /// Everything a click or a key can do outside text editing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
+    /// Allow the waiting tool call in every session from now on: save a rule for it.
+    SaveRule,
+    /// Open the waiting plan in the person's editor; the plan as saved is approved.
+    EditPlan,
     Focus(Focus),
     SelectSession(usize),
     SelectAgent(usize),
@@ -319,6 +323,8 @@ pub struct App {
     /// Progress through the waiting question request: its id, the answers so far (one per
     /// question answered), and the options ticked on a multi-select question.
     asking: Option<(i64, Vec<Vec<String>>, Vec<usize>)>,
+    /// A plan to open in the editor, once the event loop has given the terminal back.
+    pub edit_plan: Option<(i64, String)>,
     /// Files going with the next message (pasted images, already in the task folder).
     attached: Vec<PathBuf>,
     pub config: Config,
@@ -336,6 +342,8 @@ pub struct App {
     /// Tokens per day over the last two weeks.
     usage_days: Vec<(i64, u64, f64)>,
     runs: Vec<Run>,
+    /// Each listed session's name, if it has one.
+    names: std::collections::HashMap<i64, String>,
     /// Tool calls waiting for the person, oldest first.
     pending: Vec<Permission>,
     /// Pids of running sessions that are still alive.
@@ -408,6 +416,7 @@ impl App {
             help: false,
             usage_panel: false,
             asking: None,
+            edit_plan: None,
             attached: Vec::new(),
             config: Config::default(),
             config_path,
@@ -421,6 +430,7 @@ impl App {
             usage_week: Vec::new(),
             usage_days: Vec::new(),
             runs: Vec::new(),
+            names: std::collections::HashMap::new(),
             pending: Vec::new(),
             alive: Vec::new(),
             selected: 0,
@@ -492,6 +502,11 @@ impl App {
         self.usage_days = self.store.usage_by_day(t - 14 * 86_400)?;
         let selected_id = self.selected_run().map(|r| r.id);
         self.runs = self.store.recent_runs(200)?;
+        self.names = self
+            .runs
+            .iter()
+            .filter_map(|r| Some((r.id, self.store.session_name(r.id).ok()??)))
+            .collect();
         self.pending = self.store.pending_permissions()?;
         self.alive = self
             .runs
@@ -638,6 +653,11 @@ impl App {
                 self.field = Field::Message;
             }
             Action::Answer(state) => self.answer(state)?,
+            Action::SaveRule => self.save_rule()?,
+            Action::EditPlan => match self.waiting_plan().map(|(id, plan)| (id, plan.to_owned())) {
+                Some(p) => self.edit_plan = Some(p),
+                None => self.message = "no plan is waiting for approval".to_owned(),
+            },
             Action::Pick(n) => self.pick(n)?,
             Action::ConfirmPicks => self.confirm_picks()?,
             Action::SkipQuestion => self.answer(PermissionState::Denied)?,
@@ -764,6 +784,15 @@ impl App {
             (
                 "review",
                 "anchorleg: review this session's changes on another account".to_owned(),
+            ),
+            ("rename", "anchorleg: name this session".to_owned()),
+            (
+                "btw",
+                "anchorleg: a side question; a read-only copy answers".to_owned(),
+            ),
+            (
+                "rewind",
+                "anchorleg: <run> <message>: go back to before that run".to_owned(),
             ),
         ];
         own.into_iter()
@@ -1134,6 +1163,62 @@ impl App {
         self.refresh()
     }
 
+    /// `4`: always allow calls like the waiting one, in every session (`anchorleg rules`).
+    /// The waiting plan approval: its request id and the plan.
+    fn waiting_plan(&self) -> Option<(i64, &str)> {
+        let p = self.waiting().filter(|p| p.is_question())?;
+        let qs = questions::from_input(&p.input);
+        if qs.len() != 1 || qs[0].id != questions::plan_question().id {
+            return None;
+        }
+        Some((p.id, questions::plan_of(&p.input)?))
+    }
+
+    /// The person's edit of plan `id`: approved as they saved it (unchanged: plainly approved).
+    pub fn plan_edited(&mut self, id: i64, plan: &str, edited: anyhow::Result<String>) {
+        let answer = match edited {
+            Ok(text) if text.trim() == plan.trim() => questions::PLAN_APPROVE.to_owned(),
+            Ok(text) if text.trim().is_empty() => {
+                self.message = "the plan came back empty: nothing was answered".to_owned();
+                return;
+            }
+            Ok(text) => questions::plan_edited(&text),
+            Err(e) => {
+                self.message = format!("editing the plan: {e:#}");
+                return;
+            }
+        };
+        let answers = questions::Answers::from([(questions::plan_question().id, vec![answer])]);
+        self.asking = None;
+        self.message = match self.store.answer_question(id, &answers, now()) {
+            Ok(true) => "plan approved as you edited it".to_owned(),
+            Ok(false) => "the plan isn't waiting any more".to_owned(),
+            Err(e) => format!("error: {e:#}"),
+        };
+    }
+
+    fn save_rule(&mut self) -> anyhow::Result<()> {
+        let Some(p) = self.waiting().filter(|p| !p.is_question()).cloned() else {
+            self.message = "nothing is waiting for an answer here".to_owned();
+            return Ok(());
+        };
+        let cwd = self
+            .runs
+            .iter()
+            .find(|r| r.id == p.run_id)
+            .map(|r| r.cwd.clone())
+            .unwrap_or_default();
+        let rule = anchorleg_core::rules::suggest(&p.tool, &p.input, &cwd);
+        if !self.config.allow.contains(&rule) {
+            self.config.allow.push(rule.clone());
+            self.config.save(&self.config_path)?;
+        }
+        self.store
+            .answer_permission(p.id, PermissionState::Always, now())?;
+        self.message = format!("allowed; every session may now {rule} (anchorleg rules)");
+        self.refresh()
+    }
+
     fn edit_settings(&mut self) {
         let vendor = self
             .config
@@ -1234,6 +1319,9 @@ impl App {
                     | "compact"
                     | "goal"
                     | "review"
+                    | "rename"
+                    | "btw"
+                    | "rewind"
             )
         {
             let cmd = rest.split(' ').next().unwrap_or("");
@@ -1260,6 +1348,26 @@ impl App {
             .filter(|a| a.is_empty() || a.starts_with(' '))
         {
             return self.set_mode(arg.trim());
+        }
+        // `/rename <name>`: name the selected session (`anchorleg rename`); nothing clears it.
+        if let Some(arg) = text
+            .strip_prefix("/rename")
+            .filter(|a| a.is_empty() || a.starts_with(' '))
+        {
+            let Some(run) = self.selected_run().cloned() else {
+                self.message = "select the session to name first".to_owned();
+                return Ok(());
+            };
+            let name = arg.trim();
+            self.store
+                .set_run_name(run.id, (!name.is_empty()).then_some(name))?;
+            self.message_box = TextBox::default();
+            self.message = if name.is_empty() {
+                format!("#{} has no name now", run.id)
+            } else {
+                format!("#{} is now “{name}”", run.id)
+            };
+            return self.refresh();
         }
         // `/review [fix] [notes]`: the selected session's changes, reviewed read-only on another
         // account (`anchorleg review`); `fix` sends the findings back to it.
@@ -1291,6 +1399,54 @@ impl App {
             self.pending_pid = Some(i64::from(pid));
             self.message_box = TextBox::default();
             self.message = format!("reviewing #{}", run.id);
+            return self.refresh();
+        }
+        // `/btw <question>`: a read-only copy of the selected session answers; the session
+        // itself, working or not, is left alone.
+        if let Some(question) = text.strip_prefix("/btw ") {
+            let Some(run) = self.selected_run().cloned() else {
+                self.message = "select the session to ask first".to_owned();
+                return Ok(());
+            };
+            if run.session_id.is_none() {
+                self.message = format!("#{} never started a session", run.id);
+                return Ok(());
+            }
+            let args = vec![
+                "btw".to_owned(),
+                run.id.to_string(),
+                "--json".to_owned(),
+                "--".to_owned(),
+                question.trim().to_owned(),
+            ];
+            let pid = self.launcher.start(&args)?;
+            self.pending_pid = Some(i64::from(pid));
+            self.message_box = TextBox::default();
+            self.message = format!("asked a copy of #{}; #{} goes on untouched", run.id, run.id);
+            return self.refresh();
+        }
+        // `/rewind <run> <message>`: back to just before that run, conversation and files.
+        if let Some(rest) = text.strip_prefix("/rewind ") {
+            let (run, message) = rest.trim().split_once(' ').unwrap_or((rest.trim(), ""));
+            let Ok(run) = run.trim_start_matches('#').parse::<i64>() else {
+                self.message = "/rewind <run> <message>: the run to go back to before".to_owned();
+                return Ok(());
+            };
+            if message.trim().is_empty() {
+                self.message = "/rewind <run> <message>: say how to go on from there".to_owned();
+                return Ok(());
+            }
+            let args = vec![
+                "rewind".to_owned(),
+                run.to_string(),
+                "--json".to_owned(),
+                "--".to_owned(),
+                message.trim().to_owned(),
+            ];
+            let pid = self.launcher.start(&args)?;
+            self.pending_pid = Some(i64::from(pid));
+            self.message_box = TextBox::default();
+            self.message = format!("rewound to before #{run}");
             return self.refresh();
         }
         // `/fork <message>`: a new session from the selected one's history.
@@ -1652,6 +1808,10 @@ impl App {
             KeyCode::Char('3') if self.waiting().is_some() => {
                 Some(Action::Answer(PermissionState::Denied))
             }
+            KeyCode::Char('4') if self.waiting().is_some_and(|p| !p.is_question()) => {
+                Some(Action::SaveRule)
+            }
+            KeyCode::Char('e') if self.waiting_plan().is_some() => Some(Action::EditPlan),
             KeyCode::Char('r') => {
                 self.refresh()?;
                 self.message = "refreshed".to_owned();
@@ -2033,8 +2193,12 @@ impl App {
                 truncate(r.account.as_deref().unwrap_or("-"), 12)
             );
             let follow = if r.parent_id.is_some() { "↳ " } else { "" };
+            let name = self
+                .names
+                .get(&r.id)
+                .map_or(String::new(), |n| format!("[{n}] "));
             let task = truncate(
-                &format!("{follow}{}", r.task.replace('\n', " ")),
+                &format!("{follow}{name}{}", r.task.replace('\n', " ")),
                 width.saturating_sub(head.chars().count() + 1),
             );
             lines.push(Line::from(vec![
@@ -2188,8 +2352,11 @@ impl App {
         let title = match self.selected_run() {
             None => "New session".to_owned(),
             Some(r) => format!(
-                "#{} · {} · {} · {}{}",
+                "#{}{} · {} · {} · {}{}",
                 r.id,
+                self.names
+                    .get(&r.id)
+                    .map_or(String::new(), |n| format!(" {n}")),
                 r.account.as_deref().unwrap_or("-"),
                 format!("{:?}", r.state).to_lowercase(),
                 truncate(&r.cwd, 40),
@@ -2219,7 +2386,10 @@ impl App {
                     let options = qs.get(step).map_or(0, |q| q.options.len());
                     u16::try_from(options + 4).unwrap_or(u16::MAX)
                 }
-                None => 4,
+                None => {
+                    let shown = conversation::change_preview(&p.tool, &p.input).len();
+                    u16::try_from(4 + shown).unwrap_or(u16::MAX)
+                }
             }
             .min(inner.height.saturating_sub(3));
             let [rest, prompt] =
@@ -2435,7 +2605,14 @@ impl App {
 
     /// Claude Code's question, with its three answers: keys 1–3 or a click.
     fn draw_permission(&mut self, f: &mut Frame, area: Rect, p: &Permission) {
-        let [rule, ask, why, buttons] = Layout::vertical([Constraint::Length(1); 4]).areas(area);
+        let [rule, ask, diff, why, buttons] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
         f.render_widget(
             Paragraph::new("─".repeat(usize::from(area.width)))
                 .style(Style::new().fg(Color::Yellow)),
@@ -2455,6 +2632,24 @@ impl App {
             ])),
             ask,
         );
+        // The change itself, as Claude Code shows it before an edit.
+        let width = usize::from(area.width);
+        let lines: Vec<Line> = conversation::change_preview(&p.tool, &p.input)
+            .into_iter()
+            .map(|(mark, text)| {
+                let style = match mark {
+                    '+' => Style::new().fg(Color::Green),
+                    '-' => Style::new().fg(Color::Red),
+                    _ => Style::new().fg(Color::DarkGray),
+                };
+                let text = match mark {
+                    '+' | '-' => format!("  {mark} {text}"),
+                    _ => format!("    {text}"),
+                };
+                Line::from(Span::styled(truncate(&text, width), style))
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), diff);
         f.render_widget(
             Paragraph::new(truncate(
                 p.reason
@@ -2473,6 +2668,7 @@ impl App {
         ] {
             x = self.button(f, buttons, x, label, Action::Answer(state)) + 1;
         }
+        self.button(f, buttons, x, "4 Always (rule)", Action::SaveRule);
     }
 
     /// The agent's question: header, text, numbered options; clickable.
@@ -2556,6 +2752,9 @@ impl App {
             }
             (true, _) => "type your answer below and press Enter · 0 skip",
             (false, true) => "number keys tick · Enter confirm · or type your own answer · 0 skip",
+            _ if self.waiting_plan().is_some() => {
+                "number to pick · e edit the plan · or type what to change · 0 skip"
+            }
             (false, false) => "number to pick · or type your own answer below · 0 skip",
         };
         row(f, Line::styled(format!("  {hint}"), dim));
@@ -2870,6 +3069,9 @@ fn draw_help(f: &mut Frame) {
         "                    /worktree <task>  new task in its own git worktree · /fork <msg>  branch the session",
         "                    /clear  new session in this folder · /compact  free the session's context",
         "                    /goal <condition>  keep working until it holds (new task or the session)",
+        "                    /rename <name>  name the selected session",
+        "                    /btw <question>  a side question; a read-only copy answers",
+        "                    /rewind <run> <message>  back to before that run (talk and files)",
         "                    /review [fix]  review the session's changes on another account (fix: send findings back)",
         "                    /other  the CLI's own commands; Tab completes, ↑↓ choose",
         "                    Ctrl+A/E start/end · Ctrl+U clear",
@@ -2878,7 +3080,8 @@ fn draw_help(f: &mut Frame) {
         "Agents              ↑↓ select · Shift+↑↓ (K/J) reorder · space on/off",
         "                    i import aliases · d d remove",
         "                    p switch policy: drain → balance → save-weekly",
-        "Permission asked    1 yes · 2 yes for this session · 3 no",
+        "Permission asked    1 yes · 2 yes for this session · 3 no · 4 always, as a rule",
+        "Plan ready          1 approve · 2 keep planning · e edit it in $EDITOR · or type a change",
         "                    o settings for the selected account's CLI (e.g. claude:",
         "                      --permission-mode acceptEdits), used on every launch of it",
         "",
@@ -3020,7 +3223,7 @@ fn message_lines(m: &Message, width: usize) -> Vec<Line<'static>> {
 fn own_command(name: &str) -> bool {
     matches!(
         name,
-        "model" | "effort" | "clear" | "compact" | "goal" | "review"
+        "model" | "effort" | "clear" | "compact" | "goal" | "review" | "rename" | "btw" | "rewind"
     )
 }
 
@@ -3174,6 +3377,15 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
             };
             if let Err(e) = result {
                 app.message = format!("error: {e:#}");
+            }
+            // The editor needs the terminal: hand it over, then take it back.
+            if let Some((id, plan)) = app.edit_plan.take() {
+                let _ = execute!(std::io::stdout(), DisableMouseCapture);
+                ratatui::restore();
+                let edited = crate::permission::edit_text(&plan);
+                *terminal = ratatui::init();
+                execute!(std::io::stdout(), EnableMouseCapture)?;
+                app.plan_edited(id, &plan, edited);
             }
         } else if let Err(e) = app.refresh() {
             app.message = format!("error: {e:#}");
@@ -3420,6 +3632,81 @@ mod tests {
                 ""
             ]
         );
+    }
+
+    #[test]
+    fn an_edit_approval_shows_the_change() {
+        let edit =
+            serde_json::json!({ "file_path": "/w/a.rs", "old_string": "a\nb", "new_string": "c" });
+        assert_eq!(
+            conversation::change_preview("Edit", &edit),
+            vec![('-', "a".into()), ('-', "b".into()), ('+', "c".into())]
+        );
+        let diff = serde_json::json!({ "file_path": "/w/a.rs", "diff": "--- a.rs\n@@ -1 +1 @@\n ctx\n-a\n+b\n" });
+        assert_eq!(
+            conversation::change_preview("Edit", &diff),
+            vec![
+                ('.', "--- a.rs".into()),
+                ('.', "@@ -1 +1 @@".into()),
+                ('.', "ctx".into()),
+                ('-', "a".into()),
+                ('+', "b".into())
+            ]
+        );
+        let long: String = (0..30).map(|i| format!("{i}\n")).collect();
+        let write = conversation::change_preview("Write", &serde_json::json!({ "content": long }));
+        assert_eq!(write.len(), 10);
+        assert_eq!(write[9], ('.', "… 21 more lines".into()));
+        assert!(
+            conversation::change_preview("Bash", &serde_json::json!({ "command": "ls" }))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn e_edits_a_waiting_plan_and_approves_the_edit() {
+        let mut fx = fixture(&[("a", 1)], &[("task", RunState::Running, Some("s1"))]);
+        let mut input = questions::to_input(&[questions::plan_question()]);
+        input["plan"] = "1. step".into();
+        let id = fx
+            .app
+            .store
+            .ask_permission(1, questions::TOOL, &input, None, now())
+            .unwrap();
+        fx.app.refresh().unwrap();
+        key(&mut fx.app, KeyCode::Char('e'));
+        let (asked, plan) = fx.app.edit_plan.take().expect("the editor is asked for");
+        assert_eq!((asked, plan.as_str()), (id, "1. step"));
+        fx.app
+            .plan_edited(id, &plan, Ok("1. better step\n".to_owned()));
+        let answers = fx
+            .app
+            .store
+            .permission(id)
+            .unwrap()
+            .unwrap()
+            .answers
+            .unwrap();
+        assert_eq!(
+            answers["plan"],
+            vec![questions::plan_edited("1. better step")]
+        );
+    }
+
+    #[test]
+    fn slash_rename_names_the_selected_session() {
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("fix the tests", RunState::Done, Some("s1"))],
+        );
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/rename auth fix");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(
+            fx.app.store.session_name(1).unwrap().as_deref(),
+            Some("auth fix")
+        );
+        assert!(fx.calls.borrow().started.is_empty());
     }
 
     #[test]
@@ -3741,6 +4028,17 @@ mod tests {
             PermissionState::Denied
         );
         assert!(fx.app.message.starts_with("refused Write"));
+        // 4: allowed, and a rule for every session from now on.
+        let third = ask(&fx.app);
+        fx.app.refresh().unwrap();
+        key(&mut fx.app, KeyCode::Char('4'));
+        assert_eq!(
+            fx.app.store.permission(third).unwrap().unwrap().state,
+            PermissionState::Always
+        );
+        let saved = Config::load(&fx.app.config_path).unwrap().allow;
+        assert_eq!(saved.len(), 1, "{saved:?}");
+        assert!(saved[0].starts_with("Write("), "{saved:?}");
         // With nothing waiting, 1 does nothing.
         key(&mut fx.app, KeyCode::Char('1'));
         assert!(fx.calls.borrow().started.is_empty());
@@ -4184,6 +4482,41 @@ mod tests {
                 "--",
                 "try it with a macro instead"
             ]
+        );
+    }
+
+    #[test]
+    fn btw_asks_a_copy_of_the_session() {
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("first task", RunState::Running, Some("s1"))],
+        );
+        fx.app.select_session(1);
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/btw which database is this using?");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.app.message, "asked a copy of #1; #1 goes on untouched");
+        assert_eq!(
+            fx.calls.borrow().started[0],
+            ["btw", "1", "--json", "--", "which database is this using?"]
+        );
+        assert!(fx.calls.borrow().stopped.is_empty());
+    }
+
+    #[test]
+    fn rewind_from_the_composer() {
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("first task", RunState::Done, Some("s1"))],
+        );
+        fx.app.select_session(1);
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/rewind #2 use a macro");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.app.message, "rewound to before #2");
+        assert_eq!(
+            fx.calls.borrow().started[0],
+            ["rewind", "2", "--json", "--", "use a macro"]
         );
     }
 

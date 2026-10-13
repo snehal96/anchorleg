@@ -21,6 +21,7 @@ real app server (fixtures/codex-0.153.4-app-server-*).
   the turn until anchorleg sends `turn/steer` (appended to $FAKE_DIR/steers.log; the turn goes
   on) or `turn/interrupt` (the turn ends interrupted), 10 s at most.
 - `review/start`: played like `turn/start`, its instructions logged as "[review] …".
+- `thread/name/set`: appended to $FAKE_DIR/names.log as "<thread> <name>".
 - `thread/compact/start`: logged like a turn, answered with a `contextCompaction` item and a
   completed turn.
 """
@@ -34,6 +35,16 @@ import sys
 account = os.path.basename(os.environ["CODEX_HOME"].rstrip("/"))
 fake = os.environ["FAKE_DIR"]
 args = sys.argv[1:]
+# `mcp list --json`: $FAKE_DIR/X.mcp.json, or no servers. Other `mcp …` (anchorleg sync mcp):
+# logged as "<account> mcp …" to $FAKE_DIR/mcp.log.
+if args[:1] == ["mcp"]:
+    if args[1:2] == ["list"]:
+        path = f"{fake}/{account}.mcp.json"
+        print(open(path).read() if os.path.exists(path) else "[]")
+    else:
+        with open(f"{fake}/mcp.log", "a") as f:
+            f.write(f"{account} {' '.join(args)}\n")
+    sys.exit(0)
 pre_args = args[: args.index("app-server")] if "app-server" in args else args
 # Feature switches (`-c features.X=true`) go to their own log, so calls.log stays about turns.
 features = [pre_args[i + 1] for i, a in enumerate(pre_args[:-1]) if a == "-c" and pre_args[i + 1].startswith("features.")]
@@ -117,6 +128,10 @@ while True:
             if os.path.exists(f"{fake}/{account}.rollout.jsonl"):
                 f.write(open(f"{fake}/{account}.rollout.jsonl").read())
         send({"id": msg["id"], "result": {"thread": {"id": tid, "path": path}, "model": params.get("model") or "gpt-default"}})
+    elif method == "thread/name/set":
+        with open(f"{fake}/names.log", "a") as f:
+            f.write(f"{params.get('threadId')} {params.get('name')}\n")
+        send({"id": msg["id"], "result": {}})
     elif method == "thread/compact/start":
         # `/compact`: logged like a turn ("… thread/compact/start <thread>"), then a compaction.
         turns += 1
@@ -135,11 +150,14 @@ while True:
             params = {"input": [{"type": "text", "text": "[review] " + params["target"]["instructions"]}]}
         text = " ".join(i.get("text", "") for i in params.get("input", [])).replace("\n", " ")
         what = how + (f" {tid}" if how in ("thread/resume", "thread/fork") else "")
+        if tp.get("lastTurnId"):
+            what += f" at={tp['lastTurnId']}"
         line = (
             f"{account} {' '.join(pre_args)} {what} model={tp.get('model')} "
             f"effort={params.get('effort')} sandbox={tp.get('sandbox')} "
             f"approval={tp.get('approvalPolicy')}"
             + (f" reviewer={tp['approvalsReviewer']}" if tp.get("approvalsReviewer") else "")
+            + (" schema=" + json.dumps(params["outputSchema"], separators=(",", ":")) if params.get("outputSchema") else "")
             + f" -- {text}"
         ).replace("  ", " ")
         images = [i["path"] for i in params.get("input", []) if i.get("type") == "localImage"]

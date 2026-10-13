@@ -251,9 +251,12 @@ pub struct Run {
     pub goal_status: Option<String>,
     /// The session this run reviews (`anchorleg review`, D49).
     pub review_of: Option<RunId>,
+    /// A name for the session, given on this run (`--name`, `anchorleg rename`); its follow-ups
+    /// share it (see [`Store::session_name`]).
+    pub name: Option<String>,
 }
 
-const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status, review_of";
+const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status, review_of, name";
 
 fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -272,6 +275,7 @@ fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         goal: r.get(12)?,
         goal_status: r.get(13)?,
         review_of: r.get(14)?,
+        name: r.get(15)?,
     })
 }
 
@@ -392,6 +396,9 @@ ALTER TABLE runs ADD COLUMN goal_status TEXT;
 "#,
     r#"
 ALTER TABLE runs ADD COLUMN review_of INTEGER;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN name TEXT;
 "#,
 ];
 
@@ -633,6 +640,19 @@ impl Store {
         Ok(())
     }
 
+    /// The tokens a run has used so far that count toward its budget: input, output and cache
+    /// writes, plus a tenth of cache reads (billed at about a tenth of input).
+    pub fn run_tokens(&self, run_id: RunId) -> Result<u64> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens + cache_write_tokens
+                                 + cache_read_tokens / 10), 0)
+             FROM usage WHERE run_id = ?1",
+            params![run_id],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
     /// Usage since `since`, per account and model, most expensive (then most tokens) first.
     pub fn usage_totals(&self, since: EpochSecs) -> Result<Vec<UsageTotal>> {
         let mut stmt = self.conn.prepare(
@@ -714,6 +734,22 @@ impl Store {
             params![id, goal, status],
         )?;
         Ok(())
+    }
+
+    pub fn set_run_name(&self, id: RunId, name: Option<&str>) -> Result<()> {
+        self.conn
+            .execute("UPDATE runs SET name = ?2 WHERE id = ?1", params![id, name])?;
+        Ok(())
+    }
+
+    /// The session's name: the latest one given on this run or a run it follows up.
+    pub fn session_name(&self, id: RunId) -> Result<Option<String>> {
+        for run in self.session_runs(id)? {
+            if let Some(name) = self.run(run)?.and_then(|r| r.name) {
+                return Ok(Some(name));
+            }
+        }
+        Ok(None)
     }
 
     pub fn set_run_review_of(&self, id: RunId, of: Option<RunId>) -> Result<()> {

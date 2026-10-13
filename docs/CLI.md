@@ -19,12 +19,17 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` | works |
-| `anchorleg permission list [--json]` · `answer <id> yes\|always\|no` · `answer <id> <answer>… \| --skip` (questions) · `ask --json` (anchorleg-mod) | works (Claude, Codex; agy under development) |
+| `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
+| `anchorleg rules [--add RULE]… [--rm RULE]…` | works (Claude, Codex, Antigravity) |
+| `anchorleg rename <run> <name>` | works |
+| `anchorleg btw <run> [--model M] [--json] -- <question…>` | works (Claude, Codex) |
+| `anchorleg rewind <run> [--keep-files] [--model M] [--json] -- <message…>` | works (Claude, Codex; files in git folders) |
+| `anchorleg sync mcp [--with-env] [--yes]` | works (Claude, Codex, Antigravity) |
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
 | `anchorleg stop <run>` | works |
 | `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
@@ -33,7 +38,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
-| `anchorleg run [--follow-up RUN \| --fork RUN \| --review RUN [--cli C] [--fix]] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -152,7 +157,10 @@ An account can have its own limit: `anchorleg accounts set work --stop-at 0.4` (
 run's `--stop-at`, if lower) and moves to another account; from then on it goes after every
 account with room, like the weekly reserve. Use it to keep a shared or work subscription mostly
 free. With nowhere else to go, the session stays on it until the hard limit, as with any soft
-stop. `anchorleg status` shows the next pick under the configured policy; the run's `start`
+stop, unless the limit is strict: `accounts set work --stop-at 0.4 --strict true` (`strict = true`)
+never goes past it; past its limit the account counts as blocked until the window resets, and
+the run moves on or waits (exit 75 with `--no-wait`). Antigravity reports no quota, so its
+limits can't apply. `anchorleg status` shows the next pick under the configured policy; the run's `start`
 decision records the policy used.
 
 ```toml
@@ -301,6 +309,39 @@ Follow-ups and forks stay on the account their session ran on while it has room 
 `--prefer`/`--account` say otherwise): on another CLI the session couldn't be resumed, only
 continued from a handoff.
 
+### Name a session: `--name`
+
+`anchorleg run --name "auth fix" -- …`, `anchorleg rename <run> <name>` or `/rename <name>` in
+`anchorleg ui` names a session; its follow-ups keep the name (a fork doesn't). The name shows in
+`anchorleg sessions`, the UI's list and title, and `sessions --json` (`name`), and goes to the CLI:
+Claude Code's `--name`, Codex's `thread/name/set`. An empty name clears it.
+
+### Side questions: `anchorleg btw`
+
+`anchorleg btw 12 -- "which database does this use?"` (`/btw <question>` in `anchorleg ui`) asks a
+session something without disturbing it, even while it works: a fork of the session (Claude
+`--resume … --fork-session`, Codex `thread/fork`) answers, on the same account, read-only (Claude
+Code with Edit/Write/NotebookEdit refused, Codex in the read-only sandbox), told to answer briefly
+and not to go on with the task. The session itself never sees the question. The answer is a
+session of its own, named `btw: <name>` when the session has a name. `anchorleg run --btw 12` is
+the same thing. Claude and Codex only.
+
+### Rewind: `anchorleg rewind`
+
+`anchorleg rewind 14 -- "try it with a macro instead"` (`/rewind 14 <message>` in `anchorleg ui`)
+goes back to just before run #14 and goes on from there with the new message:
+
+- **The conversation**: a new session forked from #14's session where #14's parent run left it
+  (Claude Code's `--resume … --resume-session-at <message> --fork-session`, Codex's `thread/fork`
+  with `lastTurnId`). #14 and everything after it is left out; the old session is kept.
+- **The files** go back to how they were when #14 started (anchorleg saves a start point for every
+  run in a git folder). The folder as it was is saved first under
+  `refs/anchorleg/run-14/before-rewind`. `--keep-files` leaves the files alone.
+
+#14 must have a run before it in its session (`anchorleg undo` puts back a whole session's
+changes), and nothing in the session may be working. `anchorleg run --rewind 14 -- …` is the same
+thing. Claude and Codex only.
+
 ### What the agent is doing
 
 The conversation shows each tool call with the first lines of its output (`⎿`), and the model's
@@ -308,6 +349,18 @@ reasoning dimmed (`✻`): Claude's thinking text when the CLI includes it, Codex
 summaries, and for Antigravity, which doesn't stream its thinking, how many tokens it thought for.
 While a session works, the call it's in shows above **Working…** with how long it has been running;
 Codex streams command output as it comes, Claude Code and Antigravity send it when the command ends.
+
+Things the CLI does on its own are noted in the conversation too:
+
+- **Model reroutes**: `personal answers with claude-haiku-… instead of claude-sonnet-…` when the
+  CLI answers with another model than the one asked for (Codex's `model/rerouted`, with its
+  reason; for Claude Code anchorleg compares each reply's model with the session's). The switch is
+  recorded as a `model_rerouted` decision.
+- **Your hooks**: what a hook blocked or said (Claude Code's hook events, `--include-hook-events`;
+  Codex's `hook/completed`). Hooks that ran quietly aren't shown.
+- **Background commands**: commands the agent left running in the background end with the CLI
+  when a run stops or switches; anchorleg says which, and tells the next launch so it can start
+  them again.
 
 Subagents the session started are listed under it, each with how many tool calls it has made and,
 while it works, the call it's on: Claude Code's Agent calls (their steps come in the session's
@@ -387,6 +440,36 @@ session that changed something, and refuses while #12 is working. In `anchorleg 
 `/review [fix] [notes]` reviews the selected session; the review's title shows `review of #12`.
 `anchorleg sessions --json` has `review_of`.
 
+### Budget per task: `--budget`
+
+`anchorleg run --budget 2M -- "…"` caps the tokens a task may use, across every launch, account
+and CLI. What counts: input, output and cache writes, and a tenth of cache reads (they cost about
+a tenth, and agents re-read their whole context each step, so counting them fully would make any
+budget vanish, and leaving them out would make Codex's nearly free). Once the budget is used:
+
+- **Claude Code**: anchorleg-mod adds up each step's tokens and ends the turn at the next step,
+  before another model request.
+- **Codex**: anchorleg interrupts the turn after the model call that went over, before the tools
+  it asked for run.
+- **Antigravity** reports tokens only when a turn ends, so its budget is checked between turns.
+
+The run then ends `over_budget` (exit 3); the session can go on with a follow-up (which has no
+budget unless given one). The JSON report has `budget: {tokens, spent}`. A step can go over before it's stopped: the first request of
+a Claude session alone writes 15–25k tokens of cache. Accepts `500k`, `2M` or a plain number.
+
+### Structured output: `--json-schema`
+
+`anchorleg run --json --json-schema schema.json -- "…"` (a file, or the JSON itself) makes the
+agent's final answer follow a JSON Schema; the report has it parsed as `structured_output`. Each
+CLI enforces it itself: Claude Code's `--json-schema` (its `StructuredOutput` tool), Codex's
+`outputSchema` on the turn, agy's `--json-schema`. It holds across switches; it can't be combined
+with `--plan`, `--goal` or `--review`, which need the reply in their own format. For scripts and
+task delegators that need a typed result instead of prose.
+
+```json
+{ "outcome": "done", "result": "{\"answer\":42}", "structured_output": { "answer": 42 }, … }
+```
+
 ### Plan first: `--plan`
 
 `anchorleg run --plan -- <task>` (or `/plan <task>` as a new task in `anchorleg ui`) has the agent
@@ -405,7 +488,9 @@ plan before it changes anything:
 When the plan is ready the run asks **Approve the plan above? Or type what to change.** (the plan
 is the agent's last message in the conversation). **1** Approve: the same session carries it out
 in your normal mode. **2** Keep planning, or your own words: the agent revises the plan and asks
-again. The question waits for you (or `--answer-wait`); a skip, or no answer by then: the run
+again. **e** (or `anchorleg permission answer <id> edit`) opens the plan in `$VISUAL` / `$EDITOR`:
+the plan as you save it is approved, and the agent carries out your version
+(`--plan-file F` takes it from a file). The question waits for you (or `--answer-wait`); a skip, or no answer by then: the run
 ends with the plan as its result, and
 `anchorleg run --follow-up <run> -- "go ahead"` carries it out later. Planning survives an account
 switch like any other step.
@@ -442,6 +527,11 @@ When the agent needs a decision only you can make, it asks, and the run waits fo
 - **Claude Code** drops its `AskUserQuestion` tool in `-p` runs, so anchorleg-mod adds an
   `ask_user` tool with the same input (the model sees it as `mcp__anchorleg-mod__ask_user`).
   Where the CLI does offer `AskUserQuestion`, that is answered the same way.
+- **Antigravity** skips its `ask_question` tool in `-p` runs. On an account with its own `HOME`,
+  anchorleg adds an MCP server to that `HOME`'s `.gemini/config/mcp_config.json`
+  (`anchorleg permission mcp-ask`) with the same `ask_user` tool, and its approval hook lets that
+  tool through. Not yet seen in a real agy run. On your own `HOME` anchorleg doesn't touch agy's
+  config, so agy can't ask.
 
 A question waits until you answer it, however long that takes (the run shows as waiting, and
 you get a notification). If you'd rather the agent went on alone after a while, give the session
@@ -475,7 +565,21 @@ to anchorleg instead, and the run waits for you:
 - `anchorleg ui`: the session gets a `!`, the top bar says how many are waiting, and the
   conversation shows `Allow Write(src/a.rs)?` with **1** Yes, **2** Yes for this session (that
   tool, for the rest of the session, also after a switch), **3** No. Keys or clicks.
-- Terminal: `anchorleg permission list`, then `anchorleg permission answer <id> yes|always|no`.
+- An edit shows the change under the question: Claude Code's `old_string` / `new_string` or the
+  new file's first lines, Codex's diff (`-` red, `+` green, up to 10 lines). `permission list`
+  shows it too.
+- **4** Always (rule): allowed now and in every session from now on, as a lasting rule (below).
+- Terminal: `anchorleg permission list`, then
+  `anchorleg permission answer <id> yes|always|rule|no`.
+
+**Lasting rules.** `anchorleg rules --add "Bash(cargo test *)"` lets every session make such calls
+without asking, in Claude Code's rule syntax: `Tool` or `Tool(pattern)`, e.g.
+`Bash(npm run test:*)`, `Edit(src/**)` (paths relative to the task folder, `*` within a folder,
+`**` across), `WebFetch(domain:docs.rs)`, `mcp__github__get_issue`. `anchorleg rules` lists them,
+`--rm` removes one; they live in `config.toml` as `allow = [...]`. Claude Code gets them as
+`--allowedTools` and applies them itself; anchorleg applies them to Codex's and Antigravity's
+approval requests. Answering **4** / `rule` saves one made from the call (`Bash(cargo test *)` for
+`cargo test --lib`, `Edit(src/**)` for an edit in `src/`). Plans and reviews stay read-only.
 
 Only calls Claude itself would have asked about come here; nothing is allowed without an answer.
 After 30 minutes with no answer, or if the run ends, the call is refused as before. The model
@@ -510,6 +614,22 @@ the decision to agy. An agy account on your own `HOME` gets no hook: it runs wit
 `--mode accept-edits`, and shell commands need an allow rule in agy's settings. Your own
 `--mode` or `--dangerously-skip-permissions` in `anchorleg settings antigravity --args` turns
 the hook off.
+
+### The same MCP servers everywhere: `anchorleg sync mcp`
+
+`anchorleg sync mcp` lists each account's MCP servers and what it would add where, so that every
+account has every server, whatever its CLI; `--yes` adds them. Servers are read from each
+account's own config, read-only (Claude Code's `.claude.json` in the account's config folder,
+`codex mcp list --json`, Antigravity's `.gemini/config/mcp_config.json`) and added with the CLI's
+own command (`claude mcp add-json --scope user`, `codex mcp add`, `agy mcp add`), never by editing
+its files. A server another account already has by that name is left alone. Servers with env
+values or headers (often tokens) are skipped unless you pass `--with-env`; an Antigravity account
+on your own `HOME` is never changed, and anchorleg's own question server isn't copied.
+
+When a session moves to another CLI, the new CLI wouldn't read the project's instructions for the
+old one (Codex reads `AGENTS.md`, Claude Code `CLAUDE.md`, Antigravity `GEMINI.md` and
+`AGENTS.md`). The handoff prompt then carries the ones it wouldn't read (up to 8,000 characters
+each, minus lines that only import a file it reads, like `@AGENTS.md`).
 
 ### Per-CLI settings: model, effort, arguments
 
@@ -557,6 +677,9 @@ default for you.
 }
 ```
 
+With `--goal`, `--budget` or `--json-schema` the report also has `goal`, `budget` or
+`structured_output`.
+
 | `outcome` | Exit code | Meaning |
 |---|---|---|
 | `done` | 0 | The task finished |
@@ -564,6 +687,7 @@ default for you.
 | — | 2 | Bad arguments |
 | `all_blocked` | 75 | Every account blocked and `--no-wait`; see `wait_until` |
 | `no_accounts` | 78 | No account configured for this task |
+| `over_budget` | 3 | The task used its `--budget`; see `budget` |
 | `stopped` | 130 | `anchorleg stop` or Ctrl-C |
 
 ## `anchorleg status --json` → `StatusReport`

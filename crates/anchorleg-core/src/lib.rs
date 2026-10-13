@@ -10,11 +10,13 @@ pub mod checkpoint;
 pub mod conversation;
 pub mod goal;
 pub mod handoff;
+pub mod mcp_sync;
 pub mod notify;
 pub mod output;
 pub mod policy;
 pub mod questions;
 pub mod registry;
+pub mod rules;
 pub mod store;
 pub mod supervisor;
 

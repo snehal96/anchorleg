@@ -68,6 +68,41 @@ pub fn policy(new: Option<anchorleg_core::policy::Policy>) -> anyhow::Result<()>
     Ok(())
 }
 
+/// `anchorleg rules`: list, add or remove lasting allow rules.
+pub fn rules(add: Vec<String>, rm: Vec<String>) -> anyhow::Result<()> {
+    let path = Config::default_path()?;
+    let mut config = Config::load(&path)?;
+    if !add.is_empty() || !rm.is_empty() {
+        for r in &rm {
+            let before = config.allow.len();
+            config.allow.retain(|a| a != r);
+            if config.allow.len() == before {
+                anyhow::bail!("no rule `{r}`");
+            }
+        }
+        for r in add {
+            let r = r.trim().to_owned();
+            let ok = !r.is_empty() && !r.contains(',') && (!r.contains('(') || r.ends_with(')'));
+            if !ok {
+                anyhow::bail!(
+                    "`{r}`: a rule is `Tool` or `Tool(pattern)`, e.g. `Bash(cargo test *)`"
+                );
+            }
+            if !config.allow.contains(&r) {
+                config.allow.push(r);
+            }
+        }
+        config.save(&path)?;
+    }
+    if config.allow.is_empty() {
+        println!("no rules: every tool call the CLI asks about comes to you");
+    }
+    for r in &config.allow {
+        println!("{r}");
+    }
+    Ok(())
+}
+
 /// `anchorleg notify`: change what's given, then show the settings.
 pub fn notify(
     desktop: Option<bool>,

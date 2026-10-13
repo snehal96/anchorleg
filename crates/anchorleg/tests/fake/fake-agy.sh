@@ -8,6 +8,12 @@
 # fail: it warns on stderr and starts a new conversation.
 set -uo pipefail
 
+# `mcp …` (anchorleg sync mcp): logged as "<account> mcp …" to $FAKE_DIR/mcp.log, nothing else.
+if [[ "${1:-}" == mcp ]]; then
+  printf '%s %s\n' "$(basename "$HOME")" "$*" >>"$FAKE_DIR/mcp.log"
+  exit 0
+fi
+
 account="$(basename "$HOME")"
 printf '%s %s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" >>"$FAKE_LOG"  # one line per launch
 n="$(grep -c "^$account " "$FAKE_LOG")"
