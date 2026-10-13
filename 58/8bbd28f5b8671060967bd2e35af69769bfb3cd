@@ -1,0 +1,76 @@
+fixtures/claude-2.1.296-usage-20261013/partly-used.json
+  s_3c59a91d489536::t_2de166399155f6 1-65
+crates/anchorleg-core/src/store.rs
+  s_3c59a91d489536::t_2a1e49bd73c8ba 41
+fixtures/claude-2.1.296-usage-20261013/README.md
+  s_3c59a91d489536::t_dd1ae76743f520 1-11
+Cargo.toml
+  s_3c59a91d489536::t_64053fd5df4428 6
+  s_3c59a91d489536::t_b45a8eed583fa1 19
+site/index.html
+  s_3c59a91d489536::t_64053fd5df4428 28
+crates/anchorleg/src/status.rs
+  s_3c59a91d489536::t_2a1e49bd73c8ba 25,32
+  s_3c59a91d489536::t_9fefa9fda7b832 92-94,142-150
+  s_3c59a91d489536::t_354e5a0fd6ab45 151
+crates/anchorleg-core/Cargo.toml
+  s_3c59a91d489536::t_b45a8eed583fa1 12
+crates/anchorleg-core/src/adapters/mod.rs
+  s_3c59a91d489536::t_aeef36c4752291 6
+crates/anchorleg-core/src/supervisor.rs
+  s_3c59a91d489536::t_ae2550d491931f 281-283
+  s_3c59a91d489536::t_d8633da14ed958 264-265,269,276,278-280,284,286-291,295,302,305-311,333-336,1091,1100,1107
+  s_3c59a91d489536::t_eff4afdcdd7bdd 22,583,1094
+  s_3c59a91d489536::t_4cdf8f382bc42c 266-268,1092-1093
+crates/anchorleg/tests/fake/fake-claude.sh
+  s_3c59a91d489536::t_b45a8eed583fa1 18-27
+crates/anchorleg-core/src/adapters/claude_usage.rs
+  s_3c59a91d489536::t_ae2550d491931f 59-63,92-98
+  s_3c59a91d489536::t_2c1a9050efc576 1-58,64-91,99-238
+CHANGELOG.md
+  s_3c59a91d489536::t_e1cb66caed9a9e 21
+  s_3c59a91d489536::t_64053fd5df4428 12-13,15-18
+  s_3c59a91d489536::t_4b4d0b89c719ca 14,19-20,22
+crates/anchorleg-core/src/output.rs
+  s_3c59a91d489536::t_9fefa9fda7b832 90,137
+fixtures/claude-2.1.296-usage-20261013/limit-reached.json
+  s_3c59a91d489536::t_2de166399155f6 1-65
+README.md
+  s_3c59a91d489536::t_64053fd5df4428 168-169
+  s_3c59a91d489536::t_dd1ae76743f520 130-132
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_ae2550d491931f 1279-1283
+  s_3c59a91d489536::t_5827e58dfcf526 1250-1278,1284-1285
+  s_3c59a91d489536::t_8629ef8c8e7ae0 21
+  s_3c59a91d489536::t_be37dfe00044a4 574,577
+crates/anchorleg-core/src/policy.rs
+  s_3c59a91d489536::t_ccd92c400454d4 205-214,218,221,277-278
+  s_3c59a91d489536::t_b6b376d561b11b 365-383
+  s_3c59a91d489536::t_1efafd752ae26d 364
+docs/CLI.md
+  s_3c59a91d489536::t_dd1ae76743f520 37,166-172
+  s_3c59a91d489536::t_16826cfe7fd89f 173
+crates/anchorleg/src/ui.rs
+  s_3c59a91d489536::t_d4187c8090bf78 3370,3379-3413
+  s_3c59a91d489536::t_f2fd030b3f2590 42
+  s_3c59a91d489536::t_9044ba3ca344f1 2261,2278-2285
+  s_3c59a91d489536::t_5950df6fe5933b 3414
+Cargo.lock
+  s_3c59a91d489536::t_f318df1d7d57fa 33,53,57,684-714,1243-1296,1923-1931
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "588bbd28f5b8671060967bd2e35af69769bfb3cd",
+  "prompts": {},
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
