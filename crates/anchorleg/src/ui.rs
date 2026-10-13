@@ -39,6 +39,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
 use crate::now;
+use crate::status::stale_note;
 
 const TICK: Duration = Duration::from_millis(700);
 
@@ -2257,7 +2258,7 @@ impl App {
             let mine: Vec<&QuotaRow> = self.quota.iter().filter(|r| r.account == a.name).collect();
             let used = mine
                 .iter()
-                .filter_map(|r| r.used)
+                .filter_map(|r| policy::used_now(r, t))
                 .fold(None, |m: Option<f64>, u| Some(m.map_or(u, |m| m.max(u))));
             let state = if !a.enabled {
                 Span::styled("off", Style::new().fg(Color::DarkGray))
@@ -2274,6 +2275,14 @@ impl App {
                 Span::raw(format!("{:<20} ", truncate(&a.name, 20))),
                 state,
             ];
+            if a.enabled
+                && let Some(note) = stale_note(mine.iter().map(|r| r.updated_at), t)
+            {
+                spans.push(Span::styled(
+                    format!(" {note}"),
+                    Style::new().fg(Color::DarkGray),
+                ));
+            }
             if a.pinned {
                 spans.push(Span::styled(" pinned", Style::new().fg(Color::DarkGray)));
             }
@@ -3358,6 +3367,7 @@ pub fn run() -> anyhow::Result<()> {
     });
     let cwd = std::env::current_dir()?;
     let mut app = App::new(Config::default_path()?, store, log_dir, launcher, &cwd)?;
+    read_quota_in_background(db);
     let mut terminal = ratatui::init();
     execute!(std::io::stdout(), EnableMouseCapture)?;
     let result = event_loop(&mut terminal, &mut app);
@@ -3365,6 +3375,42 @@ pub fn run() -> anyhow::Result<()> {
     ratatui::restore();
     result
 }
+
+/// Ask every Claude and Codex account for its quota now and every few minutes, so the agents
+/// pane shows use from anywhere (an interactive session too). The readings go to the store,
+/// which the UI (and every other anchorleg) reads again on each tick.
+fn read_quota_in_background(db: PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        loop {
+            if let (Ok(store), Ok(path), Some(home)) =
+                (Store::open(&db), Config::default_path(), &home)
+                && let Ok(config) = Config::load(&path)
+            {
+                let accounts = config.by_priority();
+                let _ = rt.block_on(anchorleg_core::supervisor::refresh_quota(
+                    &config,
+                    &store,
+                    &anchorleg_core::registry::Keychain,
+                    home,
+                    &accounts,
+                    now(),
+                    anchorleg_core::supervisor::FRESH_QUOTA,
+                ));
+            }
+            std::thread::sleep(QUOTA_EVERY);
+        }
+    });
+}
+
+/// How often the UI reads every account's quota.
+const QUOTA_EVERY: Duration = Duration::from_secs(300);
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
     while !app.quit {

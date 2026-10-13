@@ -202,15 +202,23 @@ pub fn strict_until(
         .max()
 }
 
-fn max_used(rows: &[&QuotaRow]) -> f64 {
-    rows.iter().filter_map(|r| r.used).fold(0.0, f64::max)
+/// A window's use at `now`: 0 once its reset time has passed, whatever was last read.
+pub fn used_now(r: &QuotaRow, now: EpochSecs) -> Option<f64> {
+    let reset = r.resets_at.is_some_and(|t| t <= now);
+    r.used.map(|u| if reset { 0.0 } else { u })
+}
+
+fn max_used(rows: &[&QuotaRow], now: EpochSecs) -> f64 {
+    rows.iter()
+        .filter_map(|r| used_now(r, now))
+        .fold(0.0, f64::max)
 }
 
 /// The weekly (7-day) window's use; 0 when unknown.
-fn weekly_used(rows: &[&QuotaRow]) -> f64 {
+fn weekly_used(rows: &[&QuotaRow], now: EpochSecs) -> f64 {
     rows.iter()
         .filter(|r| r.window == "seven_day")
-        .filter_map(|r| r.used)
+        .filter_map(|r| used_now(r, now))
         .fold(0.0, f64::max)
 }
 
@@ -266,8 +274,8 @@ pub fn pick<'a>(
         if opts.exclude.contains(&account.name) {
             continue;
         }
-        let used = max_used(account_rows);
-        let weekly = weekly_used(account_rows);
+        let used = max_used(account_rows, now);
+        let weekly = weekly_used(account_rows, now);
         // `reserve_7d = 0.2` keeps the last 20% of the weekly window for when nothing else is free.
         let into_reserve = account
             .reserve_7d
@@ -350,6 +358,26 @@ mod tests {
             Pick::Use { account, reason } => format!("use {} ({reason:?})", account.name),
             Pick::WaitUntil { at, account } => format!("wait {} until {at}", account.name),
             Pick::NoAccounts => "none".into(),
+        }
+    }
+
+    #[test]
+    fn a_window_past_its_reset_counts_as_empty() {
+        let a = acct("a", Vendor::Claude);
+        let b = acct("b", Vendor::Claude);
+        // `a`'s last reading was near the limit, but that window has since reset.
+        let rows = vec![
+            row("a", "five_hour", None, Some(0.97), Some(NOW - 60)),
+            row("b", "five_hour", None, Some(0.5), Some(NOW + 600)),
+        ];
+        assert_eq!(used_now(&rows[0], NOW), Some(0.0));
+        let opts = PickOptions {
+            policy: Policy::Balance,
+            ..PickOptions::default()
+        };
+        match pick(&[&a, &b], &rows, NOW, &opts) {
+            Pick::Use { account, .. } => assert_eq!(account.name, "a"),
+            other => panic!("{other:?}"),
         }
     }
 

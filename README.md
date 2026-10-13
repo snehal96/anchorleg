@@ -127,6 +127,9 @@ watches every account's quota, and when one gets close to its limit it:
 - **anchorleg-mod** (`mod/`) is a Claude Code mod embedded in the binary and loaded into every run
   with `--plugin-dir`. It reads usage, stops turns and forwards permission questions. It never
   touches credentials.
+- **Quota from anywhere**: before each pick anchorleg reads every Claude account's quota with
+  `claude -p /usage` (answered locally, no model request), so use in your own interactive
+  sessions counts too.
 - **Codex** has no mod: anchorleg runs it through `codex app-server`, which reports quota before
   and during every turn and sends its approval requests to anchorleg. **Antigravity** (under development) shows no
   quota, so anchorleg switches when a turn fails on quota; an agy login with its own `HOME` gets
@@ -162,8 +165,8 @@ version. Run it again to update; delete the binary to remove it.
 
 ```bash
 arch=$(dpkg --print-architecture)   # amd64 or arm64
-curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.6.0-1_${arch}.deb"
-sudo apt install "./anchorleg_0.6.0-1_${arch}.deb"
+curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.6.1-1_${arch}.deb"
+sudo apt install "./anchorleg_0.6.1-1_${arch}.deb"
 ```
 
 **Prebuilt binaries:** every [release](https://github.com/snehal96/anchorleg/releases/latest)

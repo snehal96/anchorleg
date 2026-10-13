@@ -19,7 +19,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::adapters::claude::{self, sync_context};
 use crate::adapters::codex_server::{self, Asker, Event, Steer};
 use crate::adapters::{AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus};
-use crate::adapters::{agy, codex};
+use crate::adapters::{agy, claude_usage, codex};
 use crate::output::{GoalReport, Outcome, RunReport, SCHEMA, Switch};
 use crate::policy::{self, Pick, PickOptions};
 use crate::registry::{Account, Config, SecretStore, Vendor};
@@ -261,35 +261,54 @@ async fn next_item(
     }
 }
 
-/// Read every enabled Codex account's current quota from its CLI (`codex app-server`, no model
-/// request), all at once, and store it. Returns the accounts that couldn't answer, with why;
-/// those keep what was already known.
-pub async fn refresh_codex_quota(
+/// Read every enabled Claude and Codex account's current quota from its CLI, all at once, and
+/// store it: `claude -p /usage` and `codex app-server`, neither a model request (D23, D64).
+/// Accounts a run reported on less than `fresh_for` seconds ago (the mod's or the stream's
+/// reading, as current as asking) are left alone. Returns the accounts that couldn't answer,
+/// with why; those keep what was already known.
+pub async fn refresh_quota(
     config: &Config,
     store: &Store,
     secrets: &dyn SecretStore,
     home: &Path,
     accounts: &[&Account],
     now: EpochSecs,
+    fresh_for: EpochSecs,
 ) -> Result<Vec<(String, String)>, RunError> {
+    let quota = store.quota(None)?;
+    let fresh = |name: &str| {
+        fresh_for > 0
+            && quota
+                .iter()
+                .any(|r| r.account == name && r.source != "probe" && now - r.updated_at < fresh_for)
+    };
     let mut probes = tokio::task::JoinSet::new();
-    for a in accounts
-        .iter()
-        .filter(|a| a.enabled && a.vendor == Vendor::Codex && a.shell.is_none())
-    {
+    for a in accounts.iter().filter(|a| {
+        a.enabled
+            && matches!(a.vendor, Vendor::Claude | Vendor::Codex)
+            && a.shell.is_none()
+            && !fresh(&a.name)
+    }) {
         let Ok(launch) = config.launch(a, secrets, home) else {
             continue;
         };
-        // Only the binary and the login's env: `[vendor.codex] args` are for `exec`.
+        // Only the binary and the login's env: the configured args are for runs.
         let mut cmd = std::process::Command::new(&launch.program);
         for key in &launch.env_remove {
             cmd.env_remove(key);
         }
         cmd.envs(launch.env.iter().map(|(k, v)| (k, v)));
         let name = a.name.clone();
+        let vendor = a.vendor;
         probes.spawn(async move {
             let cmd = tokio::process::Command::from(cmd);
-            (name, codex::read_live_quota(cmd, LIVE_QUOTA_TIMEOUT).await)
+            let result = match vendor {
+                Vendor::Claude => claude_usage::read_usage(cmd, LIVE_QUOTA_TIMEOUT, now)
+                    .await
+                    .map(|r| (r, None)),
+                _ => codex::read_live_quota(cmd, LIVE_QUOTA_TIMEOUT).await,
+            };
+            (name, result)
         });
     }
     let mut failed = Vec::new();
@@ -311,7 +330,10 @@ pub async fn refresh_codex_quota(
     Ok(failed)
 }
 
-/// How long `codex app-server` gets to report an account's quota.
+/// A quota reading this recent (seconds) isn't asked for again before a pick.
+pub const FRESH_QUOTA: EpochSecs = 120;
+
+/// How long a CLI gets to report an account's quota.
 const LIVE_QUOTA_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Prompt for a resumed session on the next account.
@@ -558,7 +580,7 @@ impl Supervisor<'_> {
                     break;
                 }
             }
-            self.refresh_codex(&ordered, opts, run_id).await?;
+            self.refresh_quota(&ordered, opts, run_id).await?;
             let quota = self.store.quota(None)?;
             pick_opts.has_credits = self
                 .store
@@ -1066,21 +1088,23 @@ impl Supervisor<'_> {
         Ok(report)
     }
 
-    /// Codex accounts' quota, read live before every pick so a launch goes to a login that still
-    /// has room (D23).
-    async fn refresh_codex(
+    /// Claude and Codex accounts' quota, read live before every pick so a launch goes to a login
+    /// that still has room (D23, D64). A run's own reading from the last two minutes is used as
+    /// it is.
+    async fn refresh_quota(
         &self,
         accounts: &[&Account],
         opts: &RunOptions,
         run_id: i64,
     ) -> Result<(), RunError> {
-        let failed = refresh_codex_quota(
+        let failed = refresh_quota(
             self.config,
             self.store,
             self.secrets,
             &self.home,
             accounts,
             self.now(),
+            FRESH_QUOTA,
         )
         .await?;
         for (name, e) in failed {

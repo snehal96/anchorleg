@@ -9,6 +9,17 @@ All notable changes are listed here. The format follows
 ### Added
 - Homebrew tap (in progress).
 
+## [0.6.1] — 2026-10-13
+
+### Fixed
+- Claude quota is read live before every pick with `claude -p /usage` (no model request), so use
+  outside anchorleg counts; `anchorleg ui` reads it at start and every 5 minutes, `status
+  --refresh` on demand. Before, it was only seen during anchorleg's own runs, so an account
+  used up elsewhere could still look free.
+- A quota window whose reset time has passed counts as empty instead of keeping its last reading,
+  in `status`, the UI and account picks.
+- `status` and the UI show how old an account's quota reading is once it's over an hour old.
+
 ## [0.6.0] — 2026-10-12
 
 ### Added

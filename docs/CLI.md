@@ -34,7 +34,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg stop <run>` | works |
 | `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
 | `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex, Antigravity) |
-| `anchorleg status [--json]` | works |
+| `anchorleg status [--refresh] [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
@@ -162,6 +162,14 @@ never goes past it; past its limit the account counts as blocked until the windo
 the run moves on or waits (exit 75 with `--no-wait`). Antigravity reports no quota, so its
 limits can't apply. `anchorleg status` shows the next pick under the configured policy; the run's `start`
 decision records the policy used.
+
+Before every pick anchorleg asks each Claude and Codex account for its current quota through the
+CLI itself (`claude -p /usage`, `codex app-server`; neither is a model request, a few seconds
+for all accounts at once). So use outside anchorleg (an interactive session, another machine)
+counts too. An account a run reported on in the last two minutes isn't asked again. `anchorleg
+ui` asks when it starts and every 5 minutes; `anchorleg status --refresh` asks now. Every
+anchorleg on the machine shares the readings: the UI shows a new one within a second. A reading
+over an hour old shows its age (`read 3h ago`), and a window past its reset counts as empty.
 
 ```toml
 policy = "balance"

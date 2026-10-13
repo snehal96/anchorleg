@@ -87,7 +87,7 @@ pub struct UsageReport {
 pub struct WindowStatus {
     pub window: String,
     pub status: Option<String>,
-    /// Fraction used, 0.0–1.0.
+    /// Fraction used, 0.0–1.0; 0 once `resets_at` has passed.
     pub used: Option<f64>,
     pub resets_at: Option<EpochSecs>,
     pub source: String,
@@ -134,7 +134,7 @@ pub fn status(
                     .map(|r| WindowStatus {
                         window: r.window.clone(),
                         status: r.status.clone(),
-                        used: r.used,
+                        used: policy::used_now(r, now),
                         resets_at: r.resets_at,
                         source: r.source.clone(),
                         updated_at: r.updated_at,

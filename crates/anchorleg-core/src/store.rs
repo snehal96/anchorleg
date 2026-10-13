@@ -38,7 +38,7 @@ pub enum Source {
     Stream,
     Mod,
     Manual,
-    /// Asked of the CLI between launches (Codex `app-server`).
+    /// Asked of the CLI between launches (`claude -p /usage`, Codex `app-server`).
     Probe,
 }
 

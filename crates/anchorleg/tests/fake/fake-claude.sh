@@ -15,6 +15,16 @@ if [[ "${1:-}" == mcp ]]; then
 fi
 
 account="$(basename "$CLAUDE_CONFIG_DIR")"
+
+# `-p … /usage` (anchorleg reading quota): prints $FAKE_DIR/X.usage.json, or fails like a CLI
+# that can't tell. Logged to $FAKE_DIR/usage.log, not $FAKE_LOG: it isn't a launch.
+if [[ "${*: -1}" == /usage ]]; then
+  echo "$account" >>"$FAKE_DIR/usage.log"
+  [[ -f "$FAKE_DIR/$account.usage.json" ]] || exit 1
+  cat "$FAKE_DIR/$account.usage.json"
+  exit 0
+fi
+
 printf '%s %s [stop_at=%s]%s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" \
   "${ANCHORLEG_PERMISSION_MODE:+ [permission_mode=$ANCHORLEG_PERMISSION_MODE]}${ANCHORLEG_BUDGET_LEFT:+ [budget_left=$ANCHORLEG_BUDGET_LEFT]}" \
   >>"$FAKE_LOG"  # one line per launch

@@ -18,7 +18,7 @@ fn ok(sid: &str, text: &str) -> String {
     format!(
         "{}\n{}\n{}\n",
         init(sid),
-        r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1791466800,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.2,"resetsAt":1791466800}}}}"#,
+        r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":4102444800,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.2,"resetsAt":4102444800}}}}"#,
         format_args!(
             r#"{{"type":"result","subtype":"success","is_error":false,"result":"{text}","session_id":"{sid}"}}"#
         )
@@ -571,12 +571,10 @@ fn background_commands_are_noted_when_their_launch_ends() {
 #[test]
 fn a_strict_limit_waits_instead_of_carrying_on() {
     let env = Env::new(&["a"]);
-    // a ends at 50% of a five-hour window that resets far in the future.
+    // a ends at 50% of its five-hour window.
     env.script(
         "a.jsonl",
-        &ok("s1", "[anchorleg] Pausing here")
-            .replace("\"utilization\":0.2", "\"utilization\":0.5")
-            .replace("1791466800", "4102444800"),
+        &ok("s1", "[anchorleg] Pausing here").replace("\"utilization\":0.2", "\"utilization\":0.5"),
     );
     env.anchorleg()
         .args([
@@ -1247,6 +1245,42 @@ fn codex_limits(used_5h: u32, reached: bool) -> String {
     format!(
         r#"{{"rateLimits":{{"limitId":"codex","primary":{{"usedPercent":{used_5h},"windowDurationMins":300,"resetsAt":{FAR}}},"secondary":{{"usedPercent":10,"windowDurationMins":10080,"resetsAt":{FAR}}},"planType":"plus","rateLimitReachedType":{reached}}}}}"#
     )
+}
+
+/// `claude -p /usage`'s JSON answer, as `fixtures/claude-2.1.296-usage-20261013/` has it.
+fn claude_usage(session: u32, week: u32) -> String {
+    format!(
+        r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":0,"total_cost_usd":0,"local_command":"usage","result":"You are currently using your subscription to power your Claude Code usage\n\nCurrent session: {session}% used\nCurrent week (all models): {week}% used"}}"#
+    )
+}
+
+#[test]
+fn live_claude_quota_sees_use_from_outside_anchorleg() {
+    let env = Env::new(&["a", "b"]);
+    // a's week was used up in an interactive session anchorleg never saw.
+    env.script("a.usage.json", &claude_usage(0, 100));
+    env.script("b.usage.json", &claude_usage(10, 30));
+    env.script("a.jsonl", &ok("s1", "ran on a"));
+    env.script("b.jsonl", &ok("s2", "ran on b"));
+
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["accounts_used"], serde_json::json!(["b"]), "{r}");
+    assert!(env.launches().iter().all(|l| l.starts_with("b ")));
+    let asked = std::fs::read_to_string(env.path("fake/usage.log")).unwrap();
+    assert_eq!(asked.lines().count(), 2, "{asked}");
+
+    // b's run just reported its own quota: the next pick doesn't ask b again.
+    env.script("a.usage.json", &claude_usage(0, 5));
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    assert_eq!(r["accounts_used"], serde_json::json!(["a"]), "{r}");
+    let asked = std::fs::read_to_string(env.path("fake/usage.log")).unwrap();
+    assert_eq!(
+        asked.lines().collect::<Vec<_>>(),
+        ["a", "b", "a"],
+        "{asked}"
+    );
 }
 
 #[test]

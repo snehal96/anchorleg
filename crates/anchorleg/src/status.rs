@@ -22,13 +22,14 @@ pub fn status(json: bool, refresh: bool) -> anyhow::Result<()> {
         let failed = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(anchorleg_core::supervisor::refresh_codex_quota(
+            .block_on(anchorleg_core::supervisor::refresh_quota(
                 &config,
                 &store,
                 &anchorleg_core::registry::Keychain,
                 &home,
                 &accounts,
                 now(),
+                0,
             ))?;
         for (name, e) in failed {
             eprintln!("{name}: couldn't read quota ({e})");
@@ -88,6 +89,9 @@ fn print_status(r: &StatusReport) {
         if let Some(c) = &a.credits {
             state.push_str(&format!("  credits {}", credits_cell(c, a.credits_use)));
         }
+        if let Some(note) = stale_note(a.windows.iter().map(|w| w.updated_at), r.now) {
+            state.push_str(&format!("  {note}"));
+        }
         println!(
             "{:>4}  {:<16} {:<14} {:<14} {state}",
             a.priority,
@@ -134,6 +138,16 @@ fn window_cell(used: Option<f64>, resets_at: Option<i64>, now: i64) -> String {
         _ => pct,
     }
 }
+
+/// How old the account's quota reading is, when it's old enough to be wrong: anchorleg only sees
+/// Claude's quota during its own runs, so use elsewhere (an interactive session) doesn't show.
+pub fn stale_note(updated: impl Iterator<Item = i64>, now: i64) -> Option<String> {
+    let newest = updated.max()?;
+    (now - newest >= STALE_AFTER).then(|| format!("read {} ago", ago(now - newest)))
+}
+
+/// A quota reading older than this gets its age shown.
+const STALE_AFTER: i64 = 3600;
 
 /// `3h05m`, `12m`, `40s`.
 pub fn ago(secs: i64) -> String {
