@@ -1,0 +1,37 @@
+apps/desktop/src/Requests.tsx
+  s_24d456e49210ef::t_68de5785a08e8f 1-192
+apps/desktop/README.md
+  s_24d456e49210ef::t_92673ffc077a35 24-30
+apps/desktop/src-tauri/Cargo.lock
+  s_24d456e49210ef::t_bbe97c9d888264 44,62-192,294-306,497-505,882-908,926-955,1078-1090,1434-1439,1948-1953,1975-1988,2109-2122,2369-2378,2404-2409,2498-2508,2554-2567,2598-2606,2705-2733,2881-2893,3171-3180,3603-3622,3723-3746,4017,4021-4031,4081-4091,4835-4924,4990-5030
+apps/desktop/src-tauri/Cargo.toml
+  s_24d456e49210ef::t_7c5df3c7358c0d 26
+apps/desktop/src-tauri/src/lib.rs
+  s_24d456e49210ef::t_a232b9324fcfbf 5,95-135,159-163,173-175,179-185
+apps/desktop/src-tauri/src/notices.rs
+  s_24d456e49210ef::t_9c5f326f3ea68d 1-141
+apps/desktop/src/App.tsx
+  s_24d456e49210ef::t_8e3a044e472e2d 1-3,5,14-15,73,79-80,104,149-151,170,172-173,188-211,228-232,249,261-262
+apps/desktop/src/Conversation.tsx
+  s_24d456e49210ef::t_ed913cbdc82041 2,4,13-14,19-21,71-77,87-88
+apps/desktop/src/api.ts
+  s_24d456e49210ef::t_d8d0bb86fc3000 105-146
+apps/desktop/src/style.css
+  s_24d456e49210ef::t_13e1deb0a86490 134-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "286aae63edc14bed4ba98532ab551efebd3beadf",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
