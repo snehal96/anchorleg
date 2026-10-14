@@ -12,7 +12,7 @@ real app server (fixtures/codex-0.153.4-app-server-*).
   $CODEX_HOME/sessions/, and resuming a thread this login has no rollout for fails with
   "no rollout found". Each launch appends $FAKE_DIR/X.rollout.jsonl (quota lines) to the rollout.
 - `turn/start`: appends "<account> <args…> <thread request> model=… effort=… sandbox=…
-  approval=… -- <text>" to $FAKE_LOG (one line per turn), then prints the script's messages.
+  approval=… [instructions=…] [config=…] -- <text>" to $FAKE_LOG (one line per turn), then prints the script's messages.
   A request in the script (it has an "id") waits for anchorleg's answer, which is appended to
   $FAKE_DIR/answers.log; a "cancel" ends the turn as interrupted, like the real CLI. After an
   `account/rateLimits/updated` it waits a moment for a `turn/interrupt` (anchorleg's soft stop),
@@ -158,6 +158,8 @@ while True:
             f"approval={tp.get('approvalPolicy')}"
             + (f" reviewer={tp['approvalsReviewer']}" if tp.get("approvalsReviewer") else "")
             + (" schema=" + json.dumps(params["outputSchema"], separators=(",", ":")) if params.get("outputSchema") else "")
+            + (" instructions=" + json.dumps(tp["developerInstructions"]) if tp.get("developerInstructions") else "")
+            + (" config=" + json.dumps(tp["config"], separators=(",", ":")) if tp.get("config") else "")
             + f" -- {text}"
         ).replace("  ", " ")
         images = [i["path"] for i in params.get("input", []) if i.get("type") == "localImage"]

@@ -7,6 +7,13 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- `anchorleg run --add-dir DIR`, `--instructions TEXT|FILE` and `--effort LEVEL`, on Claude Code,
+  Codex and Antigravity, kept by follow-ups and across switches; Claude Code's `--agent`,
+  `--agents`, `--allowed-tools`, `--disallowed-tools`, `--tools`, `--mcp-config`,
+  `--strict-mcp-config`, `--fallback-model` and `--settings` passed through. `sessions --json`
+  shows them as `options`.
+- `anchorleg vendors [--json]`: what each CLI can do, from one table the CLI, TUI and desktop
+  app share.
 - `anchorleg sessions show <run> [--since N] [--json]`: one session's conversation, the call
   it's in, its subagents, task list and context, as `anchorleg ui` shows it (for scripts and the
   desktop app).

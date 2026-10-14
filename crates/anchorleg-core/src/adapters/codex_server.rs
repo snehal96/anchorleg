@@ -67,6 +67,10 @@ pub struct Turn {
     pub budget_left: Option<u64>,
     /// A JSON Schema for the turn's final message (`outputSchema`, `--json-schema`).
     pub output_schema: Option<Value>,
+    /// The task's own instructions (`developerInstructions` on the thread request).
+    pub instructions: Option<String>,
+    /// Config overrides for the thread (`config`): e.g. the task's extra writable folders.
+    pub config: Option<Value>,
     /// The session's name, set on the thread (`thread/name/set`).
     pub name: Option<String>,
 }
@@ -152,6 +156,12 @@ pub fn thread_request(turn: &Turn) -> Value {
     }
     if turn.auto_review {
         params["approvalsReviewer"] = "auto_review".into();
+    }
+    if let Some(i) = &turn.instructions {
+        params["developerInstructions"] = i.as_str().into();
+    }
+    if let Some(c) = &turn.config {
+        params["config"] = c.clone();
     }
     match &turn.resume {
         Some(id) => {
@@ -1640,6 +1650,8 @@ pub(crate) mod tests {
             auto_review: true,
             budget_left: None,
             output_schema: None,
+            instructions: None,
+            config: None,
             name: None,
         };
         let r = thread_request(&turn);

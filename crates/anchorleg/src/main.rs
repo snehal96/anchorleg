@@ -387,9 +387,69 @@ pub struct RunArgs {
     #[arg(long, value_name = "SCHEMA", value_parser = parse_schema,
           conflicts_with_all = ["goal", "review", "plan"])]
     pub json_schema: Option<serde_json::Value>,
+    /// Another folder the agent may read and write besides the task's own. Repeat for several.
+    /// Every CLI gets it (Codex as a writable root); follow-ups keep it.
+    #[arg(long, value_name = "DIR")]
+    pub add_dir: Vec<PathBuf>,
+    /// Instructions for the whole task, on top of the CLI's own (text, or a file holding them):
+    /// Claude Code's appended system prompt, Codex's developer instructions; Antigravity reads
+    /// them at the top of the first message. They hold across switches; follow-ups keep them.
+    #[arg(long, value_name = "TEXT|FILE", value_parser = parse_instructions)]
+    pub instructions: Option<String>,
+    /// Reasoning effort for this task (low, medium, high, xhigh, max), over `anchorleg cli set`'s.
+    #[arg(long, value_name = "LEVEL")]
+    pub effort: Option<String>,
+    #[command(flatten)]
+    pub claude: ClaudeArgs,
     /// The task, after `--`.
     #[arg(last = true, required_unless_present_any = ["goal", "review"])]
     pub prompt: Vec<String>,
+}
+
+/// Claude Code flags passed as they are; other CLIs leave them out (the run says so).
+#[derive(Args)]
+#[command(
+    next_help_heading = "Claude Code options (other CLIs leave them out; follow-ups keep them)"
+)]
+pub struct ClaudeArgs {
+    /// Claude Code: run the session as this agent (`claude --agent`).
+    #[arg(long, value_name = "NAME")]
+    pub agent: Option<String>,
+    /// Claude Code: custom agents, as JSON or a file holding it (`claude --agents`).
+    #[arg(long, value_name = "JSON|FILE")]
+    pub agents: Option<String>,
+    /// Claude Code: a tool rule allowed without asking, e.g. "Bash(git *)". Repeat for several.
+    #[arg(long, value_name = "RULE")]
+    pub allowed_tools: Vec<String>,
+    /// Claude Code: a tool rule refused, e.g. "WebFetch". Repeat for several.
+    #[arg(long, value_name = "RULE")]
+    pub disallowed_tools: Vec<String>,
+    /// Claude Code: only these built-in tools exist, e.g. "Read". Repeat for several.
+    #[arg(long, value_name = "TOOL")]
+    pub tools: Vec<String>,
+    /// Claude Code: MCP servers from a JSON file or string. Repeat for several.
+    #[arg(long, value_name = "FILE|JSON")]
+    pub mcp_config: Vec<String>,
+    /// Claude Code: only the MCP servers from `--mcp-config`.
+    #[arg(long)]
+    pub strict_mcp_config: bool,
+    /// Claude Code: models to fall back on (comma-separated) when the session's is overloaded.
+    #[arg(long, value_name = "MODELS")]
+    pub fallback_model: Option<String>,
+    /// Claude Code: more settings, a JSON file or string (`claude --settings`).
+    #[arg(long, value_name = "FILE|JSON")]
+    pub settings: Option<String>,
+}
+
+fn parse_instructions(s: &str) -> Result<String, String> {
+    let text = match std::fs::read_to_string(s) {
+        Ok(t) => t,
+        Err(_) => s.to_owned(),
+    };
+    match text.trim() {
+        "" => Err("the instructions are empty".to_owned()),
+        t => Ok(t.to_owned()),
+    }
 }
 
 fn parse_schema(s: &str) -> Result<serde_json::Value, String> {

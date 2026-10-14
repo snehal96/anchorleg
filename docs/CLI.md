@@ -39,7 +39,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
-| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--detach] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--add-dir DIR]… [--instructions TEXT\|FILE] [--effort LEVEL] [Claude Code options] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--detach] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -480,6 +480,32 @@ budget vanish, and leaving them out would make Codex's nearly free). Once the bu
 The run then ends `over_budget` (exit 3); the session can go on with a follow-up (which has no
 budget unless given one). The JSON report has `budget: {tokens, spent}`. A step can go over before it's stopped: the first request of
 a Claude session alone writes 15–25k tokens of cache. Accepts `500k`, `2M` or a plain number.
+
+### Extra folders, instructions, effort: `--add-dir`, `--instructions`, `--effort`
+
+These go with the task to every account and CLI it runs on, and follow-ups, forks and rewinds
+keep them (give one again to replace it; a side question keeps only the folders):
+
+| | Claude Code | Codex | Antigravity |
+|---|---|---|---|
+| `--add-dir DIR` (repeat) | `--add-dir` | a writable root (`sandbox_workspace_write.writable_roots`, as `codex exec --add-dir`) | `--add-dir` |
+| `--instructions TEXT\|FILE` | `--append-system-prompt` | developer instructions on the thread | at the top of a new conversation's first message |
+| `--effort LEVEL` | `--effort` | `model_reasoning_effort` | `--effort` |
+
+`--effort` replaces `anchorleg settings`' effort for this task. A folder must exist; it's passed
+as an absolute path.
+
+### Claude Code options
+
+Passed to Claude Code as they are; Codex and Antigravity leave them out, and the conversation
+says so when the task lands there: `--agent NAME`, `--agents JSON|FILE`, `--allowed-tools RULE`…,
+`--disallowed-tools RULE`…, `--tools TOOL`…, `--mcp-config FILE|JSON`…, `--strict-mcp-config`,
+`--fallback-model MODELS`, `--settings FILE|JSON`. `--allowed-tools` adds to your lasting rules
+(`anchorleg rules`). A file is passed as its absolute path. None of them apply while planning,
+reviewing or answering a side question, which stay read-only.
+
+`anchorleg sessions --json` entries carry `options`: `{"add_dirs", "instructions", "effort",
+"claude": {…}}`, each left out when unset.
 
 ### Structured output: `--json-schema`
 

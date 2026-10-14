@@ -2947,3 +2947,107 @@ fn undo_previews_and_reports_in_json() {
         "two\n"
     );
 }
+
+#[test]
+fn task_options_reach_every_cli_and_follow_ups_keep_them() {
+    let env = Env::new(&["a"]);
+    std::fs::create_dir_all(env.path("shared")).unwrap();
+    let shared = env.path("shared").canonicalize().unwrap();
+    env.script("a.1.jsonl", &ok("s1", "first"));
+    env.script("a.2.jsonl", &ok("s1", "second"));
+    env.script("a.3.jsonl", &ok("s1", "third"));
+    let dir = shared.display().to_string();
+    let given = [
+        "--add-dir",
+        &dir,
+        "--instructions",
+        "answer in French",
+        "--effort",
+        "high",
+        "--allowed-tools",
+        "Bash(git *)",
+        "--strict-mcp-config",
+    ];
+    assert_eq!(env.run(&given).0, 0);
+    assert_eq!(env.run(&["--follow-up", "1"]).0, 0);
+    assert_eq!(
+        env.run(&["--follow-up", "2", "--instructions", "answer in Dutch"])
+            .0,
+        0
+    );
+    let launches = env.launches();
+    for l in &launches {
+        assert!(l.contains(&format!("--add-dir {dir}")), "{l}");
+        assert!(l.contains("--allowedTools Bash(git *)"), "{l}");
+        assert!(
+            l.contains("--strict-mcp-config") && l.contains("--effort high"),
+            "{l}"
+        );
+    }
+    assert!(
+        launches[0].contains("--append-system-prompt answer in French"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[1].contains("--append-system-prompt answer in French"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[2].contains("--append-system-prompt answer in Dutch"),
+        "{launches:?}"
+    );
+
+    // Codex: instructions as developer instructions, the folder as a writable root; the
+    // Claude-only options are left out, and the run says so.
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.jsonl", &codex_ok("t1", "done"));
+    assert_eq!(env.run(&given).0, 0);
+    let log = env.launches().join("\n");
+    assert!(log.contains(r#"instructions="answer in French""#), "{log}");
+    assert!(
+        log.contains(&format!(
+            r#"config={{"sandbox_workspace_write":{{"writable_roots":["{dir}"]}}}}"#
+        )),
+        "{log}"
+    );
+    assert!(log.contains("effort=high"), "{log}");
+    let run_log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert!(
+        run_log.contains("Codex has no --allowed-tools, --strict-mcp-config: left out on c"),
+        "{run_log}"
+    );
+
+    // Antigravity: `--add-dir`, and the instructions open a new conversation only.
+    let env = Env::mixed(&[("g", "antigravity")]);
+    env.script("g.jsonl", &agy_ok("conv-1", "done"));
+    assert_eq!(
+        env.run(&["--add-dir", &dir, "--instructions", "answer in French"])
+            .0,
+        0
+    );
+    assert_eq!(env.run(&["--follow-up", "1"]).0, 0);
+    let log = std::fs::read_to_string(env.path("fake.log")).unwrap();
+    assert!(log.contains(&format!("--add-dir {dir}")), "{log}");
+    assert_eq!(
+        log.matches("Instructions for this whole task").count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
+fn a_missing_extra_folder_is_refused_before_anything_runs() {
+    let env = Env::new(&["a"]);
+    let out = env
+        .anchorleg()
+        .args(["run", "--add-dir", "/no/such/folder", "--", "hi"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--add-dir /no/such/folder"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(env.launches().is_empty());
+}

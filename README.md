@@ -81,6 +81,9 @@ watches every account's quota, and when one gets close to its limit it:
   CLI; the agent stops at a clean point when it's spent.
 - **Typed answers.** `--json-schema schema.json` makes the final answer follow your schema and
   returns it parsed in the JSON report, for scripts and task delegators.
+- **The same setup on every CLI.** `--add-dir`, `--instructions` and `--effort` go with the task
+  to whichever account or CLI runs it; Claude Code's own `--agent`, `--allowed-tools`,
+  `--mcp-config` and the like are passed through too.
 - **Plan first.** `--plan` (or `/plan` in the UI): the agent plans in Claude's or Codex's plan
   mode, you approve, say what to change or edit the plan yourself (`e`), then the same session
   carries it out.

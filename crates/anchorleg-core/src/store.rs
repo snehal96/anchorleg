@@ -254,9 +254,21 @@ pub struct Run {
     /// A name for the session, given on this run (`--name`, `anchorleg rename`); its follow-ups
     /// share it (see [`Store::session_name`]).
     pub name: Option<String>,
+    /// What the task adds to every launch (`--add-dir`, `--instructions`, Claude Code's
+    /// options), as [`crate::task_options::TaskOptions`] JSON; serialized as the object.
+    #[serde(serialize_with = "options_object")]
+    pub options: Option<String>,
 }
 
-const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status, review_of, name";
+fn options_object<S: serde::Serializer>(
+    o: &Option<String>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    use serde::Serialize as _;
+    crate::task_options::TaskOptions::from_json(o.as_deref()).serialize(s)
+}
+
+const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status, review_of, name, options";
 
 fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -276,6 +288,7 @@ fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         goal_status: r.get(13)?,
         review_of: r.get(14)?,
         name: r.get(15)?,
+        options: r.get(16)?,
     })
 }
 
@@ -399,6 +412,9 @@ ALTER TABLE runs ADD COLUMN review_of INTEGER;
 "#,
     r#"
 ALTER TABLE runs ADD COLUMN name TEXT;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN options TEXT;
 "#,
 ];
 
@@ -717,6 +733,14 @@ impl Store {
     pub fn set_run_mode(&self, id: RunId, mode: Option<&str>) -> Result<()> {
         self.conn
             .execute("UPDATE runs SET mode = ?2 WHERE id = ?1", params![id, mode])?;
+        Ok(())
+    }
+
+    pub fn set_run_options(&self, id: RunId, options: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET options = ?2 WHERE id = ?1",
+            params![id, options],
+        )?;
         Ok(())
     }
 

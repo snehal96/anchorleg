@@ -26,6 +26,7 @@ use crate::output::{GoalReport, Outcome, RunReport, SCHEMA, Switch};
 use crate::policy::{self, Pick, PickOptions};
 use crate::registry::{Account, Config, SecretStore, Vendor};
 use crate::store::{Decision, RunState, Source, Store};
+use crate::task_options::TaskOptions;
 use crate::{checkpoint, goal, handoff};
 
 #[derive(Debug, thiserror::Error)]
@@ -114,6 +115,8 @@ pub struct RunOptions {
     pub avoid: Option<String>,
     /// Only accounts of this CLI.
     pub vendor: Option<Vendor>,
+    /// What the task adds to every launch: folders, instructions, effort, Claude's options.
+    pub task: TaskOptions,
 }
 
 /// How much the agent may do without asking, for one session (D41). Claude maps it to its
@@ -233,6 +236,7 @@ impl RunOptions {
             side: false,
             avoid: None,
             vendor: None,
+            task: TaskOptions::default(),
         }
     }
 }
@@ -489,6 +493,9 @@ impl Supervisor<'_> {
         }
         if opts.answer_wait.is_some() {
             self.store.set_run_answer_wait(run_id, opts.answer_wait)?;
+        }
+        if let Some(j) = opts.task.to_json() {
+            self.store.set_run_options(run_id, Some(&j))?;
         }
         if let Some(g) = &opts.goal {
             self.store
@@ -1335,12 +1342,29 @@ impl Supervisor<'_> {
                 launch.args.push("--name".to_owned());
                 launch.args.push(name.clone());
             }
-            // The person's lasting allow rules; Claude applies them itself. Not while planning
-            // or reviewing, which stay read-only.
-            if !read_only && !self.config.allow.is_empty() {
-                launch.args.push("--allowedTools".to_owned());
-                launch.args.push(self.config.allow.join(","));
+            // The person's lasting allow rules (Claude applies them itself) and the task's own
+            // Claude options. Not while planning or reviewing, which stay read-only.
+            if !read_only {
+                launch
+                    .args
+                    .extend(opts.task.claude.args(&self.config.allow));
             }
+            launch.args.extend(opts.task.add_dir_args());
+            if let Some(i) = &opts.task.instructions {
+                launch.args.push("--append-system-prompt".to_owned());
+                launch.args.push(i.clone());
+            }
+        } else if !opts.task.claude.is_empty() {
+            self.note(
+                opts,
+                run_id,
+                &format!(
+                    "{} has no {}: left out on {}",
+                    account.vendor.caps().label,
+                    opts.task.claude.names().join(", "),
+                    account.name
+                ),
+            );
         }
         // Claude's plan mode can't end with its ExitPlanMode tool in `-p`, and agy has no plan
         // mode: say how a plan is handed over.
@@ -1364,7 +1388,10 @@ impl Supervisor<'_> {
             opts.model
                 .as_deref()
                 .or(shared.and_then(|s| s.model.as_deref())),
-            shared.and_then(|s| s.effort.as_deref()),
+            opts.task
+                .effort
+                .as_deref()
+                .or(shared.and_then(|s| s.effort.as_deref())),
         );
         if account.vendor == Vendor::Antigravity {
             // `agy --conversation <unknown id>` silently starts a new conversation instead.
@@ -1401,8 +1428,14 @@ impl Supervisor<'_> {
                     cmd.env("ANCHORLEG_CONFIG", path);
                 }
             }
+            // agy has no instructions flag: a new conversation starts with them.
+            let prompt = match resume {
+                None => opts.task.agy_prompt(prompt),
+                Some(_) => prompt.to_owned(),
+            };
             cmd.arg("-p").arg(prompt);
             cmd.args(["--output-format", "stream-json"]);
+            cmd.args(opts.task.add_dir_args());
             if let Some(schema) = opts.json_schema.as_ref().filter(|_| !plan) {
                 cmd.arg("--json-schema").arg(schema.to_string());
             }
@@ -1453,7 +1486,11 @@ impl Supervisor<'_> {
                     .model
                     .clone()
                     .or_else(|| shared.and_then(|s| s.model.clone())),
-                effort: shared.and_then(|s| s.effort.clone()),
+                effort: opts
+                    .task
+                    .effort
+                    .clone()
+                    .or_else(|| shared.and_then(|s| s.effort.clone())),
                 sandbox: if read_only {
                     Some("read-only".to_owned())
                 } else {
@@ -1490,6 +1527,8 @@ impl Supervisor<'_> {
                 budget_left,
                 output_schema: opts.json_schema.clone().filter(|_| !plan),
                 name: opts.name.clone(),
+                instructions: opts.task.instructions.clone(),
+                config: opts.task.codex_config(),
             });
         } else {
             if let Some(dir) = &opts.mod_dir {

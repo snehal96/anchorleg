@@ -12,7 +12,9 @@ use anchorleg_core::registry::{Config, Keychain, Vendor};
 use anchorleg_core::store::{RunState, Store};
 use anchorleg_core::supervisor::{FollowUp, Progress, Quiet, RunOptions, Supervisor};
 
-use crate::{RunArgs, now};
+use anchorleg_core::task_options::{ClaudeOptions, TaskOptions};
+
+use crate::{ClaudeArgs, RunArgs, now};
 
 struct Stderr;
 
@@ -356,6 +358,25 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     }
     opts.budget = args.budget;
     opts.json_schema = args.json_schema;
+    opts.task = task_options(
+        &args.add_dir,
+        args.instructions,
+        args.effort,
+        claude_options(&args.claude),
+    )?;
+    if let Some(p) = &parent {
+        let had = TaskOptions::from_json(p.options.as_deref());
+        // A side question answers read-only in its own way; it keeps only the folders.
+        let had = if args.btw.is_some() {
+            had.for_read_only()
+        } else {
+            had
+        };
+        opts.task = std::mem::take(&mut opts.task).or(&had);
+    } else if let Some((r, _)) = &reviewed {
+        opts.task = std::mem::take(&mut opts.task)
+            .or(&TaskOptions::from_json(r.options.as_deref()).for_read_only());
+    }
     opts.images = staged
         .iter()
         .filter(|p| attachments::is_image(p))
@@ -866,4 +887,58 @@ fn pid_alive(pid: i64) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+/// The task's options from `run`'s flags. Folders must exist; they and any file named for a
+/// Claude option become absolute, since the CLI runs in the task's folder, not here.
+fn task_options(
+    add_dirs: &[PathBuf],
+    instructions: Option<String>,
+    effort: Option<String>,
+    claude: ClaudeOptions,
+) -> anyhow::Result<TaskOptions> {
+    let mut dirs = Vec::new();
+    for d in add_dirs {
+        let abs = std::fs::canonicalize(d)
+            .map_err(|e| anyhow::anyhow!("--add-dir {}: {e}", d.display()))?;
+        if !abs.is_dir() {
+            anyhow::bail!("--add-dir {}: not a folder", d.display());
+        }
+        if !dirs.contains(&abs) {
+            dirs.push(abs);
+        }
+    }
+    Ok(TaskOptions {
+        add_dirs: dirs,
+        instructions,
+        effort: effort
+            .map(|e| e.trim().to_ascii_lowercase())
+            .filter(|e| !e.is_empty()),
+        claude,
+    })
+}
+
+fn claude_options(a: &ClaudeArgs) -> ClaudeOptions {
+    // A value that names an existing file is passed as its absolute path; JSON stays as it is.
+    let file = |v: &String| match std::fs::canonicalize(v) {
+        Ok(p) if p.is_file() => p.display().to_string(),
+        _ => v.clone(),
+    };
+    let list = |vs: &[String]| -> Vec<String> {
+        vs.iter()
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+            .collect()
+    };
+    ClaudeOptions {
+        agent: a.agent.clone(),
+        agents: a.agents.as_ref().map(file),
+        allowed_tools: list(&a.allowed_tools),
+        disallowed_tools: list(&a.disallowed_tools),
+        tools: list(&a.tools),
+        mcp_config: a.mcp_config.iter().map(file).collect(),
+        strict_mcp_config: a.strict_mcp_config,
+        fallback_model: a.fallback_model.clone(),
+        settings: a.settings.as_ref().map(file),
+    }
 }
