@@ -1,0 +1,72 @@
+apps/desktop/src-tauri/src/cli.rs
+  s_24d456e49210ef::t_ca373b27a75b74 1-389
+  s_24d456e49210ef::t_a19d4af2daaa75 390-472
+apps/desktop/src/Composer.tsx
+  s_24d456e49210ef::t_368002b65ec155 1-219
+  s_24d456e49210ef::t_9148795337d2ac 220
+apps/desktop/src/App.tsx
+  s_24d456e49210ef::t_136a617a9a7ebe 2-232
+  s_24d456e49210ef::t_ac3108f18a42bc 1
+apps/desktop/src/Conversation.tsx
+  s_24d456e49210ef::t_fdded7da3389b8 1-211
+apps/desktop/src-tauri/src/lib.rs
+  s_24d456e49210ef::t_96674a8e04054d 6-125,131
+  s_24d456e49210ef::t_9345b136e869da 3-5
+  s_24d456e49210ef::t_8ee3a6422724aa 126-130
+  s_24d456e49210ef::t_aadc915082ece3 1-2
+apps/desktop/src/sessions.ts
+  s_24d456e49210ef::t_42edeb456ae0e0 1-10,12-13,19-49
+  s_24d456e49210ef::t_7ec9aecdde3180 11,14-18
+apps/desktop/.gitignore
+  s_24d456e49210ef::t_3ef53f38efd7ed 1-5
+apps/desktop/README.md
+  s_24d456e49210ef::t_4db4ca3146264a 1-34
+apps/desktop/index.html
+  s_24d456e49210ef::t_314118a0d22d57 1-12
+apps/desktop/package-lock.json
+  s_24d456e49210ef::t_8896324606133a 1-2163
+apps/desktop/package.json
+  s_24d456e49210ef::t_5c5db50ab2e9d4 1-26
+apps/desktop/scripts/sidecar.sh
+  s_24d456e49210ef::t_9e019f23742676 1-16
+apps/desktop/src-tauri/Cargo.lock
+  s_24d456e49210ef::t_6974fe6f6b6d84 1-4466
+apps/desktop/src-tauri/Cargo.toml
+  s_24d456e49210ef::t_27962282546c0e 1-25
+apps/desktop/src-tauri/build.rs
+  s_24d456e49210ef::t_76df8ce6327bae 1-3
+apps/desktop/src-tauri/capabilities/default.json
+  s_24d456e49210ef::t_b77b32d8c45ed7 1-12
+apps/desktop/src-tauri/src/main.rs
+  s_24d456e49210ef::t_573db1d54b4058 1-6
+apps/desktop/src-tauri/tauri.conf.json
+  s_24d456e49210ef::t_d93058a75343d7 1-53
+apps/desktop/src/TerminalCard.tsx
+  s_24d456e49210ef::t_7612db14f9e75f 1-88
+apps/desktop/src/api.ts
+  s_24d456e49210ef::t_5c67f3cfbbd4d5 1-104
+apps/desktop/src/main.tsx
+  s_24d456e49210ef::t_d88900909e94ec 1-10
+apps/desktop/src/style.css
+  s_24d456e49210ef::t_7560cf6c2ec323 1-133
+apps/desktop/tsconfig.json
+  s_24d456e49210ef::t_8eec6740c6ec5f 1-16
+apps/desktop/vite.config.ts
+  s_24d456e49210ef::t_4686c4178ad9ee 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28a4d885ef898ec9388b7803c1005065cbbd97c5",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
