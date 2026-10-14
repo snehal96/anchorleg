@@ -12,7 +12,9 @@ use anchorleg_core::registry::{Config, Keychain, Vendor};
 use anchorleg_core::store::{RunState, Store};
 use anchorleg_core::supervisor::{FollowUp, Progress, Quiet, RunOptions, Supervisor};
 
-use crate::{RunArgs, now};
+use anchorleg_core::task_options::{ClaudeOptions, TaskOptions};
+
+use crate::{ClaudeArgs, RunArgs, now};
 
 struct Stderr;
 
@@ -84,6 +86,7 @@ fn review_prompt(id: i64, first: i64, diff: &str, extra: &str) -> String {
 }
 
 /// Opens a side question (`anchorleg btw`), so the fork answers instead of carrying on.
+/// A side question's task ends with this note (`run --btw`): see [`is_side`].
 const BTW_NOTE: &str = "A side question about this session, asked while you work on the task. \
      Answer it briefly from what you know and can read; don't change any files and don't go on \
      with the task here.";
@@ -116,6 +119,105 @@ fn rewind_point(store: &Store, db: &Path, id: i64) -> anyhow::Result<(i64, Strin
 }
 
 /// Run the task; returns the report so `main` can pick the exit code.
+/// How long `--detach` waits for the background run to record itself.
+const DETACH_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `anchorleg run --detach …`: start this same command without `--detach` in its own process
+/// group (so it outlives this one, and `anchorleg stop` ends it whole), wait until it has a run
+/// id, print it and return. What the run prints goes nowhere; until it has a run id its errors
+/// are read back from a file and reported here.
+/// A run that answers a side question (`anchorleg btw`) rather than carrying the session on.
+pub fn is_side(task: &str) -> bool {
+    task.trim_end().ends_with(&format!("({BTW_NOTE})"))
+}
+
+pub fn detach(json: bool) -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt as _;
+    // Drop `--detach` from the options only: after `--` it's part of the task.
+    let mut options = true;
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os()
+        .skip(1)
+        .filter(|a| {
+            if a == "--" {
+                options = false;
+            }
+            !(options && a == "--detach")
+        })
+        .collect();
+    // The run reports in JSON (its run id, if it ends before it's seen working), into a file.
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    if !args[..end].iter().any(|a| a == "--json")
+        && let Some(i) = args[..end].iter().position(|a| a == "run")
+    {
+        args.insert(i + 1, "--json".into());
+    }
+    let db = Store::default_path()?;
+    let store = Store::open(&db)?;
+    let dir = db.parent().map(|d| d.join("runs")).unwrap_or_default();
+    std::fs::create_dir_all(&dir)?;
+    let base = dir.join(format!(".detach-{}-{}", std::process::id(), now()));
+    let (out_path, err_path) = (base.with_extension("out"), base.with_extension("err"));
+    let out = std::fs::File::create(&out_path)?;
+    let err = std::fs::File::create(&err_path)?;
+    let exe = std::env::current_exe()?;
+    let mut child = std::process::Command::new(&exe)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .process_group(0)
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("starting {}: {e}", exe.display()))?;
+    let pid = i64::from(child.id());
+    let started = std::time::Instant::now();
+    let result = loop {
+        if let Some(run) = store
+            .recent_runs(20)?
+            .into_iter()
+            .find(|r| r.pid == Some(pid))
+        {
+            break Ok(run.id);
+        }
+        if let Some(status) = child.try_wait()? {
+            // Ended before it was seen working: done already (its report has the run id), or
+            // it never started a run, and its error says why.
+            let report = std::fs::read_to_string(&out_path).unwrap_or_default();
+            if let Some(id) = serde_json::from_str::<serde_json::Value>(&report)
+                .ok()
+                .and_then(|r| r["run_id"].as_i64())
+            {
+                break Ok(id);
+            }
+            let msg = std::fs::read_to_string(&err_path).unwrap_or_default();
+            let msg = msg.trim().trim_start_matches("anchorleg: ");
+            break Err(if msg.is_empty() {
+                anyhow::anyhow!("the run ended at once ({status})")
+            } else {
+                anyhow::anyhow!("{msg}")
+            });
+        }
+        if started.elapsed() > DETACH_WAIT {
+            break Err(anyhow::anyhow!(
+                "the run (pid {pid}) hasn't started a session after {}s; it goes on in the background",
+                DETACH_WAIT.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    // The run keeps writing to the files it has open; the names can go.
+    let _ = std::fs::remove_file(&out_path);
+    let _ = std::fs::remove_file(&err_path);
+    let run_id = result?;
+    if json {
+        println!("{}", serde_json::json!({ "run_id": run_id, "pid": pid }));
+    } else {
+        println!(
+            "started run #{run_id} (pid {pid}); follow it with `anchorleg sessions show {run_id}`"
+        );
+    }
+    Ok(())
+}
+
 pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let config = Config::load(&Config::default_path()?)?;
     let db = Store::default_path()?;
@@ -245,11 +347,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     };
     let mut opts = RunOptions::new(attachments::with_note(&task, &staged), &cwd);
     opts.goal = goal;
-    opts.vendor = args.cli.as_deref().map(|c| match c {
-        "codex" => Vendor::Codex,
-        "antigravity" => Vendor::Antigravity,
-        _ => Vendor::Claude,
-    });
+    opts.vendor = args.cli.as_deref().and_then(Vendor::parse);
     if let Some((r, _)) = &reviewed {
         opts.review = true;
         opts.review_of = Some(r.id);
@@ -260,6 +358,25 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     }
     opts.budget = args.budget;
     opts.json_schema = args.json_schema;
+    opts.task = task_options(
+        &args.add_dir,
+        args.instructions,
+        args.effort,
+        claude_options(&args.claude),
+    )?;
+    if let Some(p) = &parent {
+        let had = TaskOptions::from_json(p.options.as_deref());
+        // A side question answers read-only in its own way; it keeps only the folders.
+        let had = if args.btw.is_some() {
+            had.for_read_only()
+        } else {
+            had
+        };
+        opts.task = std::mem::take(&mut opts.task).or(&had);
+    } else if let Some((r, _)) = &reviewed {
+        opts.task = std::mem::take(&mut opts.task)
+            .or(&TaskOptions::from_json(r.options.as_deref()).for_read_only());
+    }
     opts.images = staged
         .iter()
         .filter(|p| attachments::is_image(p))
@@ -283,14 +400,30 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
             );
         };
         let fork = args.fork.is_some() || args.btw.is_some() || rewound.is_some();
-        if fork
-            && config
-                .get(&account)
-                .is_some_and(|a| a.vendor == anchorleg_core::registry::Vendor::Antigravity)
+        type Can = fn(&anchorleg_core::vendors::Caps) -> bool;
+        let want: Option<(&str, Can)> = if args.btw.is_some() {
+            Some(("a side question", |c| c.side))
+        } else if rewound.is_some() {
+            Some(("going back", |c| c.rewind))
+        } else if args.fork.is_some() {
+            Some(("forking", |c| c.fork))
+        } else {
+            None
+        };
+        if let Some((what, can)) = want
+            && let Some(a) = config.get(&account)
+            && !can(a.vendor.caps())
         {
+            let able: Vec<&str> = Vendor::ALL
+                .into_iter()
+                .filter(|v| can(v.caps()))
+                .map(|v| v.caps().label)
+                .collect();
             anyhow::bail!(
-                "forking or a side question needs a Claude or Codex session; #{} ran on {account}",
-                p.id
+                "{what} needs a {} session; #{} ran on {account} ({})",
+                able.join(" or "),
+                p.id,
+                a.vendor.caps().label
             );
         }
         opts.follow_up = Some(FollowUp {
@@ -688,7 +821,7 @@ pub fn undo_session(store: &Store, log_dir: &Path, id: i64, redo: bool) -> anyho
 }
 
 /// `anchorleg undo <run>`.
-pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
+pub fn undo(id: i64, redo: bool, yes: bool, json: bool) -> anyhow::Result<()> {
     let db = Store::default_path()?;
     let store = Store::open(&db)?;
     let log_dir = db.with_file_name("runs");
@@ -709,7 +842,19 @@ pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
         let run = store
             .run(id)?
             .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
-        match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, true)? {
+        let stat = anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, true)?;
+        if json {
+            let Some(stat) = stat else {
+                anyhow::bail!("nothing to compare with for #{id}");
+            };
+            let stat = stat.trim();
+            println!(
+                "{}",
+                serde_json::json!({ "schema": 1, "preview": (!stat.is_empty()).then_some(stat) })
+            );
+            return Ok(());
+        }
+        match stat {
             Some(stat) if !stat.trim().is_empty() => {
                 println!("{stat}");
                 println!(
@@ -722,7 +867,12 @@ pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    println!("{}", undo_session(&store, &log_dir, id, redo)?);
+    let done = undo_session(&store, &log_dir, id, redo)?;
+    if json {
+        println!("{}", serde_json::json!({ "schema": 1, "done": done }));
+        return Ok(());
+    }
+    println!("{done}");
     if !redo {
         println!(
             "`anchorleg undo {id} --redo` brings the changes back. The agent isn't told; say so in your next message."
@@ -737,4 +887,58 @@ fn pid_alive(pid: i64) -> bool {
         .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
+}
+
+/// The task's options from `run`'s flags. Folders must exist; they and any file named for a
+/// Claude option become absolute, since the CLI runs in the task's folder, not here.
+fn task_options(
+    add_dirs: &[PathBuf],
+    instructions: Option<String>,
+    effort: Option<String>,
+    claude: ClaudeOptions,
+) -> anyhow::Result<TaskOptions> {
+    let mut dirs = Vec::new();
+    for d in add_dirs {
+        let abs = std::fs::canonicalize(d)
+            .map_err(|e| anyhow::anyhow!("--add-dir {}: {e}", d.display()))?;
+        if !abs.is_dir() {
+            anyhow::bail!("--add-dir {}: not a folder", d.display());
+        }
+        if !dirs.contains(&abs) {
+            dirs.push(abs);
+        }
+    }
+    Ok(TaskOptions {
+        add_dirs: dirs,
+        instructions,
+        effort: effort
+            .map(|e| e.trim().to_ascii_lowercase())
+            .filter(|e| !e.is_empty()),
+        claude,
+    })
+}
+
+fn claude_options(a: &ClaudeArgs) -> ClaudeOptions {
+    // A value that names an existing file is passed as its absolute path; JSON stays as it is.
+    let file = |v: &String| match std::fs::canonicalize(v) {
+        Ok(p) if p.is_file() => p.display().to_string(),
+        _ => v.clone(),
+    };
+    let list = |vs: &[String]| -> Vec<String> {
+        vs.iter()
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+            .collect()
+    };
+    ClaudeOptions {
+        agent: a.agent.clone(),
+        agents: a.agents.as_ref().map(file),
+        allowed_tools: list(&a.allowed_tools),
+        disallowed_tools: list(&a.disallowed_tools),
+        tools: list(&a.tools),
+        mcp_config: a.mcp_config.iter().map(file).collect(),
+        strict_mcp_config: a.strict_mcp_config,
+        fallback_model: a.fallback_model.clone(),
+        settings: a.settings.as_ref().map(file),
+    }
 }

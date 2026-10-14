@@ -227,3 +227,165 @@ fn notify_settings() {
     // Back to the defaults: nothing left in the file.
     assert!(!std::fs::read_to_string(&config).unwrap().contains("notify"));
 }
+
+#[test]
+fn settings_rules_policy_and_aliases_in_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let json = |args: &[&str]| -> serde_json::Value {
+        let out = anchorleg(&config).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+
+    let s = json(&["settings", "claude", "--model", "opus", "--json"]);
+    assert_eq!(s["vendors"]["claude"]["model"], "opus", "{s}");
+    assert_eq!(
+        s["vendors"]["codex"]["model"],
+        serde_json::Value::Null,
+        "{s}"
+    );
+    let s = json(&["settings", "--json"]);
+    assert_eq!(s["vendors"]["claude"]["model"], "opus", "{s}");
+
+    let r = json(&["rules", "--add", "Bash(cargo test *)", "--json"]);
+    assert_eq!(r["rules"], serde_json::json!(["Bash(cargo test *)"]), "{r}");
+    let r = json(&["rules", "--rm", "Bash(cargo test *)", "--json"]);
+    assert_eq!(r["rules"], serde_json::json!([]), "{r}");
+
+    let p = json(&["policy", "balance", "--json"]);
+    assert_eq!(p["policy"], "balance", "{p}");
+    assert_eq!(p["policies"].as_array().unwrap().len(), 3, "{p}");
+
+    let aliases = dir.path().join("aliases.txt");
+    std::fs::write(
+        &aliases,
+        "claude-work='CLAUDE_CONFIG_DIR=~/.claude-work /Users/me/.local/bin/claude'\n",
+    )
+    .unwrap();
+    let from = aliases.to_str().unwrap();
+    let a = json(&["accounts", "import-aliases", "--json", "--from-file", from]);
+    assert_eq!(a["add"][0]["name"], "claude-work", "{a}");
+    assert_eq!(a["saved"], false, "{a}");
+    let a = json(&[
+        "accounts",
+        "import-aliases",
+        "--yes",
+        "--json",
+        "--from-file",
+        from,
+    ]);
+    assert_eq!(a["saved"], true, "{a}");
+    let a = json(&["accounts", "import-aliases", "--json", "--from-file", from]);
+    assert_eq!(a["skip"][0], "claude-work", "{a}");
+    assert_eq!(a["add"], serde_json::json!([]), "{a}");
+}
+
+#[test]
+fn login_signs_in_then_adds_the_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake/fake-claude.sh");
+
+    // A sign-in that doesn't finish adds nothing.
+    anchorleg(&config)
+        .env("HOME", &home)
+        .env("FAKE_LOGIN_FAILS", "1")
+        .args(["accounts", "login", "work", "--bin", fake])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("nothing was added"));
+    anchorleg(&config)
+        .args(["accounts", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(predicates::prelude::PredicateBooleanExt::not(
+            predicates::str::contains("work"),
+        ));
+
+    let out = anchorleg(&config)
+        .env("HOME", &home)
+        .args(["accounts", "login", "work", "--bin", fake, "--json"])
+        .assert()
+        .success();
+    let v = json(&out);
+    assert_eq!(v["name"], "work");
+    assert_eq!(v["cli"], "claude");
+    assert_eq!(v["dir"], "~/.claude-work");
+    assert!(home.join(".claude-work/.fake-signed-in").is_file());
+    let list = json(
+        &anchorleg(&config)
+            .args(["accounts", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(list[0]["name"], "work");
+    assert_eq!(list[0]["env"]["CLAUDE_CONFIG_DIR"], "~/.claude-work");
+
+    // The same name again, a bad name, and a CLI it can't sign in to are refused.
+    for args in [
+        &["accounts", "login", "work", "--bin", fake][..],
+        &["accounts", "login", "a b", "--bin", fake][..],
+        &["accounts", "login", "g", "--cli", "kimi"][..],
+    ] {
+        anchorleg(&config)
+            .env("HOME", &home)
+            .args(args)
+            .assert()
+            .failure();
+    }
+}
+
+#[test]
+fn login_to_antigravity_needs_a_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // Not a terminal here: agy's sign-in screen can't run, so it says where to do it.
+    anchorleg(&config)
+        .env("HOME", &home)
+        .args(["accounts", "login", "g2", "--cli", "agy"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("in a terminal"));
+}
+
+#[test]
+fn vendors_json_says_what_each_cli_can_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let v = json(
+        &anchorleg(&config)
+            .args(["vendors", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(v["schema"], 1);
+    let row = |name: &str| {
+        v["vendors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["vendor"] == name)
+            .cloned()
+            .unwrap()
+    };
+    let claude = row("claude");
+    assert_eq!(claude["label"], "Claude Code");
+    assert_eq!(claude["driven"], true);
+    assert_eq!(claude["fork"], true);
+    assert_eq!(claude["quota"], "live");
+    assert_eq!(claude["sign_in"]["kind"], "browser");
+    assert_eq!(claude["bin"], "claude");
+    let agy = row("antigravity");
+    assert_eq!(agy["side"], false);
+    assert_eq!(agy["sign_in"]["kind"], "terminal");
+    assert_eq!(row("cursor")["driven"], false);
+}

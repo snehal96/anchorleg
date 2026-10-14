@@ -43,14 +43,6 @@ use crate::status::stale_note;
 
 const TICK: Duration = Duration::from_millis(700);
 
-/// Agent CLIs anchorleg knows about, shown in the Agents pane when not configured as accounts.
-const KNOWN_CLIS: &[(&str, &str)] = &[
-    ("codex", "Codex"),
-    ("agy", "Antigravity"),
-    ("cursor-agent", "Cursor"),
-    ("kimi", "Kimi"),
-];
-
 /// Starts and stops `anchorleg run` processes. A trait so tests can see what would run.
 pub trait Launcher {
     /// Start `anchorleg <args>` in the background; returns its pid.
@@ -565,49 +557,21 @@ impl App {
                 break;
             }
         }
-        let mut messages = Vec::new();
-        let mut whole = String::new();
-        for id in chain.iter().rev() {
-            let log = std::fs::read_to_string(self.log_dir.join(format!("run-{id}.jsonl")))
-                .unwrap_or_default();
-            whole.push_str(&log);
-            let mut part = conversation::from_log(&log);
-            // Paths inside the session's folder read better relative to it.
-            if let Some(r) = self.runs.iter().find(|r| r.id == *id) {
-                let prefix = format!("{}/", r.cwd.trim_end_matches('/'));
-                for m in part.iter_mut().filter(|m| m.role == Role::Tool) {
-                    m.text = m.text.replace(&prefix, "");
-                }
-            }
-            // Logs from before anchorleg recorded the prompt: show the task as the user's message.
-            if !part.iter().any(|m| m.role == Role::User)
-                && let Some(r) = self.runs.iter().find(|r| r.id == *id)
-            {
-                part.insert(
-                    0,
-                    Message {
-                        role: Role::User,
-                        text: r.task.clone(),
-                    },
-                );
-            }
-            messages.extend(part);
-        }
-        self.conversation = messages;
-        // The call running now, and the subagents: from the newest run's log.
-        let newest = std::fs::read_to_string(self.log_dir.join(format!("run-{}.jsonl", chain[0])))
-            .unwrap_or_default();
-        let now_running = conversation::running(&newest);
-        self.subagents = conversation::subagents(&newest);
-        conversation::read_transcripts(&mut self.subagents);
-        self.running = match (now_running, self.running.take()) {
+        let runs: Vec<&Run> = chain
+            .iter()
+            .rev()
+            .filter_map(|id| self.runs.iter().find(|r| r.id == *id))
+            .collect();
+        let view = conversation::session_view(&runs, &self.log_dir);
+        self.conversation = view.messages;
+        self.subagents = view.subagents;
+        self.running = match (view.running, self.running.take()) {
             (Some(r), Some((old, since))) if old.what == r.what => Some((r, since)),
             (Some(r), _) => Some((r, std::time::Instant::now())),
             (None, _) => None,
         };
-        let t = anchorleg_core::handoff::extract(&whole);
-        self.context = t.context_tokens.map(|n| (n, t.context_window));
-        self.steps = t.steps;
+        self.context = view.context_tokens.map(|n| (n, view.context_window));
+        self.steps = view.steps;
     }
 
     fn agent_count(&self) -> usize {
@@ -2224,16 +2188,19 @@ impl App {
     }
 
     fn detected_clis(&self) -> Vec<(&'static str, &'static str, bool)> {
-        KNOWN_CLIS
-            .iter()
-            .filter(|(bin, _)| {
-                !self
-                    .config
-                    .accounts
-                    .iter()
-                    .any(|a| a.vendor.default_bin() == *bin)
+        // Claude is the default CLI and has its own place; the others are offered here.
+        Vendor::ALL
+            .into_iter()
+            .filter(|v| {
+                *v != Vendor::Claude && !self.config.accounts.iter().any(|a| a.vendor == *v)
             })
-            .map(|(bin, label)| (*bin, *label, self.launcher.find_cli(bin).is_some()))
+            .map(|v| {
+                (
+                    v.default_bin(),
+                    v.caps().label,
+                    self.launcher.find_cli(v.default_bin()).is_some(),
+                )
+            })
             .collect()
     }
 
@@ -2324,8 +2291,7 @@ impl App {
             )));
         }
         for (bin, label, installed) in self.detected_clis() {
-            let driven = Vendor::from_bin(bin)
-                .is_some_and(|v| anchorleg_core::supervisor::DRIVEN.contains(&v));
+            let driven = Vendor::from_bin(bin).is_some_and(|v| v.caps().driven);
             let note = match (installed, driven) {
                 (true, true) => "installed, add an account",
                 (true, false) => "installed, unsupported",

@@ -7,6 +7,25 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- `anchorleg run --add-dir DIR`, `--instructions TEXT|FILE` and `--effort LEVEL`, on Claude Code,
+  Codex and Antigravity, kept by follow-ups and across switches; Claude Code's `--agent`,
+  `--agents`, `--allowed-tools`, `--disallowed-tools`, `--tools`, `--mcp-config`,
+  `--strict-mcp-config`, `--fallback-model` and `--settings` passed through. `sessions --json`
+  shows them as `options`.
+- `anchorleg vendors [--json]`: what each CLI can do, from one table the CLI, TUI and desktop
+  app share.
+- `anchorleg sessions show <run> [--since N] [--json]`: one session's conversation, the call
+  it's in, its subagents, task list and context, as `anchorleg ui` shows it (for scripts and the
+  desktop app).
+- `anchorleg run --detach`: starts the run in the background and returns its run id at once
+  (`--json`: `{"run_id", "pid"}`); errors before it starts are still reported.
+- `anchorleg permission list --json` also gives each request's `kind` (tool, question, plan), a
+  summary, the change it would make, the rule "always" would save, the questions or plan, and its
+  deadline.
+- `anchorleg notify --json`. While the desktop app is open (`desktop.pid` in the store folder) it
+  shows the notices; runs then skip their own desktop notification (`--command` still runs).
+- `--json` for `anchorleg settings`, `anchorleg policy`, `anchorleg accounts import-aliases`,
+  `anchorleg rules`, `anchorleg undo` (a preview without `--yes`) and `anchorleg sync mcp`.
 - Homebrew tap (in progress).
 
 ## [0.6.1] — 2026-10-13

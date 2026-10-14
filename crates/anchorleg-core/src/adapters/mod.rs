@@ -6,9 +6,42 @@ pub mod claude;
 pub mod claude_usage;
 pub mod codex;
 pub mod codex_server;
+#[cfg(test)]
+mod conformance;
 
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::registry::Vendor;
+
+/// Turns one CLI's stdout lines into signals: the one place the supervisor decodes a stream, so
+/// the conformance tests (`conformance.rs`) check exactly what runs. Codex lines are
+/// `codex exec --json` events, which the app-server driver writes.
+#[derive(Debug)]
+pub enum Decoder {
+    Claude,
+    Codex(codex::Stream),
+    Antigravity,
+}
+
+impl Decoder {
+    pub fn new(vendor: Vendor) -> Self {
+        match vendor {
+            Vendor::Codex => Self::Codex(codex::Stream::default()),
+            Vendor::Antigravity => Self::Antigravity,
+            _ => Self::Claude,
+        }
+    }
+
+    /// One stdout line; garbage and unknown events give no signals.
+    pub fn feed(&mut self, line: &str) -> Vec<AgentSignal> {
+        match self {
+            Self::Claude => claude::signals(&claude::parse_line(line)),
+            Self::Codex(stream) => stream.feed(line),
+            Self::Antigravity => agy::signals(line),
+        }
+    }
+}
 
 /// Unix time in seconds.
 pub type EpochSecs = i64;

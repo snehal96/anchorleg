@@ -829,6 +829,9 @@ fn large_context_starts_fresh_from_the_handoff() {
 fn a_tool_call_waits_for_the_users_answer() {
     let env = Env::new(&["a"]);
     env.script("a.jsonl", &ok("s1", "wrote it"));
+    // The desktop app is open (this test process stands in for it): it gets the notices.
+    std::fs::create_dir_all(env.path("home")).unwrap();
+    std::fs::write(env.path("home/desktop.pid"), std::process::id().to_string()).unwrap();
     let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("anchorleg"));
     let child = cmd
         .args(["run", "--json", "--cwd"])
@@ -857,6 +860,21 @@ fn a_tool_call_waits_for_the_users_answer() {
         if let Some(id) = v[0]["id"].as_i64() {
             assert_eq!(v[0]["tool"], "Write");
             assert_eq!(v[0]["run_id"], 1);
+            // What the desktop app shows.
+            assert_eq!(v[0]["kind"], "tool", "{v}");
+            assert_eq!(v[0]["summary"], "Write  a.txt", "{v}");
+            assert!(v[0]["preview"].is_array(), "{v}");
+            assert!(
+                v[0]["rule"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("Write")),
+                "{v}"
+            );
+            assert_eq!(
+                v[0]["deadline"].as_i64(),
+                Some(v[0]["asked_at"].as_i64().unwrap() + 30 * 60),
+                "{v}"
+            );
             break id;
         }
         assert!(started.elapsed().as_secs() < 10, "nothing asked");
@@ -887,6 +905,19 @@ fn a_tool_call_waits_for_the_users_answer() {
         log.contains("Write  a.txt: allowed for this session"),
         "{log}"
     );
+    let notices = std::fs::read_to_string(env.path("home/desktop-notices.jsonl")).unwrap();
+    assert!(notices.contains(r#""event":"waiting""#), "{notices}");
+    assert!(notices.contains(r#""event":"done""#), "{notices}");
+    let n: Value = serde_json::from_slice(
+        &env.anchorleg()
+            .args(["notify", "--json"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(n["app_running"], true, "{n}");
+    assert_eq!(n["data_dir"], env.path("home").display().to_string(), "{n}");
 }
 
 #[test]
@@ -1874,6 +1905,11 @@ fn codex_questions_are_answered_through_anchorleg() {
     assert_eq!(q["tool"], "AskUserQuestion");
     assert_eq!(q["input"]["questions"][0]["options"][1]["label"], "Jest");
     assert_eq!(q["input"]["questions"][1]["secret"], true);
+    // Normalised for UIs, with no deadline: a question waits for the person.
+    assert_eq!(q["kind"], "question");
+    assert_eq!(q["questions"][0]["options"][0]["label"], "Vitest");
+    assert_eq!(q["questions"][1]["secret"], true);
+    assert_eq!(q["deadline"], Value::Null);
 
     // A secret is never passed: anchorleg refuses to take it.
     env.anchorleg()
@@ -1997,6 +2033,8 @@ fn a_plan_can_be_edited_before_it_is_approved() {
     let child = spawn_run_with(&env, &["--plan"], &[]);
     let q = first_question(&env);
     assert_eq!(q["input"]["plan"], "1. add docs/page.md", "{q}");
+    assert_eq!(q["kind"], "plan", "{q}");
+    assert_eq!(q["plan"], "1. add docs/page.md", "{q}");
     // `edit` opens the plan in $EDITOR; here the "editor" changes it in place.
     env.anchorleg()
         .env("VISUAL", "perl -pi -e s/page/guide/")
@@ -2555,6 +2593,15 @@ fn a_side_question_is_answered_by_a_read_only_fork() {
     let r: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(r["result"], "it uses SQLite", "{r}");
     assert_eq!(r["session_id"], "s2", "{r}");
+    // Listed as a side question, so UIs don't take it for the session going on.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let runs: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(runs[0]["side"], true, "{runs}");
+    assert_eq!(runs[1]["side"], false, "{runs}");
     let launches = env.launches();
     let side = &launches[1];
     assert!(side.contains("--resume s1 --fork-session"), "{side}");
@@ -2703,6 +2750,24 @@ fn sync_mcp_adds_missing_servers_through_each_cli() {
     assert!(text.contains("add   docs → c"), "{text}");
     assert!(text.contains("skip  api → c"), "{text}");
     assert!(!env.path("fake/mcp.log").exists());
+    // The same plan in JSON, with server names only (their settings can hold tokens).
+    let out = env
+        .anchorleg()
+        .args(["sync", "mcp", "--json"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["plan"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["server"] == "docs" && a["account"] == "c" && a["skip"].is_null()),
+        "{v}"
+    );
+    assert_eq!(v["results"], Value::Null, "{v}");
+    assert!(!v.to_string().contains("Bearer"), "{v}");
+    assert!(!env.path("fake/mcp.log").exists());
 
     env.anchorleg()
         .args(["sync", "mcp", "--yes"])
@@ -2728,4 +2793,263 @@ fn sync_mcp_adds_missing_servers_through_each_cli() {
     );
     // The token-carrying server stays where it is.
     assert!(!log.contains("api"), "{log}");
+}
+
+#[test]
+fn detach_returns_the_run_id_while_the_run_goes_on() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done in the background"));
+    let started = std::time::Instant::now();
+    let out = env
+        .anchorleg()
+        .env("FAKE_SLEEP", "30")
+        .args(["run", "--detach", "--json", "--cwd"])
+        .arg(env.path("work"))
+        .args(["--", "keep", "--detach", "in", "the", "task"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        started.elapsed().as_secs() < 10,
+        "detach waited for the run"
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = v["run_id"].as_i64().unwrap();
+    assert!(v["pid"].as_i64().is_some());
+
+    let show = env
+        .anchorleg()
+        .args(["sessions", "show", &id.to_string(), "--json"])
+        .output()
+        .unwrap();
+    let s: Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(s["schema"], 1);
+    assert_eq!(s["run"]["id"], id);
+    // Only the option was dropped; the task keeps its own `--detach`.
+    assert_eq!(s["run"]["task"], "keep --detach in the task");
+
+    env.anchorleg()
+        .args(["stop", &id.to_string()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn detach_reports_a_run_that_ends_before_it_is_seen() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done at once"));
+    let out = env
+        .anchorleg()
+        .args(["run", "--detach", "--json", "--cwd"])
+        .arg(env.path("work"))
+        .args(["--", "quick"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = v["run_id"].as_i64().unwrap();
+    // Wait for it to be recorded as done; the run id is the one it reports.
+    for _ in 0..100 {
+        let show = env
+            .anchorleg()
+            .args(["sessions", "show", &id.to_string(), "--json"])
+            .output()
+            .unwrap();
+        let s: Value = serde_json::from_slice(&show.stdout).unwrap();
+        if s["run"]["state"] == "done" {
+            assert_eq!(s["run"]["task"], "quick");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("run {id} never finished");
+}
+
+#[test]
+fn detach_reports_why_a_run_couldnt_start() {
+    let env = Env::new(&["a"]);
+    let out = env
+        .anchorleg()
+        .args(["run", "--detach", "--follow-up", "999", "--", "hi"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no run 999"), "{err}");
+}
+
+#[test]
+fn undo_previews_and_reports_in_json() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done"));
+    let work = env.path("work");
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(work.join("a.txt"), "one\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "start"]);
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    // What the agent "did".
+    std::fs::write(work.join("a.txt"), "two\n").unwrap();
+
+    let json = |args: &[&str]| -> Value {
+        let out = env.anchorleg().args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let p = json(&["undo", "1", "--json"]);
+    assert!(
+        p["preview"].as_str().is_some_and(|s| s.contains("a.txt")),
+        "{p}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.txt")).unwrap(),
+        "two\n"
+    );
+    let d = json(&["undo", "1", "--yes", "--json"]);
+    assert!(
+        d["done"].as_str().is_some_and(|s| s.starts_with("undid")),
+        "{d}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.txt")).unwrap(),
+        "one\n"
+    );
+    let d = json(&["undo", "1", "--redo", "--json"]);
+    assert!(
+        d["done"].as_str().is_some_and(|s| s.starts_with("redid")),
+        "{d}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.txt")).unwrap(),
+        "two\n"
+    );
+}
+
+#[test]
+fn task_options_reach_every_cli_and_follow_ups_keep_them() {
+    let env = Env::new(&["a"]);
+    std::fs::create_dir_all(env.path("shared")).unwrap();
+    let shared = env.path("shared").canonicalize().unwrap();
+    env.script("a.1.jsonl", &ok("s1", "first"));
+    env.script("a.2.jsonl", &ok("s1", "second"));
+    env.script("a.3.jsonl", &ok("s1", "third"));
+    let dir = shared.display().to_string();
+    let given = [
+        "--add-dir",
+        &dir,
+        "--instructions",
+        "answer in French",
+        "--effort",
+        "high",
+        "--allowed-tools",
+        "Bash(git *)",
+        "--strict-mcp-config",
+    ];
+    assert_eq!(env.run(&given).0, 0);
+    assert_eq!(env.run(&["--follow-up", "1"]).0, 0);
+    assert_eq!(
+        env.run(&["--follow-up", "2", "--instructions", "answer in Dutch"])
+            .0,
+        0
+    );
+    let launches = env.launches();
+    for l in &launches {
+        assert!(l.contains(&format!("--add-dir {dir}")), "{l}");
+        assert!(l.contains("--allowedTools Bash(git *)"), "{l}");
+        assert!(
+            l.contains("--strict-mcp-config") && l.contains("--effort high"),
+            "{l}"
+        );
+    }
+    assert!(
+        launches[0].contains("--append-system-prompt answer in French"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[1].contains("--append-system-prompt answer in French"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[2].contains("--append-system-prompt answer in Dutch"),
+        "{launches:?}"
+    );
+
+    // Codex: instructions as developer instructions, the folder as a writable root; the
+    // Claude-only options are left out, and the run says so.
+    let env = Env::mixed(&[("c", "codex")]);
+    env.script("c.jsonl", &codex_ok("t1", "done"));
+    assert_eq!(env.run(&given).0, 0);
+    let log = env.launches().join("\n");
+    assert!(log.contains(r#"instructions="answer in French""#), "{log}");
+    assert!(
+        log.contains(&format!(
+            r#"config={{"sandbox_workspace_write":{{"writable_roots":["{dir}"]}}}}"#
+        )),
+        "{log}"
+    );
+    assert!(log.contains("effort=high"), "{log}");
+    let run_log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert!(
+        run_log.contains("Codex has no --allowed-tools, --strict-mcp-config: left out on c"),
+        "{run_log}"
+    );
+
+    // Antigravity: `--add-dir`, and the instructions open a new conversation only.
+    let env = Env::mixed(&[("g", "antigravity")]);
+    env.script("g.jsonl", &agy_ok("conv-1", "done"));
+    assert_eq!(
+        env.run(&["--add-dir", &dir, "--instructions", "answer in French"])
+            .0,
+        0
+    );
+    assert_eq!(env.run(&["--follow-up", "1"]).0, 0);
+    let log = std::fs::read_to_string(env.path("fake.log")).unwrap();
+    assert!(log.contains(&format!("--add-dir {dir}")), "{log}");
+    assert_eq!(
+        log.matches("Instructions for this whole task").count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
+fn a_missing_extra_folder_is_refused_before_anything_runs() {
+    let env = Env::new(&["a"]);
+    let out = env
+        .anchorleg()
+        .args(["run", "--add-dir", "/no/such/folder", "--", "hi"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--add-dir /no/such/folder"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(env.launches().is_empty());
 }

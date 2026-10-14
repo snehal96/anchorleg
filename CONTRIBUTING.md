@@ -55,6 +55,19 @@ another (a config folder or `HOME`), how to resume a session, and how to detect 
 ideally, read quota without spending a request). Look at `adapters/codex.rs` and
 `adapters/agy.rs` for two different shapes, and add a fake CLI under `tests/fake/`.
 
+Then:
+
+1. Add the CLI's row to `crates/anchorleg-core/src/vendors.rs`. The row says what the CLI can
+   do, and the CLI, the TUI and the desktop app read it.
+2. Hook the parser into `adapters::Decoder`.
+3. Give the CLI's capture-folder prefix in `adapters/conformance.rs`.
+4. Set `driven: true`.
+
+From then on the conformance tests replay every capture. They check that the adapter reports a
+session id, a good and a failed end, and token use, plus anything the row promises. They also
+check that both ends of a launch name one session, and that no line crashes the parser, even
+with any field set to any JSON type.
+
 ## Pull requests
 
 - Keep them focused; describe what changed and how you checked it (and any real runs).

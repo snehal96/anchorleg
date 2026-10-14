@@ -90,6 +90,9 @@ watches every account's quota, and when one gets close to its limit it:
   CLI; the agent stops at a clean point when it's spent.
 - **Typed answers.** `--json-schema schema.json` makes the final answer follow your schema and
   returns it parsed in the JSON report, for scripts and task delegators.
+- **The same setup on every CLI.** `--add-dir`, `--instructions` and `--effort` go with the task
+  to whichever account or CLI runs it; Claude Code's own `--agent`, `--allowed-tools`,
+  `--mcp-config` and the like are passed through too.
 - **Plan first.** `--plan` (or `/plan` in the UI): the agent plans in Claude's or Codex's plan
   mode, you approve, say what to change or edit the plan yourself (`e`), then the same session
   carries it out.
@@ -213,6 +216,9 @@ anchorleg accounts list                    # in the order they're tried
 Or add them one by one:
 
 ```bash
+anchorleg accounts login work                     # its own ~/.claude-work, signed in through your browser
+anchorleg accounts login gpt2 --cli codex         # the same for Codex (~/.codex-gpt2)
+anchorleg accounts login g2 --cli agy             # Antigravity (~/.agy-g2 as its HOME), in a terminal
 anchorleg accounts add work --cmd "CLAUDE_CONFIG_DIR=~/.claude-work claude" --priority 1
 anchorleg accounts add home --cmd "CLAUDE_CONFIG_DIR=~/.claude-home claude" --priority 2
 anchorleg accounts add ci --token-stdin             # a `claude setup-token` token, kept in the keychain
@@ -358,6 +364,7 @@ In `anchorleg ui`, press `p` in the Agents pane to change the policy.
 | `--policy P` | `anchorleg policy` | `drain`, `balance` or `save-weekly`, for this run |
 | `--prefer A` / `--account A` | none | Try account A first / use only account A |
 | `--no-wait` | off | If every account is blocked, exit 75 instead of waiting for a reset |
+| `--detach` | off | Start in the background and print the run id at once (`anchorleg sessions show RUN` follows it) |
 | `--no-mod` | off | Run without anchorleg-mod: switch only on hard limits, no approvals |
 
 ### The handoff file

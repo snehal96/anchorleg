@@ -67,6 +67,10 @@ pub struct Turn {
     pub budget_left: Option<u64>,
     /// A JSON Schema for the turn's final message (`outputSchema`, `--json-schema`).
     pub output_schema: Option<Value>,
+    /// The task's own instructions (`developerInstructions` on the thread request).
+    pub instructions: Option<String>,
+    /// Config overrides for the thread (`config`): e.g. the task's extra writable folders.
+    pub config: Option<Value>,
     /// The session's name, set on the thread (`thread/name/set`).
     pub name: Option<String>,
 }
@@ -152,6 +156,12 @@ pub fn thread_request(turn: &Turn) -> Value {
     }
     if turn.auto_review {
         params["approvalsReviewer"] = "auto_review".into();
+    }
+    if let Some(i) = &turn.instructions {
+        params["developerInstructions"] = i.as_str().into();
+    }
+    if let Some(c) = &turn.config {
+        params["config"] = c.clone();
     }
     match &turn.resume {
         Some(id) => {
@@ -276,10 +286,11 @@ impl Translator {
     pub fn turn_tokens(&self) -> u64 {
         let n = |k: &str| self.turn_usage.get(k).copied().unwrap_or(0);
         let cached = n("cached_input_tokens");
-        n("input_tokens").saturating_sub(cached)
-            + n("output_tokens")
-            + n("cache_write_input_tokens")
-            + cached / 10
+        n("input_tokens")
+            .saturating_sub(cached)
+            .saturating_add(n("output_tokens"))
+            .saturating_add(n("cache_write_input_tokens"))
+            .saturating_add(cached / 10)
     }
 
     /// The `thread/start` or `thread/resume` answer.
@@ -446,7 +457,8 @@ impl Translator {
                         .and_then(|u| u.get(from))
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    *self.turn_usage.entry(to).or_default() += n;
+                    let total = self.turn_usage.entry(to).or_default();
+                    *total = total.saturating_add(n);
                 }
                 Vec::new()
             }
@@ -510,7 +522,8 @@ impl Translator {
                         .and_then(|u| u.get(from))
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    *self.turn_usage.entry(to).or_default() += n;
+                    let total = self.turn_usage.entry(to).or_default();
+                    *total = total.saturating_add(n);
                 }
                 Vec::new()
             }
@@ -1265,7 +1278,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::adapters::codex::Stream;
     use crate::adapters::{AgentSignal, QuotaStatus};
@@ -1383,7 +1396,7 @@ mod tests {
     }
 
     /// Translate a capture the way `drive` does, without the approvals.
-    fn translate(capture: &str) -> Vec<Value> {
+    pub(crate) fn translate(capture: &str) -> Vec<Value> {
         let mut t = Translator::default();
         let mut out = Vec::new();
         for m in incoming(capture) {
@@ -1637,6 +1650,8 @@ mod tests {
             auto_review: true,
             budget_left: None,
             output_schema: None,
+            instructions: None,
+            config: None,
             name: None,
         };
         let r = thread_request(&turn);

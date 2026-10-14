@@ -19,26 +19,27 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
-| `anchorleg policy [drain\|balance\|save-weekly]` | works |
-| `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test]` | works (macOS, Linux) |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `login <name> [--cli claude\|codex\|agy] [--bin B] [--json]` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F] [--json]` | works |
+| `anchorleg vendors [--json]` | works |
+| `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
+| `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
-| `anchorleg sessions [--json] [--limit N]` | works |
+| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
-| `anchorleg rules [--add RULE]… [--rm RULE]…` | works (Claude, Codex, Antigravity) |
+| `anchorleg rules [--add RULE]… [--rm RULE]… [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
 | `anchorleg btw <run> [--model M] [--json] -- <question…>` | works (Claude, Codex) |
 | `anchorleg rewind <run> [--keep-files] [--model M] [--json] -- <message…>` | works (Claude, Codex; files in git folders) |
-| `anchorleg sync mcp [--with-env] [--yes]` | works (Claude, Codex, Antigravity) |
-| `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
+| `anchorleg sync mcp [--with-env] [--yes] [--json]` | works (Claude, Codex, Antigravity) |
+| `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear] [--json]` | works |
 | `anchorleg stop <run>` | works |
-| `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
+| `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo] [--json]` | works (git folders) |
 | `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex, Antigravity) |
 | `anchorleg status [--refresh] [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
-| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--add-dir DIR]… [--instructions TEXT\|FILE] [--effort LEVEL] [Claude Code options] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--detach] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -90,6 +91,9 @@ anchorleg accounts import-aliases            # preview what your shell aliases w
 anchorleg accounts import-aliases --yes      # write them
 anchorleg accounts add work --cmd "CLAUDE_CONFIG_DIR=~/.claude-work ~/.local/bin/claude" --priority 1
 anchorleg accounts add ci --token-stdin      # paste a `claude setup-token` token; stored in Keychain
+anchorleg accounts login work2               # new folder ~/.claude-work2, `claude auth login` in the browser, then added
+anchorleg accounts login gpt2 --cli codex    # same for Codex: ~/.codex-gpt2 and `codex login`
+anchorleg accounts login g2 --cli agy        # Antigravity: ~/.agy-g2 as its HOME; agy's own sign-in screen (needs a terminal)
 anchorleg accounts add odd --shell "my-claude-alias"   # escape hatch: runs through $SHELL -ic
 anchorleg accounts show work                 # the exact launch line anchorleg will use (tokens as ***)
 ```
@@ -122,6 +126,12 @@ until its reset, copies the session (transcript, subagent transcripts, and newer
 `memory/` files) into the next account's config dir and resumes it with
 "Continue from where you stopped." If the next account can't see the session, it starts once
 more from a handoff prompt. Without `--json`, progress goes to stderr and the final message to stdout.
+
+`--detach` starts the run in the background (its own process group, so it outlives the terminal
+or app that started it) and returns as soon as it has a run id: `started run #57 …`, or with
+`--json` `{"run_id": 57, "pid": 4242}`. Errors before the run starts (a bad `--follow-up`, no such
+folder) are reported and exit 1. Follow the run with `anchorleg sessions show 57`, stop it with
+`anchorleg stop 57`. Every other `run` option works with it.
 
 anchorleg-mod is loaded into every Claude launch (`--plugin-dir`, embedded in the binary; `--no-mod`
 turns it off). It reports exact quota and, once any window reaches `--stop-at` (default 0.9),
@@ -300,6 +310,12 @@ anchorleg notify --command 'curl -s -d "$ANCHORLEG_MESSAGE" https://ntfy.sh/my-a
 On macOS the first notification may need permission: allow notifications for "Script Editor"
 in System Settings → Notifications if none show up.
 
+While the anchorleg desktop app is open it shows the notices itself, so you don't get two: it
+keeps its process id in `<store dir>/desktop.pid`, and runs then append each notice as a JSON
+line to `<store dir>/desktop-notices.jsonl` instead of sending a desktop notification. The
+`--command` still runs. `anchorleg notify --json` prints the settings, the store folder
+(`data_dir`) and whether the app is open (`app_running`).
+
 ### Fork a session, or give a task its own worktree
 
 `anchorleg run --fork <run> -- <message>` starts a **new** session from that session's history
@@ -465,6 +481,32 @@ The run then ends `over_budget` (exit 3); the session can go on with a follow-up
 budget unless given one). The JSON report has `budget: {tokens, spent}`. A step can go over before it's stopped: the first request of
 a Claude session alone writes 15–25k tokens of cache. Accepts `500k`, `2M` or a plain number.
 
+### Extra folders, instructions, effort: `--add-dir`, `--instructions`, `--effort`
+
+These go with the task to every account and CLI it runs on, and follow-ups, forks and rewinds
+keep them (give one again to replace it; a side question keeps only the folders):
+
+| | Claude Code | Codex | Antigravity |
+|---|---|---|---|
+| `--add-dir DIR` (repeat) | `--add-dir` | a writable root (`sandbox_workspace_write.writable_roots`, as `codex exec --add-dir`) | `--add-dir` |
+| `--instructions TEXT\|FILE` | `--append-system-prompt` | developer instructions on the thread | at the top of a new conversation's first message |
+| `--effort LEVEL` | `--effort` | `model_reasoning_effort` | `--effort` |
+
+`--effort` replaces `anchorleg settings`' effort for this task. A folder must exist; it's passed
+as an absolute path.
+
+### Claude Code options
+
+Passed to Claude Code as they are; Codex and Antigravity leave them out, and the conversation
+says so when the task lands there: `--agent NAME`, `--agents JSON|FILE`, `--allowed-tools RULE`…,
+`--disallowed-tools RULE`…, `--tools TOOL`…, `--mcp-config FILE|JSON`…, `--strict-mcp-config`,
+`--fallback-model MODELS`, `--settings FILE|JSON`. `--allowed-tools` adds to your lasting rules
+(`anchorleg rules`). A file is passed as its absolute path. None of them apply while planning,
+reviewing or answering a side question, which stay read-only.
+
+`anchorleg sessions --json` entries carry `options`: `{"add_dirs", "instructions", "effort",
+"claude": {…}}`, each left out when unset.
+
 ### Structured output: `--json-schema`
 
 `anchorleg run --json --json-schema schema.json -- "…"` (a file, or the JSON itself) makes the
@@ -579,6 +621,15 @@ to anchorleg instead, and the run waits for you:
 - **4** Always (rule): allowed now and in every session from now on, as a lasting rule (below).
 - Terminal: `anchorleg permission list`, then
   `anchorleg permission answer <id> yes|always|rule|no`.
+
+**`permission list --json`** is an array of waiting requests: `id`, `run_id`, `tool`, `input`
+(as the CLI sent it), `reason`, `state`, `asked_at`, plus what a UI shows: `kind` (`tool`,
+`question` or `plan`), `cwd` (the task folder) and `deadline` (Unix seconds when the request stops
+waiting; `null`: it waits as long as the run lives). A `tool` has `summary` (`Write  src/a.rs`,
+relative to the task folder), `preview` (`[{mark, line}]`: `-` removed, `+` added, `.` context or "… more lines"; up to 10)
+and `rule` (what answering `rule` would save). A `question` or `plan` has `questions` (as above:
+`id`, `header`, `question`, `options`, `multi_select`, `secret`), and a `plan` has `plan` (the
+text, for `answer <id> --plan-file`).
 
 **Lasting rules.** `anchorleg rules --add "Bash(cargo test *)"` lets every session make such calls
 without asking, in Claude Code's rule syntax: `Tool` or `Tool(pattern)`, e.g.
@@ -726,6 +777,62 @@ With `--goal`, `--budget` or `--json-schema` the report also has `goal`, `budget
 `account`), or `no_accounts`. `credits` is `null` until the CLI has reported it; `state` is `off`,
 `available`, `in_use` or `unlimited`. `used` is a fraction 0–1 and may be `null` (Claude often omits it).
 `source` is `stream` (CLI events), `mod` (exact, from anchorleg-mod) or `manual`.
+
+## `anchorleg sessions show <run> --json` → session
+
+One session (the run and the runs it follows up, oldest first) as `anchorleg ui` shows it:
+
+```json
+{
+  "schema": 1,
+  "run": { "id": 57, "state": "running", "...": "as in `sessions --json`" },
+  "runs": [56, 57],
+  "name": "fix-build",
+  "working": true,
+  "since": 0,
+  "next": 42,
+  "messages": [{ "role": "user", "text": "fix the build" }, { "role": "tool", "text": "Bash  cargo test" }],
+  "running": { "what": "Bash  cargo test", "output": "running 124 tests…" },
+  "subagents": [{ "id": "t1", "name": "find the flaky test", "done": false, "steps": 3, "doing": "Read  src/lib.rs" }],
+  "steps": [{ "text": "Fix the build", "status": "done" }],
+  "context": { "tokens": 50401, "window": 1000000 },
+  "slash_commands": ["compact", "..."]
+}
+```
+
+`role` is `user`, `agent`, `tool`, `tool_error`, `output`, `thinking`, `anchorleg` or `error`.
+`working` is true while the run's process is alive. `steps[].status` is `pending`, `in_progress`
+or `done`. `context.window` and `slash_commands` are `null` when the CLI didn't report them.
+To poll, pass the last `next` as `--since`, and replace your copy from index `since` onward
+(the last message can still grow while the agent works). `schema` changes only when a field
+changes meaning.
+
+## Settings in JSON
+
+For the desktop app and scripts; each changes what its options say first, then prints:
+
+- `anchorleg settings [<cli> …] --json` → `{"schema": 1, "vendors": {"claude": {"model", "effort",
+  "args"}, …}}`, every CLI (`null` / `[]`: the CLI's own default).
+- `anchorleg policy [name] --json` → `{"schema": 1, "policy": "drain", "policies": [{"name",
+  "describe"}]}`.
+- `anchorleg sessions --json` entries carry `side`: `true` for a side question's run
+  (`btw`), which continues nothing.
+- `anchorleg rules [--add R] [--rm R] --json` → `{"schema": 1, "rules": [...]}`.
+- `anchorleg undo <run> --json` → `{"schema": 1, "preview": "<diff --stat>" | null}` (nothing
+  changes); with `--yes` or `--redo` → `{"schema": 1, "done": "undid …"}`.
+- `anchorleg sync mcp [--with-env] [--yes] --json` → `{"schema": 1, "accounts": [{"name",
+  "servers": [names]}], "plan": [{"server", "account", "skip"}], "results": [{"server",
+  "account", "ok", "error"}] | null}`; `results` only with `--yes`. Server settings aren't printed.
+- `anchorleg vendors --json` → `{"schema": 1, "vendors": [{"vendor", "label", "driven", "quota"
+  ("live" | "runs" | "none"), "resume", "fork", "side", "rewind", "plan", "approvals", "questions",
+  "json_schema", "instructions": [file…], "folder_env", "folder_prefix", "sign_in": {"kind":
+  "browser" | "terminal" | "manual"}, "bin", "installed", "efforts"}]}`: what each CLI can do with
+  anchorleg. The desktop app offers only what an account's CLI supports.
+- `anchorleg accounts login NAME [--cli claude|codex|agy] --json` → `{"name", "cli", "dir"}` once the
+  CLI reports a sign-in (`claude auth status` / `codex login status` / `agy models`); the sign-in's own output goes
+  to stderr. A sign-in that doesn't finish adds nothing (exit 1). The login stays with the CLI.
+- `anchorleg accounts import-aliases [--yes] --json` → `{"schema": 1, "add": [account…], "skip":
+  [name…], "saved": bool}`; accounts as in `accounts list --json`.
 
 ## `anchorleg report --json` (stdin)
 

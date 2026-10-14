@@ -422,7 +422,7 @@ fn usage(v: &Value) -> Option<Usage> {
     Some(Usage {
         model: None,
         input_tokens: n("input_tokens").saturating_sub(cached),
-        output_tokens: n("output_tokens") + n("thinking_tokens"),
+        output_tokens: n("output_tokens").saturating_add(n("thinking_tokens")),
         cache_read_tokens: cached,
         cache_write_tokens: 0,
         cost_usd: None,
@@ -601,7 +601,7 @@ pub fn tool_call(name: &str, params: &Value) -> Option<(&'static str, String)> {
 pub fn context_tokens(v: &Value) -> Option<u64> {
     let u = v.pointer("/step_update/usage")?;
     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-    Some(n("input_tokens") + n("cache_read_tokens")).filter(|t| *t > 0)
+    Some(n("input_tokens").saturating_add(n("cache_read_tokens"))).filter(|t| *t > 0)
 }
 
 #[cfg(test)]

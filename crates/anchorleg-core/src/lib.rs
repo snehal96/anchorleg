@@ -19,6 +19,8 @@ pub mod registry;
 pub mod rules;
 pub mod store;
 pub mod supervisor;
+pub mod task_options;
+pub mod vendors;
 
 /// Version of the anchorleg crates, reported by `anchorleg --version` and in `--json` output.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

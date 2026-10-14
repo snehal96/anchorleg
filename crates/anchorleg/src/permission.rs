@@ -138,7 +138,11 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
         PermissionCmd::List { json } => {
             let pending = store.pending_permissions()?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&pending)?);
+                let out = pending
+                    .iter()
+                    .map(|p| list_entry(&store, p))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                println!("{}", serde_json::to_string_pretty(&out)?);
                 return Ok(());
             }
             if pending.is_empty() {
@@ -247,6 +251,46 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// One request for `permission list --json`: the stored request, and what a UI shows for it
+/// (docs/CLI.md): its kind, a summary relative to the task folder, the change it would make, the
+/// rule "Always" would save, the questions or plan, and when it stops waiting.
+fn list_entry(store: &Store, p: &anchorleg_core::store::Permission) -> anyhow::Result<Value> {
+    let run = store.run(p.run_id)?;
+    let cwd = run.as_ref().map(|r| r.cwd.clone()).unwrap_or_default();
+    let mut v = serde_json::to_value(p)?;
+    let give_up = match run.as_ref().and_then(|r| r.answer_wait) {
+        Some(secs) => Some(secs),
+        None if p.is_question() => None,
+        None => Some(GIVE_UP_SECS),
+    };
+    let extra = if p.is_question() {
+        let qs = questions::from_input(&p.input);
+        let plan = questions::plan_of(&p.input)
+            .filter(|_| qs.len() == 1 && qs[0].id == questions::plan_question().id);
+        json!({
+            "kind": if plan.is_some() { "plan" } else { "question" },
+            "questions": qs,
+            "plan": plan,
+        })
+    } else {
+        json!({
+            "kind": "tool",
+            "summary": describe_tool(&p.tool, &relative_input(&p.input, &cwd)),
+            "preview": anchorleg_core::conversation::change_preview(&p.tool, &p.input)
+                .into_iter()
+                .map(|(mark, line)| json!({ "mark": mark.to_string(), "line": line }))
+                .collect::<Vec<_>>(),
+            "rule": anchorleg_core::rules::suggest(&p.tool, &p.input, &cwd),
+        })
+    };
+    if let (Value::Object(o), Value::Object(e)) = (&mut v, extra) {
+        o.extend(e);
+        o.insert("cwd".into(), json!(cwd));
+        o.insert("deadline".into(), json!(give_up.map(|g| p.asked_at + g)));
+    }
+    Ok(v)
 }
 
 /// Answer one agy `PreToolUse` request. Outside an anchorleg run (no `ANCHORLEG_RUN_ID`) agy

@@ -6,6 +6,7 @@ mod status;
 mod sync;
 mod ui;
 mod usage;
+mod vendors;
 
 use anchorleg_core::policy::Policy;
 use std::path::PathBuf;
@@ -20,6 +21,21 @@ use clap::{Args, Parser, Subcommand};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Subcommand)]
+enum SessionsCmd {
+    /// One session's conversation (every run in it, oldest first), what it's doing now, its
+    /// task list and context.
+    Show {
+        /// Any run of the session; its session is shown up to this run.
+        run: i64,
+        /// Only messages from this index on (the `next` of an earlier `--json` call), for polling.
+        #[arg(long, default_value_t = 0)]
+        since: usize,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -86,6 +102,12 @@ enum Command {
     /// Add, list or remove accounts.
     #[command(subcommand)]
     Accounts(accounts::AccountsCmd),
+    /// What each CLI can do with anchorleg (resume, fork, side questions, rewind, plan,
+    /// approvals, quota, sign-in) and whether it's installed.
+    Vendors {
+        #[arg(long)]
+        json: bool,
+    },
     /// Session manager: start tasks, watch and reply to sessions, manage accounts.
     Ui,
     /// Tool calls waiting for your approval (asked by anchorleg-mod while a run works).
@@ -108,12 +130,18 @@ enum Command {
         /// Remove this CLI's settings (applied before the others).
         #[arg(long)]
         clear: bool,
+        /// Print every CLI's settings as JSON (after any change).
+        #[arg(long)]
+        json: bool,
     },
     /// How `anchorleg run` picks among accounts with room: drain, balance or save-weekly.
     /// No name: show the current one.
     Policy {
         #[arg(value_parser = parse_policy)]
         policy: Option<Policy>,
+        /// Print the current policy and the choices as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Bring every account's setup in line, whatever its CLI.
     #[command(subcommand)]
@@ -129,6 +157,9 @@ enum Command {
         /// Remove a rule.
         #[arg(long, value_name = "RULE")]
         rm: Vec<String>,
+        /// Print the rules as JSON (after any change).
+        #[arg(long)]
+        json: bool,
     },
     /// What a session changed in its folder since it started (new files included), as a diff.
     Diff {
@@ -146,6 +177,9 @@ enum Command {
         /// Bring back what the last undo of this session put back.
         #[arg(long, conflicts_with = "yes")]
         redo: bool,
+        /// JSON: `{"preview"}` (the files, as `diff --stat`) without --yes, else `{"done"}`.
+        #[arg(long)]
+        json: bool,
     },
     /// Notifications when a run needs you (a tool call, a question, a plan) or ends.
     /// No options: show the current settings.
@@ -163,6 +197,9 @@ enum Command {
         /// Send a test notice.
         #[arg(long)]
         test: bool,
+        /// Print the settings as JSON (with the data folder the desktop app uses).
+        #[arg(long)]
+        json: bool,
     },
     /// Tokens and cost of anchorleg's runs, per account and model, plus credits and quota.
     Usage {
@@ -172,8 +209,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List recent sessions (runs), newest first.
+    /// List recent sessions (runs), newest first; `show RUN` prints one session's conversation.
+    #[command(args_conflicts_with_subcommands = true)]
     Sessions {
+        #[command(subcommand)]
+        show: Option<SessionsCmd>,
         #[arg(long)]
         json: bool,
         #[arg(long, default_value_t = 20)]
@@ -222,6 +262,9 @@ enum SyncCmd {
         with_env: bool,
         #[arg(long)]
         yes: bool,
+        /// Print each account's servers, the plan and (with --yes) what happened, as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -241,6 +284,11 @@ pub struct RunArgs {
     /// Directory the task runs in. Defaults to the current one (or the followed-up run's).
     #[arg(long)]
     pub cwd: Option<PathBuf>,
+    /// Start the run in the background and return at once with its run id (`--json`:
+    /// `{"run_id", "pid"}`); follow it with `anchorleg sessions show`. The run goes on after
+    /// this command, the terminal or the app that started it is gone.
+    #[arg(long)]
+    pub detach: bool,
     /// Print one JSON object (see docs/CLI.md) instead of progress text.
     #[arg(long)]
     pub json: bool,
@@ -339,9 +387,69 @@ pub struct RunArgs {
     #[arg(long, value_name = "SCHEMA", value_parser = parse_schema,
           conflicts_with_all = ["goal", "review", "plan"])]
     pub json_schema: Option<serde_json::Value>,
+    /// Another folder the agent may read and write besides the task's own. Repeat for several.
+    /// Every CLI gets it (Codex as a writable root); follow-ups keep it.
+    #[arg(long, value_name = "DIR")]
+    pub add_dir: Vec<PathBuf>,
+    /// Instructions for the whole task, on top of the CLI's own (text, or a file holding them):
+    /// Claude Code's appended system prompt, Codex's developer instructions; Antigravity reads
+    /// them at the top of the first message. They hold across switches; follow-ups keep them.
+    #[arg(long, value_name = "TEXT|FILE", value_parser = parse_instructions)]
+    pub instructions: Option<String>,
+    /// Reasoning effort for this task (low, medium, high, xhigh, max), over `anchorleg cli set`'s.
+    #[arg(long, value_name = "LEVEL")]
+    pub effort: Option<String>,
+    #[command(flatten)]
+    pub claude: ClaudeArgs,
     /// The task, after `--`.
     #[arg(last = true, required_unless_present_any = ["goal", "review"])]
     pub prompt: Vec<String>,
+}
+
+/// Claude Code flags passed as they are; other CLIs leave them out (the run says so).
+#[derive(Args)]
+#[command(
+    next_help_heading = "Claude Code options (other CLIs leave them out; follow-ups keep them)"
+)]
+pub struct ClaudeArgs {
+    /// Claude Code: run the session as this agent (`claude --agent`).
+    #[arg(long, value_name = "NAME")]
+    pub agent: Option<String>,
+    /// Claude Code: custom agents, as JSON or a file holding it (`claude --agents`).
+    #[arg(long, value_name = "JSON|FILE")]
+    pub agents: Option<String>,
+    /// Claude Code: a tool rule allowed without asking, e.g. "Bash(git *)". Repeat for several.
+    #[arg(long, value_name = "RULE")]
+    pub allowed_tools: Vec<String>,
+    /// Claude Code: a tool rule refused, e.g. "WebFetch". Repeat for several.
+    #[arg(long, value_name = "RULE")]
+    pub disallowed_tools: Vec<String>,
+    /// Claude Code: only these built-in tools exist, e.g. "Read". Repeat for several.
+    #[arg(long, value_name = "TOOL")]
+    pub tools: Vec<String>,
+    /// Claude Code: MCP servers from a JSON file or string. Repeat for several.
+    #[arg(long, value_name = "FILE|JSON")]
+    pub mcp_config: Vec<String>,
+    /// Claude Code: only the MCP servers from `--mcp-config`.
+    #[arg(long)]
+    pub strict_mcp_config: bool,
+    /// Claude Code: models to fall back on (comma-separated) when the session's is overloaded.
+    #[arg(long, value_name = "MODELS")]
+    pub fallback_model: Option<String>,
+    /// Claude Code: more settings, a JSON file or string (`claude --settings`).
+    #[arg(long, value_name = "FILE|JSON")]
+    pub settings: Option<String>,
+}
+
+fn parse_instructions(s: &str) -> Result<String, String> {
+    let text = match std::fs::read_to_string(s) {
+        Ok(t) => t,
+        Err(_) => s.to_owned(),
+    };
+    match text.trim() {
+        "" => Err("the instructions are empty".to_owned()),
+        t => Ok(t.to_owned()),
+    }
 }
 
 fn parse_schema(s: &str) -> Result<serde_json::Value, String> {
@@ -421,6 +529,7 @@ fn main() -> ExitCode {
 
     let result = match Cli::parse().command {
         Command::Accounts(cmd) => accounts::run(cmd),
+        Command::Vendors { json } => vendors::run(json),
         Command::Status { json, refresh } => status::status(json, refresh),
         Command::Ui => ui::run(),
         Command::Permission(cmd) => permission::run(cmd),
@@ -430,7 +539,9 @@ fn main() -> ExitCode {
             effort,
             args,
             clear,
+            json,
         } => settings::run(
+            json,
             vendor,
             settings::Changes {
                 args,
@@ -457,18 +568,36 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Command::Policy { policy } => settings::policy(policy),
-        Command::Rules { add, rm } => settings::rules(add, rm),
-        Command::Sync(SyncCmd::Mcp { with_env, yes }) => sync::mcp(with_env, yes),
+        Command::Policy { policy, json } => settings::policy(policy, json),
+        Command::Rules { add, rm, json } => settings::rules(add, rm, json),
+        Command::Sync(SyncCmd::Mcp {
+            with_env,
+            yes,
+            json,
+        }) => sync::mcp(with_env, yes, json),
         Command::Diff { run, stat } => run::diff(run, stat),
-        Command::Undo { run, yes, redo } => run::undo(run, redo, yes),
+        Command::Undo {
+            run,
+            yes,
+            redo,
+            json,
+        } => run::undo(run, redo, yes, json),
         Command::Notify {
             desktop,
             command,
             no_command,
             test,
-        } => settings::notify(desktop, command, no_command, test),
-        Command::Sessions { json, limit } => status::sessions(json, limit),
+            json,
+        } => settings::notify(desktop, command, no_command, test, json),
+        Command::Sessions {
+            show: Some(SessionsCmd::Show { run, since, json }),
+            ..
+        } => status::show_session(run, since, json),
+        Command::Sessions {
+            show: None,
+            json,
+            limit,
+        } => status::sessions(json, limit),
         Command::Usage { since, json } => usage::run(since, json),
         Command::Report { json: _ } => status::report(),
         Command::Review {
@@ -570,6 +699,15 @@ fn main() -> ExitCode {
             };
             return match run::run(*args) {
                 Ok(report) => ExitCode::from(report.outcome.exit_code()),
+                Err(e) => {
+                    eprintln!("anchorleg: {e:#}");
+                    ExitCode::from(exit::FAILED)
+                }
+            };
+        }
+        Command::Run(args) if args.detach => {
+            return match run::detach(args.json) {
+                Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("anchorleg: {e:#}");
                     ExitCode::from(exit::FAILED)

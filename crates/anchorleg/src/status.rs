@@ -195,12 +195,95 @@ pub fn report() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Version of `anchorleg sessions show --json`'s object; bumped when a field changes meaning.
+const SESSION_SCHEMA: u32 = 1;
+
+/// The `anchorleg run` process is still there.
+fn pid_alive(pid: i64) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// `anchorleg sessions show RUN`: the session up to RUN, as `anchorleg ui` shows it.
+pub fn show_session(id: i64, since: usize, json: bool) -> anyhow::Result<()> {
+    use anchorleg_core::conversation::{self, Role};
+    use anchorleg_core::store::RunState;
+
+    let db = Store::default_path()?;
+    let store = Store::open(&db)?;
+    let log_dir = db.parent().map(|d| d.join("runs")).unwrap_or_default();
+    let Some(run) = store.run(id)? else {
+        anyhow::bail!("no run #{id}; `anchorleg sessions` lists them");
+    };
+    let mut runs = Vec::new();
+    for rid in store.session_runs(id)?.into_iter().rev() {
+        runs.extend(store.run(rid)?);
+    }
+    let refs: Vec<_> = runs.iter().collect();
+    let view = conversation::session_view(&refs, &log_dir);
+    let working = matches!(run.state, RunState::Running | RunState::Waiting)
+        && run.pid.is_some_and(pid_alive);
+    let next = view.messages.len();
+    let since = since.min(next);
+    if json {
+        let slash = std::fs::read_to_string(log_dir.join(format!("run-{id}.jsonl")))
+            .ok()
+            .and_then(|log| conversation::slash_commands(&log));
+        let out = serde_json::json!({
+            "schema": SESSION_SCHEMA,
+            "run": run,
+            "runs": runs.iter().map(|r| r.id).collect::<Vec<_>>(),
+            "name": store.session_name(id)?,
+            "working": working,
+            "since": since,
+            "next": next,
+            "messages": &view.messages[since..],
+            "running": view.running,
+            "subagents": view.subagents,
+            "steps": view.steps,
+            "context": { "tokens": view.context_tokens, "window": view.context_window },
+            "slash_commands": slash,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    for m in &view.messages[since..] {
+        let who = match m.role {
+            Role::User => "you",
+            Role::Agent => "agent",
+            Role::Tool => "tool",
+            Role::ToolError => "tool error",
+            Role::Output => "output",
+            Role::Thinking => "thinking",
+            Role::Anchorleg => "anchorleg",
+            Role::Error => "error",
+        };
+        println!("[{who}] {}", m.text);
+    }
+    if let Some(r) = view.running.filter(|_| working) {
+        println!("[working] {}", r.what);
+    }
+    Ok(())
+}
+
 /// `anchorleg sessions`.
 pub fn sessions(json: bool, limit: usize) -> anyhow::Result<()> {
     let store = Store::open(&Store::default_path()?)?;
     let runs = store.recent_runs(limit)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&runs)?);
+        // `side`: a side question's run (`btw`), not the session going on.
+        let out: Vec<serde_json::Value> = runs
+            .iter()
+            .map(|r| {
+                let mut v = serde_json::to_value(r)?;
+                v["side"] = crate::run::is_side(&r.task).into();
+                Ok(v)
+            })
+            .collect::<anyhow::Result<_>>()?;
+        println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
     if runs.is_empty() {
