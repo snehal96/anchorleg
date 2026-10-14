@@ -1,0 +1,50 @@
+crates/anchorleg-core/src/adapters/conformance.rs
+  s_24d456e49210ef::t_9f44886289d43f 1-235
+  s_24d456e49210ef::t_41980ba4aa8848 236-339
+CONTRIBUTING.md
+  s_24d456e49210ef::t_46b4ae653b1d1c 58-70
+crates/anchorleg-core/src/adapters/agy.rs
+  s_24d456e49210ef::t_decd1dda23cd1c 425,604
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_24d456e49210ef::t_5ab6badaeadfc6 279-283,450-451,515-516,1271,1389
+crates/anchorleg-core/src/adapters/mod.rs
+  s_24d456e49210ef::t_d86a7c52578259 9-10,15-45
+crates/anchorleg-core/src/handoff.rs
+  s_24d456e49210ef::t_973b55ec55a5c3 590
+crates/anchorleg-core/src/lib.rs
+  s_24d456e49210ef::t_64bce51059450d 22
+crates/anchorleg-core/src/supervisor.rs
+  s_24d456e49210ef::t_703f35c4bbb29e 21-23,290,523,1585,1677-1688
+crates/anchorleg-core/src/vendors.rs
+  s_24d456e49210ef::t_e2e337f9a231c9 1-251
+crates/anchorleg/src/accounts.rs
+  s_24d456e49210ef::t_04b9ef450d2ecc 12,135,359-367,377,380-383,387-388,436-437,439-442
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_e35fba551b2022 9,105-110,472
+crates/anchorleg/src/run.rs
+  s_24d456e49210ef::t_5bc5a709955747 348,382-394,396-400,402-405
+crates/anchorleg/src/ui.rs
+  s_24d456e49210ef::t_ebe49089b76ce2 2191-2202,2294
+crates/anchorleg/src/vendors.rs
+  s_24d456e49210ef::t_a76c6342d201bb 1-73
+crates/anchorleg/tests/cli.rs
+  s_24d456e49210ef::t_b70d6d4e546ca4 359-391
+docs/CLI.md
+  s_24d456e49210ef::t_3eeb494a6f3a7d 23,800-804
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0d4c21991577a0678897e6072cfe74c984b08b04",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
