@@ -1,0 +1,37 @@
+CHANGELOG.md
+  s_24d456e49210ef::t_ee41613c5d1e24 10-14
+README.md
+  s_24d456e49210ef::t_4883128cf4e643 352
+crates/anchorleg-core/src/conversation.rs
+  s_24d456e49210ef::t_c9ad6b771dc0c5 372,481,494,942-991,995-1038
+crates/anchorleg-core/src/handoff.rs
+  s_24d456e49210ef::t_3e4cbd2f698706 21-22,29
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_848f080b577a3f 25-39,190-191,193-194,262-266,494-502,610-618
+crates/anchorleg/src/run.rs
+  s_24d456e49210ef::t_0ad5c53f0cd93f 119-212
+crates/anchorleg/src/status.rs
+  s_24d456e49210ef::t_c65b84bbfbe918 198-271
+crates/anchorleg/src/ui.rs
+  s_24d456e49210ef::t_69a26c51e64297 568-576,581-582
+crates/anchorleg/tests/run.rs
+  s_24d456e49210ef::t_07b94698ce1d9c 1279-1282,2730-2820
+docs/CLI.md
+  s_24d456e49210ef::t_53c6298a42fe3c 26,41,126-131,736-764
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54ff33dc2f822e0831b8b0a657fb4cf6091b742e",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
