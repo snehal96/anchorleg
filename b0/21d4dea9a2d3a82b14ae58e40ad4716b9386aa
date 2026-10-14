@@ -1,0 +1,35 @@
+CHANGELOG.md
+  s_24d456e49210ef::t_8c63a399d7bd94 20-21
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_8d262e42ab56ee 153-155,173-175,258-260,504-509,511-516
+crates/anchorleg/src/run.rs
+  s_24d456e49210ef::t_8bcd8b2917beff 87,127-131,791,812-824,837-842
+crates/anchorleg/src/settings.rs
+  s_24d456e49210ef::t_6ebd72227eb188 109,134-140
+crates/anchorleg/src/status.rs
+  s_24d456e49210ef::t_22929181bd2ee2 277-286
+crates/anchorleg/src/sync.rs
+  s_24d456e49210ef::t_cc20b201b03069 40,59-61,115-162
+crates/anchorleg/tests/cli.rs
+  s_24d456e49210ef::t_7c67e4c95f60bb 232,255-259
+crates/anchorleg/tests/run.rs
+  s_24d456e49210ef::t_a71d4197dc29e5 2594-2602,2751-2768,2886-2949
+docs/CLI.md
+  s_24d456e49210ef::t_9c8a7fbde39b52 28,32,35,788-795
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b021d4dea9a2d3a82b14ae58e40ad4716b9386aa",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
