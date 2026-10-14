@@ -17,7 +17,8 @@ All notable changes are listed here. The format follows
   deadline.
 - `anchorleg notify --json`. While the desktop app is open (`desktop.pid` in the store folder) it
   shows the notices; runs then skip their own desktop notification (`--command` still runs).
-- `--json` for `anchorleg settings`, `anchorleg policy` and `anchorleg accounts import-aliases`.
+- `--json` for `anchorleg settings`, `anchorleg policy`, `anchorleg accounts import-aliases`,
+  `anchorleg rules`, `anchorleg undo` (a preview without `--yes`) and `anchorleg sync mcp`.
 - Homebrew tap (in progress).
 
 ## [0.6.1] — 2026-10-13

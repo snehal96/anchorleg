@@ -2591,6 +2591,15 @@ fn a_side_question_is_answered_by_a_read_only_fork() {
     let r: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(r["result"], "it uses SQLite", "{r}");
     assert_eq!(r["session_id"], "s2", "{r}");
+    // Listed as a side question, so UIs don't take it for the session going on.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "--json"])
+        .output()
+        .unwrap();
+    let runs: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(runs[0]["side"], true, "{runs}");
+    assert_eq!(runs[1]["side"], false, "{runs}");
     let launches = env.launches();
     let side = &launches[1];
     assert!(side.contains("--resume s1 --fork-session"), "{side}");
@@ -2739,6 +2748,24 @@ fn sync_mcp_adds_missing_servers_through_each_cli() {
     assert!(text.contains("add   docs → c"), "{text}");
     assert!(text.contains("skip  api → c"), "{text}");
     assert!(!env.path("fake/mcp.log").exists());
+    // The same plan in JSON, with server names only (their settings can hold tokens).
+    let out = env
+        .anchorleg()
+        .args(["sync", "mcp", "--json"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        v["plan"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["server"] == "docs" && a["account"] == "c" && a["skip"].is_null()),
+        "{v}"
+    );
+    assert_eq!(v["results"], Value::Null, "{v}");
+    assert!(!v.to_string().contains("Bearer"), "{v}");
+    assert!(!env.path("fake/mcp.log").exists());
 
     env.anchorleg()
         .args(["sync", "mcp", "--yes"])
@@ -2855,4 +2882,68 @@ fn detach_reports_why_a_run_couldnt_start() {
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("no run 999"), "{err}");
+}
+
+#[test]
+fn undo_previews_and_reports_in_json() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done"));
+    let work = env.path("work");
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&work)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    std::fs::write(work.join("a.txt"), "one\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "start"]);
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    // What the agent "did".
+    std::fs::write(work.join("a.txt"), "two\n").unwrap();
+
+    let json = |args: &[&str]| -> Value {
+        let out = env.anchorleg().args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let p = json(&["undo", "1", "--json"]);
+    assert!(
+        p["preview"].as_str().is_some_and(|s| s.contains("a.txt")),
+        "{p}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.txt")).unwrap(),
+        "two\n"
+    );
+    let d = json(&["undo", "1", "--yes", "--json"]);
+    assert!(
+        d["done"].as_str().is_some_and(|s| s.starts_with("undid")),
+        "{d}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.txt")).unwrap(),
+        "one\n"
+    );
+    let d = json(&["undo", "1", "--redo", "--json"]);
+    assert!(
+        d["done"].as_str().is_some_and(|s| s.starts_with("redid")),
+        "{d}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("a.txt")).unwrap(),
+        "two\n"
+    );
 }

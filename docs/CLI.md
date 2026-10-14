@@ -25,14 +25,14 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
-| `anchorleg rules [--add RULE]… [--rm RULE]…` | works (Claude, Codex, Antigravity) |
+| `anchorleg rules [--add RULE]… [--rm RULE]… [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
 | `anchorleg btw <run> [--model M] [--json] -- <question…>` | works (Claude, Codex) |
 | `anchorleg rewind <run> [--keep-files] [--model M] [--json] -- <message…>` | works (Claude, Codex; files in git folders) |
-| `anchorleg sync mcp [--with-env] [--yes]` | works (Claude, Codex, Antigravity) |
+| `anchorleg sync mcp [--with-env] [--yes] [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear] [--json]` | works |
 | `anchorleg stop <run>` | works |
-| `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
+| `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo] [--json]` | works (git folders) |
 | `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex, Antigravity) |
 | `anchorleg status [--refresh] [--json]` | works |
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
@@ -785,6 +785,14 @@ For the desktop app and scripts; each changes what its options say first, then p
   "args"}, …}}`, every CLI (`null` / `[]`: the CLI's own default).
 - `anchorleg policy [name] --json` → `{"schema": 1, "policy": "drain", "policies": [{"name",
   "describe"}]}`.
+- `anchorleg sessions --json` entries carry `side`: `true` for a side question's run
+  (`btw`), which continues nothing.
+- `anchorleg rules [--add R] [--rm R] --json` → `{"schema": 1, "rules": [...]}`.
+- `anchorleg undo <run> --json` → `{"schema": 1, "preview": "<diff --stat>" | null}` (nothing
+  changes); with `--yes` or `--redo` → `{"schema": 1, "done": "undid …"}`.
+- `anchorleg sync mcp [--with-env] [--yes] --json` → `{"schema": 1, "accounts": [{"name",
+  "servers": [names]}], "plan": [{"server", "account", "skip"}], "results": [{"server",
+  "account", "ok", "error"}] | null}`; `results` only with `--yes`. Server settings aren't printed.
 - `anchorleg accounts import-aliases [--yes] --json` → `{"schema": 1, "add": [account…], "skip":
   [name…], "saved": bool}`; accounts as in `accounts list --json`.
 

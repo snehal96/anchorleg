@@ -150,6 +150,9 @@ enum Command {
         /// Remove a rule.
         #[arg(long, value_name = "RULE")]
         rm: Vec<String>,
+        /// Print the rules as JSON (after any change).
+        #[arg(long)]
+        json: bool,
     },
     /// What a session changed in its folder since it started (new files included), as a diff.
     Diff {
@@ -167,6 +170,9 @@ enum Command {
         /// Bring back what the last undo of this session put back.
         #[arg(long, conflicts_with = "yes")]
         redo: bool,
+        /// JSON: `{"preview"}` (the files, as `diff --stat`) without --yes, else `{"done"}`.
+        #[arg(long)]
+        json: bool,
     },
     /// Notifications when a run needs you (a tool call, a question, a plan) or ends.
     /// No options: show the current settings.
@@ -249,6 +255,9 @@ enum SyncCmd {
         with_env: bool,
         #[arg(long)]
         yes: bool,
+        /// Print each account's servers, the plan and (with --yes) what happened, as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -492,10 +501,19 @@ fn main() -> ExitCode {
             };
         }
         Command::Policy { policy, json } => settings::policy(policy, json),
-        Command::Rules { add, rm } => settings::rules(add, rm),
-        Command::Sync(SyncCmd::Mcp { with_env, yes }) => sync::mcp(with_env, yes),
+        Command::Rules { add, rm, json } => settings::rules(add, rm, json),
+        Command::Sync(SyncCmd::Mcp {
+            with_env,
+            yes,
+            json,
+        }) => sync::mcp(with_env, yes, json),
         Command::Diff { run, stat } => run::diff(run, stat),
-        Command::Undo { run, yes, redo } => run::undo(run, redo, yes),
+        Command::Undo {
+            run,
+            yes,
+            redo,
+            json,
+        } => run::undo(run, redo, yes, json),
         Command::Notify {
             desktop,
             command,

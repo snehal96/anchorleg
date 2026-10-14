@@ -84,6 +84,7 @@ fn review_prompt(id: i64, first: i64, diff: &str, extra: &str) -> String {
 }
 
 /// Opens a side question (`anchorleg btw`), so the fork answers instead of carrying on.
+/// A side question's task ends with this note (`run --btw`): see [`is_side`].
 const BTW_NOTE: &str = "A side question about this session, asked while you work on the task. \
      Answer it briefly from what you know and can read; don't change any files and don't go on \
      with the task here.";
@@ -123,6 +124,11 @@ const DETACH_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 /// group (so it outlives this one, and `anchorleg stop` ends it whole), wait until it has a run
 /// id, print it and return. What the run prints goes nowhere; until it has a run id its errors
 /// are read back from a file and reported here.
+/// A run that answers a side question (`anchorleg btw`) rather than carrying the session on.
+pub fn is_side(task: &str) -> bool {
+    task.trim_end().ends_with(&format!("({BTW_NOTE})"))
+}
+
 pub fn detach(json: bool) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt as _;
     // Drop `--detach` from the options only: after `--` it's part of the task.
@@ -782,7 +788,7 @@ pub fn undo_session(store: &Store, log_dir: &Path, id: i64, redo: bool) -> anyho
 }
 
 /// `anchorleg undo <run>`.
-pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
+pub fn undo(id: i64, redo: bool, yes: bool, json: bool) -> anyhow::Result<()> {
     let db = Store::default_path()?;
     let store = Store::open(&db)?;
     let log_dir = db.with_file_name("runs");
@@ -803,7 +809,19 @@ pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
         let run = store
             .run(id)?
             .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
-        match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, true)? {
+        let stat = anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, true)?;
+        if json {
+            let Some(stat) = stat else {
+                anyhow::bail!("nothing to compare with for #{id}");
+            };
+            let stat = stat.trim();
+            println!(
+                "{}",
+                serde_json::json!({ "schema": 1, "preview": (!stat.is_empty()).then_some(stat) })
+            );
+            return Ok(());
+        }
+        match stat {
             Some(stat) if !stat.trim().is_empty() => {
                 println!("{stat}");
                 println!(
@@ -816,7 +834,12 @@ pub fn undo(id: i64, redo: bool, yes: bool) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    println!("{}", undo_session(&store, &log_dir, id, redo)?);
+    let done = undo_session(&store, &log_dir, id, redo)?;
+    if json {
+        println!("{}", serde_json::json!({ "schema": 1, "done": done }));
+        return Ok(());
+    }
+    println!("{done}");
     if !redo {
         println!(
             "`anchorleg undo {id} --redo` brings the changes back. The agent isn't told; say so in your next message."

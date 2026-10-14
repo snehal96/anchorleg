@@ -106,7 +106,7 @@ pub fn policy(new: Option<anchorleg_core::policy::Policy>, json: bool) -> anyhow
 }
 
 /// `anchorleg rules`: list, add or remove lasting allow rules.
-pub fn rules(add: Vec<String>, rm: Vec<String>) -> anyhow::Result<()> {
+pub fn rules(add: Vec<String>, rm: Vec<String>, json: bool) -> anyhow::Result<()> {
     let path = Config::default_path()?;
     let mut config = Config::load(&path)?;
     if !add.is_empty() || !rm.is_empty() {
@@ -130,6 +130,13 @@ pub fn rules(add: Vec<String>, rm: Vec<String>) -> anyhow::Result<()> {
             }
         }
         config.save(&path)?;
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "schema": 1, "rules": config.allow })
+        );
+        return Ok(());
     }
     if config.allow.is_empty() {
         println!("no rules: every tool call the CLI asks about comes to you");

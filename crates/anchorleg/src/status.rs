@@ -274,7 +274,16 @@ pub fn sessions(json: bool, limit: usize) -> anyhow::Result<()> {
     let store = Store::open(&Store::default_path()?)?;
     let runs = store.recent_runs(limit)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&runs)?);
+        // `side`: a side question's run (`btw`), not the session going on.
+        let out: Vec<serde_json::Value> = runs
+            .iter()
+            .map(|r| {
+                let mut v = serde_json::to_value(r)?;
+                v["side"] = crate::run::is_side(&r.task).into();
+                Ok(v)
+            })
+            .collect::<anyhow::Result<_>>()?;
+        println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
     if runs.is_empty() {

@@ -229,7 +229,7 @@ fn notify_settings() {
 }
 
 #[test]
-fn settings_policy_and_aliases_in_json() {
+fn settings_rules_policy_and_aliases_in_json() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
     let json = |args: &[&str]| -> serde_json::Value {
@@ -251,6 +251,11 @@ fn settings_policy_and_aliases_in_json() {
     );
     let s = json(&["settings", "--json"]);
     assert_eq!(s["vendors"]["claude"]["model"], "opus", "{s}");
+
+    let r = json(&["rules", "--add", "Bash(cargo test *)", "--json"]);
+    assert_eq!(r["rules"], serde_json::json!(["Bash(cargo test *)"]), "{r}");
+    let r = json(&["rules", "--rm", "Bash(cargo test *)", "--json"]);
+    assert_eq!(r["rules"], serde_json::json!([]), "{r}");
 
     let p = json(&["policy", "balance", "--json"]);
     assert_eq!(p["policy"], "balance", "{p}");
