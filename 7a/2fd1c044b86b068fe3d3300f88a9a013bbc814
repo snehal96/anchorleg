@@ -1,0 +1,29 @@
+apps/desktop/src-tauri/src/lib.rs
+  s_24d456e49210ef::t_678ea2e05171dc 80-90,118-134,379-409
+apps/desktop/src/Conversation.tsx
+  s_24d456e49210ef::t_d8c2e739898463 2,122-126
+apps/desktop/src/NewTask.tsx
+  s_24d456e49210ef::t_41f12fe838fc71 31,48-56,85-95,118-128,140-141,287-314,320-353,357,366-383
+apps/desktop/src/api.ts
+  s_24d456e49210ef::t_b8692342fd9218 38-63,130-140
+apps/desktop/src/style.css
+  s_24d456e49210ef::t_e10c762b34eede 552,633-637
+apps/desktop/src/ui.tsx
+  s_24d456e49210ef::t_ea500151933112 149,152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a2fd1c044b86b068fe3d3300f88a9a013bbc814",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "unknown"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
