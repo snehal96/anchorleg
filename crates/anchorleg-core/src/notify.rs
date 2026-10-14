@@ -7,9 +7,14 @@
 //!   `ANCHORLEG_EVENT` / `ANCHORLEG_RUN_ID` / `ANCHORLEG_TITLE` / `ANCHORLEG_MESSAGE`, for
 //!   anything else (a chat bot, a phone push service, a sound).
 //!
+//! While anchorleg's desktop app runs it shows the notices itself (D65): it keeps its pid in
+//! `<data dir>/desktop.pid`, and notices go to `<data dir>/desktop-notices.jsonl` (one JSON line
+//! each) instead of a desktop notification. The command still runs.
+//!
 //! Notices never carry answers or secrets: only what is waiting, and how a run ended.
 
 use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -116,17 +121,18 @@ pub const LOG_ENV: &str = "ANCHORLEG_NOTIFY_LOG";
 /// Send `notice` on every channel that's on. Never fails the caller: a channel that can't be
 /// reached is logged and skipped. Returns without waiting for the channels to finish.
 pub fn send(settings: &NotifySettings, notice: &Notice) {
+    let app = crate::store::Store::default_path()
+        .ok()
+        .and_then(|db| db.parent().and_then(app_notices));
+    if let Some(path) = &app {
+        append(path, notice);
+    }
     if let Some(log) = std::env::var_os(LOG_ENV) {
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(log)
-        {
-            let _ = writeln!(f, "{}", serde_json::to_string(notice).unwrap_or_default());
-        }
+        append(Path::new(&log), notice);
         return;
     }
     if settings.desktop
+        && app.is_none()
         && let Some(cmd) = desktop_command(notice)
     {
         spawn(cmd, None);
@@ -143,6 +149,40 @@ pub fn send(settings: &NotifySettings, notice: &Notice) {
             .env("ANCHORLEG_TITLE", &notice.title)
             .env("ANCHORLEG_MESSAGE", &notice.message);
         spawn(cmd, serde_json::to_string(notice).ok());
+    }
+}
+
+/// The desktop app keeps its pid here while it runs.
+pub const APP_PID: &str = "desktop.pid";
+/// Where notices go while the app runs, for it to show.
+pub const APP_NOTICES: &str = "desktop-notices.jsonl";
+
+/// `dir`'s notices file while the desktop app whose pid is in `dir` runs.
+pub fn app_notices(dir: &Path) -> Option<PathBuf> {
+    let pid: i64 = std::fs::read_to_string(dir.join(APP_PID))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    pid_alive(pid).then(|| dir.join(APP_NOTICES))
+}
+
+fn pid_alive(pid: i64) -> bool {
+    pid > 0
+        && Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+fn append(path: &Path, notice: &Notice) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{}", serde_json::to_string(notice).unwrap_or_default());
     }
 }
 
@@ -195,6 +235,20 @@ fn spawn(mut cmd: Command, input: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notices_go_to_the_desktop_app_only_while_it_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(app_notices(dir.path()), None);
+        std::fs::write(dir.path().join(APP_PID), std::process::id().to_string()).unwrap();
+        assert_eq!(app_notices(dir.path()), Some(dir.path().join(APP_NOTICES)));
+        // An app that quit without removing its pid file.
+        let mut gone = Command::new("true").spawn().unwrap();
+        let pid = gone.id();
+        gone.wait().unwrap();
+        std::fs::write(dir.path().join(APP_PID), pid.to_string()).unwrap();
+        assert_eq!(app_notices(dir.path()), None);
+    }
 
     #[test]
     fn notices_are_short_and_quoted_safely() {

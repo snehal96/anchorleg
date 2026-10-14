@@ -827,6 +827,9 @@ fn large_context_starts_fresh_from_the_handoff() {
 fn a_tool_call_waits_for_the_users_answer() {
     let env = Env::new(&["a"]);
     env.script("a.jsonl", &ok("s1", "wrote it"));
+    // The desktop app is open (this test process stands in for it): it gets the notices.
+    std::fs::create_dir_all(env.path("home")).unwrap();
+    std::fs::write(env.path("home/desktop.pid"), std::process::id().to_string()).unwrap();
     let mut cmd = std::process::Command::new(assert_cmd::cargo::cargo_bin("anchorleg"));
     let child = cmd
         .args(["run", "--json", "--cwd"])
@@ -855,6 +858,21 @@ fn a_tool_call_waits_for_the_users_answer() {
         if let Some(id) = v[0]["id"].as_i64() {
             assert_eq!(v[0]["tool"], "Write");
             assert_eq!(v[0]["run_id"], 1);
+            // What the desktop app shows.
+            assert_eq!(v[0]["kind"], "tool", "{v}");
+            assert_eq!(v[0]["summary"], "Write  a.txt", "{v}");
+            assert!(v[0]["preview"].is_array(), "{v}");
+            assert!(
+                v[0]["rule"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("Write")),
+                "{v}"
+            );
+            assert_eq!(
+                v[0]["deadline"].as_i64(),
+                Some(v[0]["asked_at"].as_i64().unwrap() + 30 * 60),
+                "{v}"
+            );
             break id;
         }
         assert!(started.elapsed().as_secs() < 10, "nothing asked");
@@ -885,6 +903,19 @@ fn a_tool_call_waits_for_the_users_answer() {
         log.contains("Write  a.txt: allowed for this session"),
         "{log}"
     );
+    let notices = std::fs::read_to_string(env.path("home/desktop-notices.jsonl")).unwrap();
+    assert!(notices.contains(r#""event":"waiting""#), "{notices}");
+    assert!(notices.contains(r#""event":"done""#), "{notices}");
+    let n: Value = serde_json::from_slice(
+        &env.anchorleg()
+            .args(["notify", "--json"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(n["app_running"], true, "{n}");
+    assert_eq!(n["data_dir"], env.path("home").display().to_string(), "{n}");
 }
 
 #[test]
@@ -1872,6 +1903,11 @@ fn codex_questions_are_answered_through_anchorleg() {
     assert_eq!(q["tool"], "AskUserQuestion");
     assert_eq!(q["input"]["questions"][0]["options"][1]["label"], "Jest");
     assert_eq!(q["input"]["questions"][1]["secret"], true);
+    // Normalised for UIs, with no deadline: a question waits for the person.
+    assert_eq!(q["kind"], "question");
+    assert_eq!(q["questions"][0]["options"][0]["label"], "Vitest");
+    assert_eq!(q["questions"][1]["secret"], true);
+    assert_eq!(q["deadline"], Value::Null);
 
     // A secret is never passed: anchorleg refuses to take it.
     env.anchorleg()
@@ -1995,6 +2031,8 @@ fn a_plan_can_be_edited_before_it_is_approved() {
     let child = spawn_run_with(&env, &["--plan"], &[]);
     let q = first_question(&env);
     assert_eq!(q["input"]["plan"], "1. add docs/page.md", "{q}");
+    assert_eq!(q["kind"], "plan", "{q}");
+    assert_eq!(q["plan"], "1. add docs/page.md", "{q}");
     // `edit` opens the plan in $EDITOR; here the "editor" changes it in place.
     env.anchorleg()
         .env("VISUAL", "perl -pi -e s/page/guide/")

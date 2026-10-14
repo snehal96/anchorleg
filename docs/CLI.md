@@ -21,7 +21,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 |---|---|
 | `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly]` | works |
-| `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test]` | works (macOS, Linux) |
+| `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
@@ -306,6 +306,12 @@ anchorleg notify --command 'curl -s -d "$ANCHORLEG_MESSAGE" https://ntfy.sh/my-a
 On macOS the first notification may need permission: allow notifications for "Script Editor"
 in System Settings → Notifications if none show up.
 
+While the anchorleg desktop app is open it shows the notices itself, so you don't get two: it
+keeps its process id in `<store dir>/desktop.pid`, and runs then append each notice as a JSON
+line to `<store dir>/desktop-notices.jsonl` instead of sending a desktop notification. The
+`--command` still runs. `anchorleg notify --json` prints the settings, the store folder
+(`data_dir`) and whether the app is open (`app_running`).
+
 ### Fork a session, or give a task its own worktree
 
 `anchorleg run --fork <run> -- <message>` starts a **new** session from that session's history
@@ -585,6 +591,15 @@ to anchorleg instead, and the run waits for you:
 - **4** Always (rule): allowed now and in every session from now on, as a lasting rule (below).
 - Terminal: `anchorleg permission list`, then
   `anchorleg permission answer <id> yes|always|rule|no`.
+
+**`permission list --json`** is an array of waiting requests: `id`, `run_id`, `tool`, `input`
+(as the CLI sent it), `reason`, `state`, `asked_at`, plus what a UI shows: `kind` (`tool`,
+`question` or `plan`), `cwd` (the task folder) and `deadline` (Unix seconds when the request stops
+waiting; `null`: it waits as long as the run lives). A `tool` has `summary` (`Write  src/a.rs`,
+relative to the task folder), `preview` (`[{mark, line}]`: `-` removed, `+` added, `.` context or "… more lines"; up to 10)
+and `rule` (what answering `rule` would save). A `question` or `plan` has `questions` (as above:
+`id`, `header`, `question`, `options`, `multi_select`, `secret`), and a `plan` has `plan` (the
+text, for `answer <id> --plan-file`).
 
 **Lasting rules.** `anchorleg rules --add "Bash(cargo test *)"` lets every session make such calls
 without asking, in Claude Code's rule syntax: `Tool` or `Tool(pattern)`, e.g.

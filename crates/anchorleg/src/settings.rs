@@ -109,6 +109,7 @@ pub fn notify(
     command: Option<String>,
     no_command: bool,
     test: bool,
+    json: bool,
 ) -> anyhow::Result<()> {
     use anchorleg_core::notify::{self, Kind, Notice};
     let path = Config::default_path()?;
@@ -126,8 +127,23 @@ pub fn notify(
         config.save(&path)?;
     }
     let n = &config.notify;
-    println!("desktop  {}", if n.desktop { "on" } else { "off" });
-    println!("command  {}", n.command.as_deref().unwrap_or("(none)"));
+    if json {
+        let db = anchorleg_core::store::Store::default_path()?;
+        let dir = db.parent().unwrap_or(std::path::Path::new("."));
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": 1,
+                "desktop": n.desktop,
+                "command": n.command,
+                "data_dir": dir,
+                "app_running": notify::app_notices(dir).is_some(),
+            })
+        );
+    } else {
+        println!("desktop  {}", if n.desktop { "on" } else { "off" });
+        println!("command  {}", n.command.as_deref().unwrap_or("(none)"));
+    }
     if test {
         notify::send(
             n,
@@ -135,7 +151,9 @@ pub fn notify(
         );
         // The channels run on their own; give a command a moment before this process exits.
         std::thread::sleep(std::time::Duration::from_millis(500));
-        println!("sent a test notice");
+        if !json {
+            println!("sent a test notice");
+        }
     }
     Ok(())
 }

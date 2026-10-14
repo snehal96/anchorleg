@@ -12,6 +12,11 @@ All notable changes are listed here. The format follows
   desktop app).
 - `anchorleg run --detach`: starts the run in the background and returns its run id at once
   (`--json`: `{"run_id", "pid"}`); errors before it starts are still reported.
+- `anchorleg permission list --json` also gives each request's `kind` (tool, question, plan), a
+  summary, the change it would make, the rule "always" would save, the questions or plan, and its
+  deadline.
+- `anchorleg notify --json`. While the desktop app is open (`desktop.pid` in the store folder) it
+  shows the notices; runs then skip their own desktop notification (`--command` still runs).
 - Homebrew tap (in progress).
 
 ## [0.6.1] — 2026-10-13

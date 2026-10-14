@@ -178,6 +178,9 @@ enum Command {
         /// Send a test notice.
         #[arg(long)]
         test: bool,
+        /// Print the settings as JSON (with the data folder the desktop app uses).
+        #[arg(long)]
+        json: bool,
     },
     /// Tokens and cost of anchorleg's runs, per account and model, plus credits and quota.
     Usage {
@@ -490,7 +493,8 @@ fn main() -> ExitCode {
             command,
             no_command,
             test,
-        } => settings::notify(desktop, command, no_command, test),
+            json,
+        } => settings::notify(desktop, command, no_command, test, json),
         Command::Sessions {
             show: Some(SessionsCmd::Show { run, since, json }),
             ..
