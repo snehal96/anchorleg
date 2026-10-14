@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the release bundles for this machine's OS into apps/desktop/release/, with SHA256SUMS.
-#   macOS: one .dmg per architecture (arm64, x86_64), each with its own anchorleg CLI inside.
+#   macOS: one universal .dmg (Apple silicon and Intel, both native), the CLI inside universal too.
 #   Linux: AppImage and .deb for the host architecture.
 # Targets can be named: scripts/release.sh aarch64-apple-darwin. ANCHORLEG_CLI_DIR builds the
 # bundled CLI from another checkout (see sidecar.sh).
@@ -8,7 +8,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 cd "$here" || exit 1
 case "$(uname -s)" in
-  Darwin) default=(aarch64-apple-darwin x86_64-apple-darwin); bundles=app,dmg ;;
+  Darwin) default=(universal-apple-darwin); bundles=app,dmg ;;
   Linux) default=("$(rustc -vV | sed -n 's/^host: //p')"); bundles=appimage,deb ;;
   *) echo "unsupported OS" >&2; exit 1 ;;
 esac

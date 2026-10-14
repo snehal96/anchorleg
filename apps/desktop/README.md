@@ -38,12 +38,12 @@ icon brings the window back.
 ## Release bundles
 
 ```bash
-./scripts/release.sh                      # macOS: a .dmg per architecture; Linux: AppImage + .deb
-./scripts/release.sh aarch64-apple-darwin # one target
+./scripts/release.sh                      # macOS: one universal .dmg; Linux: AppImage + .deb
+./scripts/release.sh aarch64-apple-darwin # one architecture only (for testing)
 ```
 
 They land in `release/` with `SHA256SUMS`. Each bundle carries the CLI built from the same
-checkout for its own architecture. CI does the same for all four targets when a `desktop-v*`
+checkout (universal on macOS: native on Apple silicon and Intel). CI does the same for macOS and both Linux architectures when a `desktop-v*`
 tag matching `version` in `src-tauri/tauri.conf.json` is pushed
 (`.github/workflows/desktop-release.yml`), and leaves a draft release to check and publish.
 
