@@ -1,12 +1,13 @@
 //! `anchorleg accounts …`: manage `config.toml` and Keychain tokens.
 
 use std::io::{BufRead, IsTerminal};
+use std::os::fd::AsFd as _;
 use std::path::{Path, PathBuf};
 
 use anchorleg_core::policy::CreditsUse;
 use anchorleg_core::registry::{
     Account, Config, Keychain, Secret, SecretStore, TokenFrom, Vendor, accounts_from_aliases,
-    parse_command,
+    default_program, parse_command,
 };
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
@@ -22,6 +23,11 @@ pub enum AccountsCmd {
     Show { name: String },
     /// Add an account.
     Add(AddArgs),
+    /// Sign in a new account: give it its own folder (`~/.claude-NAME`, `~/.codex-NAME`,
+    /// `~/.agy-NAME`), run the CLI's own sign-in (`claude auth login`, `codex login`, or `agy`'s
+    /// sign-in screen, in a terminal) in your browser, then add it. The CLI keeps the login
+    /// itself; anchorleg never sees it.
+    Login(LoginArgs),
     /// Remove an account (and its Keychain token, if any).
     Rm { name: String },
     /// Change how an account is used.
@@ -38,6 +44,21 @@ pub enum AccountsCmd {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Args)]
+pub struct LoginArgs {
+    name: String,
+    /// claude, codex or antigravity (agy).
+    #[arg(long, value_parser = parse_vendor, default_value = "claude")]
+    cli: Vendor,
+    /// The CLI binary to sign in with and run the account with. Defaults to the one on PATH
+    /// (for Codex, the ChatGPT app's copy when there's none on PATH).
+    #[arg(long)]
+    bin: Option<String>,
+    /// Print `{"name", "cli", "dir"}` when it's added; the sign-in's own output goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -132,6 +153,7 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             config.save(&path)?;
             Ok(())
         }
+        AccountsCmd::Login(args) => login(&mut config, &path, args),
         AccountsCmd::Rm { name } => {
             let before = config.accounts.len();
             let had_token = config
@@ -322,6 +344,115 @@ fn add(config: &mut Config, args: AddArgs) -> anyhow::Result<()> {
     config.accounts.push(account);
     println!("added {}", args.name);
     Ok(())
+}
+
+/// The env var that points a CLI at an account's folder, and the folder's name prefix.
+fn login_dir(cli: Vendor) -> anyhow::Result<(&'static str, &'static str)> {
+    match cli {
+        Vendor::Claude => Ok(("CLAUDE_CONFIG_DIR", ".claude-")),
+        Vendor::Codex => Ok(("CODEX_HOME", ".codex-")),
+        // agy has no narrower setting than HOME; in a HOME of its own it can't reach the
+        // Keychain and keeps the login as a file there.
+        Vendor::Antigravity => Ok(("HOME", ".agy-")),
+        other => bail!(
+            "anchorleg can't sign in to {} for you yet: sign in with its own app, then `anchorleg accounts add`",
+            other.name()
+        ),
+    }
+}
+
+fn login(config: &mut Config, path: &Path, args: LoginArgs) -> anyhow::Result<()> {
+    if config.get(&args.name).is_some() {
+        bail!("account `{}` already exists", args.name);
+    }
+    if args.name.is_empty()
+        || !args
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        bail!("an account name is letters, digits, `-` and `_`");
+    }
+    let (var, prefix) = login_dir(args.cli)?;
+    let home = dirs_home()?;
+    let folder = format!("~/{prefix}{}", args.name);
+    let dir = home.join(format!("{prefix}{}", args.name));
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let program = args
+        .bin
+        .clone()
+        .unwrap_or_else(|| default_program(args.cli));
+
+    let (sign_in, check): (&[&str], &[&str]) = match args.cli {
+        Vendor::Codex => (&["login"], &["login", "status"]),
+        // agy signs in from its own screen, started with no arguments.
+        Vendor::Antigravity => (&[], &["models"]),
+        _ => (&["auth", "login"], &["auth", "status", "--json"]),
+    };
+    if args.cli == Vendor::Antigravity {
+        if !std::io::stdin().is_terminal() {
+            bail!(
+                "Antigravity signs in from its own screen: run `anchorleg accounts login {} --cli agy` in a terminal",
+                args.name
+            );
+        }
+        eprintln!(
+            "agy opens next: sign in there (it opens your browser), then quit agy to finish."
+        );
+    }
+    // With --json, stdout is for the result: the sign-in's own messages (its link, if the
+    // browser didn't open) go to stderr.
+    let out = if args.json {
+        std::process::Stdio::from(std::io::stderr().as_fd().try_clone_to_owned()?)
+    } else {
+        std::process::Stdio::inherit()
+    };
+    let status = std::process::Command::new(&program)
+        .args(sign_in)
+        .env(var, &dir)
+        .stdout(out)
+        .status()
+        .with_context(|| format!("running {program}"))?;
+    if !status.success() {
+        bail!("sign-in didn't finish ({status}); nothing was added");
+    }
+    let checked = std::process::Command::new(&program)
+        .args(check)
+        .env(var, &dir)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .with_context(|| format!("running {program}"))?;
+    if !signed_in(args.cli, &checked) {
+        bail!("{program} doesn't report a sign-in in {folder}; nothing was added");
+    }
+
+    let mut account = Account::new(args.name.clone(), args.cli);
+    account.env.insert(var.to_owned(), folder.clone());
+    account.bin = args.bin;
+    let mut candidate = config.clone();
+    candidate.accounts.push(account.clone());
+    candidate.validate()?;
+    config.accounts.push(account);
+    config.save(path)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({ "name": args.name, "cli": args.cli.name(), "dir": folder })
+        );
+    } else {
+        println!("signed in; added {} ({folder})", args.name);
+    }
+    Ok(())
+}
+
+/// `claude auth status --json` says `"loggedIn": true`; `codex login status` and `agy models`
+/// exit 0 (signed out: exit 1).
+fn signed_in(cli: Vendor, out: &std::process::Output) -> bool {
+    match cli {
+        Vendor::Codex | Vendor::Antigravity => out.status.success(),
+        _ => serde_json::from_slice::<serde_json::Value>(&out.stdout)
+            .is_ok_and(|v| v["loggedIn"] == serde_json::Value::Bool(true)),
+    }
 }
 
 fn read_token() -> anyhow::Result<Secret> {

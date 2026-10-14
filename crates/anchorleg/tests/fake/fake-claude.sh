@@ -14,6 +14,21 @@ if [[ "${1:-}" == mcp ]]; then
   exit 0
 fi
 
+# `auth login` / `auth status --json` (anchorleg accounts login): signs in by writing a marker in
+# $CLAUDE_CONFIG_DIR, unless $FAKE_LOGIN_FAILS is set.
+if [[ "${1:-}" == auth ]]; then
+  case "${2:-}" in
+    login)
+      [[ -n "${FAKE_LOGIN_FAILS:-}" ]] && { echo "login cancelled" >&2; exit 1; }
+      echo "Opening the browser to sign in…"
+      touch "$CLAUDE_CONFIG_DIR/.fake-signed-in"
+      exit 0 ;;
+    status)
+      if [[ -f "$CLAUDE_CONFIG_DIR/.fake-signed-in" ]]; then echo '{"loggedIn": true}'; else echo '{"loggedIn": false}'; fi
+      exit 0 ;;
+  esac
+fi
+
 account="$(basename "$CLAUDE_CONFIG_DIR")"
 
 # `-p … /usage` (anchorleg reading quota): prints $FAKE_DIR/X.usage.json, or fails like a CLI

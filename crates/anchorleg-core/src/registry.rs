@@ -391,7 +391,7 @@ impl Account {
 
 /// The vendor's binary from `PATH`; for Codex, the copy inside the ChatGPT app when `codex`
 /// isn't on `PATH` (the desktop app doesn't install one there).
-fn default_program(vendor: Vendor) -> String {
+pub fn default_program(vendor: Vendor) -> String {
     let name = vendor.default_bin();
     if vendor == Vendor::Codex
         && !on_path(name)

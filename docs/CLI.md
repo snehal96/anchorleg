@@ -19,7 +19,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F] [--json]` | works |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `login <name> [--cli claude\|codex\|agy] [--bin B] [--json]` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F] [--json]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
@@ -90,6 +90,9 @@ anchorleg accounts import-aliases            # preview what your shell aliases w
 anchorleg accounts import-aliases --yes      # write them
 anchorleg accounts add work --cmd "CLAUDE_CONFIG_DIR=~/.claude-work ~/.local/bin/claude" --priority 1
 anchorleg accounts add ci --token-stdin      # paste a `claude setup-token` token; stored in Keychain
+anchorleg accounts login work2               # new folder ~/.claude-work2, `claude auth login` in the browser, then added
+anchorleg accounts login gpt2 --cli codex    # same for Codex: ~/.codex-gpt2 and `codex login`
+anchorleg accounts login g2 --cli agy        # Antigravity: ~/.agy-g2 as its HOME; agy's own sign-in screen (needs a terminal)
 anchorleg accounts add odd --shell "my-claude-alias"   # escape hatch: runs through $SHELL -ic
 anchorleg accounts show work                 # the exact launch line anchorleg will use (tokens as ***)
 ```
@@ -793,6 +796,9 @@ For the desktop app and scripts; each changes what its options say first, then p
 - `anchorleg sync mcp [--with-env] [--yes] --json` → `{"schema": 1, "accounts": [{"name",
   "servers": [names]}], "plan": [{"server", "account", "skip"}], "results": [{"server",
   "account", "ok", "error"}] | null}`; `results` only with `--yes`. Server settings aren't printed.
+- `anchorleg accounts login NAME [--cli claude|codex|agy] --json` → `{"name", "cli", "dir"}` once the
+  CLI reports a sign-in (`claude auth status` / `codex login status` / `agy models`); the sign-in's own output goes
+  to stderr. A sign-in that doesn't finish adds nothing (exit 1). The login stays with the CLI.
 - `anchorleg accounts import-aliases [--yes] --json` → `{"schema": 1, "add": [account…], "skip":
   [name…], "saved": bool}`; accounts as in `accounts list --json`.
 

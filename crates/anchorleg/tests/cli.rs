@@ -284,3 +284,75 @@ fn settings_rules_policy_and_aliases_in_json() {
     assert_eq!(a["skip"][0], "claude-work", "{a}");
     assert_eq!(a["add"], serde_json::json!([]), "{a}");
 }
+
+#[test]
+fn login_signs_in_then_adds_the_account() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let fake = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake/fake-claude.sh");
+
+    // A sign-in that doesn't finish adds nothing.
+    anchorleg(&config)
+        .env("HOME", &home)
+        .env("FAKE_LOGIN_FAILS", "1")
+        .args(["accounts", "login", "work", "--bin", fake])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("nothing was added"));
+    anchorleg(&config)
+        .args(["accounts", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(predicates::prelude::PredicateBooleanExt::not(
+            predicates::str::contains("work"),
+        ));
+
+    let out = anchorleg(&config)
+        .env("HOME", &home)
+        .args(["accounts", "login", "work", "--bin", fake, "--json"])
+        .assert()
+        .success();
+    let v = json(&out);
+    assert_eq!(v["name"], "work");
+    assert_eq!(v["cli"], "claude");
+    assert_eq!(v["dir"], "~/.claude-work");
+    assert!(home.join(".claude-work/.fake-signed-in").is_file());
+    let list = json(
+        &anchorleg(&config)
+            .args(["accounts", "list", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(list[0]["name"], "work");
+    assert_eq!(list[0]["env"]["CLAUDE_CONFIG_DIR"], "~/.claude-work");
+
+    // The same name again, a bad name, and a CLI it can't sign in to are refused.
+    for args in [
+        &["accounts", "login", "work", "--bin", fake][..],
+        &["accounts", "login", "a b", "--bin", fake][..],
+        &["accounts", "login", "g", "--cli", "kimi"][..],
+    ] {
+        anchorleg(&config)
+            .env("HOME", &home)
+            .args(args)
+            .assert()
+            .failure();
+    }
+}
+
+#[test]
+fn login_to_antigravity_needs_a_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    // Not a terminal here: agy's sign-in screen can't run, so it says where to do it.
+    anchorleg(&config)
+        .env("HOME", &home)
+        .args(["accounts", "login", "g2", "--cli", "agy"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("in a terminal"));
+}

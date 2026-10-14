@@ -204,6 +204,9 @@ anchorleg accounts list                    # in the order they're tried
 Or add them one by one:
 
 ```bash
+anchorleg accounts login work                     # its own ~/.claude-work, signed in through your browser
+anchorleg accounts login gpt2 --cli codex         # the same for Codex (~/.codex-gpt2)
+anchorleg accounts login g2 --cli agy             # Antigravity (~/.agy-g2 as its HOME), in a terminal
 anchorleg accounts add work --cmd "CLAUDE_CONFIG_DIR=~/.claude-work claude" --priority 1
 anchorleg accounts add home --cmd "CLAUDE_CONFIG_DIR=~/.claude-home claude" --priority 2
 anchorleg accounts add ci --token-stdin             # a `claude setup-token` token, kept in the keychain
