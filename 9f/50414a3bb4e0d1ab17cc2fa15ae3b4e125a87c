@@ -1,0 +1,33 @@
+Cargo.toml
+  s_24d456e49210ef::t_89a23d575e5ad4 6
+CHANGELOG.md
+  s_24d456e49210ef::t_89a23d575e5ad4 10-13,34-44
+  s_24d456e49210ef::t_ce30850684c228 9
+site/index.html
+  s_24d456e49210ef::t_89a23d575e5ad4 28
+README.md
+  s_24d456e49210ef::t_89a23d575e5ad4 180-181
+Cargo.lock
+  s_24d456e49210ef::t_3053417ca22b32 33,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f50414a3bb4e0d1ab17cc2fa15ae3b4e125a87c",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
