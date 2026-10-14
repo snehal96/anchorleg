@@ -1,0 +1,133 @@
+/* The website's tokens (site/index.html), so the app and the site look like one product. No
+   web fonts: the app works offline, so it falls back to the system's. */
+:root {
+  --ground: #eef1f4;
+  --panel: #ffffff;
+  --ink: #14202b;
+  --muted: #566572;
+  --rule: #d5dce3;
+  --signal: #b86e00;
+  --ok: #1d7a5f;
+  --stop: #b23a3a;
+  --code-bg: #e3e8ee;
+  --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0f151b; --panel: #161e26; --ink: #dce3ea; --muted: #94a3b1; --rule: #26313c;
+    --signal: #f2b53a; --ok: #4fc19a; --stop: #e07070; --code-bg: #1c2630;
+  }
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.5 var(--body); }
+.app { display: flex; flex-direction: column; height: 100vh; }
+header {
+  display: flex; align-items: center; gap: 10px; padding: 12px 20px;
+  border-bottom: 1px solid var(--rule); background: var(--panel);
+}
+header h1 { font-size: 16px; margin: 0; flex: 1; }
+main { padding: 20px; overflow: auto; flex: 1; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+.muted { color: var(--muted); }
+.mono, code, pre { font-family: var(--mono); font-size: 12.5px; }
+code, pre { background: var(--code-bg); border-radius: 4px; }
+code { padding: 1px 4px; }
+pre { padding: 10px 12px; white-space: pre-wrap; word-break: break-all; user-select: all; }
+.error { color: var(--stop); }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 20px; max-width: 640px; }
+.state { font-family: var(--mono); font-size: 12px; }
+.state-running, .state-done { color: var(--ok); }
+.state-switching, .state-waiting { color: var(--signal); }
+.state-failed { color: var(--stop); }
+.state-stopped { color: var(--muted); }
+.ok { color: var(--ok); }
+button {
+  font: inherit; font-weight: 500; color: var(--panel); background: var(--ink);
+  border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+button:disabled { opacity: 0.6; cursor: default; }
+button code { background: transparent; color: inherit; }
+button.link { background: none; color: var(--muted); padding: 2px 6px; }
+button.link:hover { color: var(--ink); }
+.card-head { display: flex; align-items: center; justify-content: space-between; }
+.card-head h2 { margin: 0; }
+.terminal { margin-bottom: 20px; }
+
+/* Sessions: a list on the left, the selected session on the right. */
+.body { display: flex; flex: 1; min-height: 0; }
+.sidebar {
+  width: 260px; flex: none; overflow-y: auto; border-right: 1px solid var(--rule);
+  background: var(--panel); padding: 8px 0;
+}
+.sidebar .item {
+  display: flex; gap: 8px; width: 100%; text-align: left; align-items: flex-start;
+  background: none; color: var(--ink); border-radius: 0; padding: 7px 14px; font-weight: 400;
+}
+.sidebar .item:hover { background: var(--ground); }
+.sidebar .item.selected { background: var(--code-bg); }
+.sidebar .new { font-weight: 600; margin-bottom: 4px; }
+.mark { width: 14px; flex: none; text-align: center; font-size: 12px; line-height: 20px; }
+.item-text { display: flex; flex-direction: column; min-width: 0; }
+.item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item-meta { font-size: 12px; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pad { padding: 12px 20px; margin: 0; }
+.pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane-head { padding: 12px 20px 10px; border-bottom: 1px solid var(--rule); background: var(--panel); }
+.pane-head .title { display: flex; align-items: center; gap: 10px; }
+.pane-head h2 { margin: 0; cursor: text; }
+.pane-head input { font: inherit; font-weight: 600; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; margin-top: 4px; }
+.folder { display: flex; gap: 8px; margin-top: 8px; }
+.folder input { flex: 1; }
+input, textarea {
+  font: inherit; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px;
+}
+input:focus, textarea:focus { outline: 2px solid var(--signal); outline-offset: -1px; }
+
+/* The conversation, in Claude Code's style. */
+.conversation { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.msg { margin: 0 0 10px; white-space: pre-wrap; word-wrap: break-word; max-width: 900px; }
+.msg.user { background: var(--code-bg); border-radius: 6px; padding: 8px 12px; }
+.msg.tool { color: var(--ink); margin-bottom: 2px; }
+.msg.tool .dot { color: var(--ok); }
+pre.msg.output {
+  background: none; user-select: text; color: var(--muted); padding: 0 0 0 22px;
+  border-left: 2px solid var(--rule); margin-left: 5px; max-height: 12em; overflow: hidden;
+}
+.msg.thinking { color: var(--muted); font-style: italic; }
+.msg.note { color: var(--signal); font-size: 13px; }
+.working { color: var(--muted); margin: 6px 0; }
+pre.tail { background: none; user-select: text; color: var(--muted); max-height: 8em; overflow: hidden; margin: 4px 0 0 22px; }
+.spinner {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  border: 2px solid var(--ok); border-right-color: transparent; animation: spin 0.9s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress { border-top: 1px solid var(--rule); padding: 8px 20px; max-height: 30%; overflow-y: auto; font-size: 13px; }
+.progress ul { list-style: none; margin: 0; padding: 0; }
+.step-done { color: var(--muted); text-decoration: line-through; }
+.step-in_progress { font-weight: 600; }
+.subagents { margin-top: 6px !important; }
+
+/* The message box. */
+.composer { position: relative; border-top: 1px solid var(--rule); background: var(--panel); padding: 10px 20px 12px; }
+.composer textarea { width: 100%; resize: none; display: block; }
+.composer-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 13px; }
+.spacer { flex: 1; }
+.suggestions {
+  position: absolute; bottom: 100%; left: 20px; right: 20px; list-style: none; margin: 0 0 4px; padding: 4px 0;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+}
+.suggestions li { padding: 4px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.suggestions li.picked { background: var(--code-bg); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.chip { background: var(--code-bg); border-radius: 4px; padding: 1px 2px 1px 8px; }
+button.secondary { background: var(--code-bg); color: var(--ink); }
+button.danger { background: var(--stop); color: #fff; }
+button.small { padding: 2px 10px; font-size: 12px; }

@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "anchorleg",
+  "version": "0.2.0",
+  "identifier": "io.github.snehal96.anchorleg",
+  "build": {
+    "beforeDevCommand": "npm run sidecar && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run sidecar && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "anchorleg",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 480
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "appimage",
+      "deb"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Keep coding agents working when an account hits its limit",
+    "copyright": "anchorleg contributors, MIT OR Apache-2.0",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
+    "externalBin": [
+      "binaries/anchorleg"
+    ]
+  }
+}
