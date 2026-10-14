@@ -91,6 +91,16 @@ export interface Start {
   worktree?: boolean;
   name?: string;
   attach?: string[];
+  model?: string;
+  /** Only accounts of this CLI: claude, codex or antigravity. */
+  cli?: string;
+  /** drain, balance or save-weekly, for this run. */
+  policy?: string;
+  /** Most tokens the task may use, e.g. `500k`. */
+  budget?: string;
+  goal_turns?: number;
+  /** How long a question waits for you, e.g. `10m`. */
+  answer_wait?: string;
 }
 /** `anchorleg run --detach --json`: returns once the run has an id. */
 export const start = (req: Start) => invoke<{ run_id: number; pid: number }>("start", { req });
@@ -291,3 +301,11 @@ export interface McpSync {
   results: { server: string; account: string; ok: boolean; error: string | null }[] | null;
 }
 export const mcpSync = (withEnv: boolean, yes: boolean) => invoke<McpSync>("mcp_sync", { withEnv, yes });
+
+// ---- Signing in a new account; pasted images ----------------------------------------------------
+/** Runs the CLI's own sign-in (it opens the browser) and adds the account once it's done. */
+export const loginAccount = (name: string, vendor: string) => invoke<{ name: string; cli: string; dir: string }>("login_account", { name, vendor });
+export const cancelLogin = () => invoke<void>("cancel_login");
+export const loginInTerminal = (name: string, vendor: string) => invoke<void>("login_in_terminal", { name, vendor });
+/** Saves an image's bytes as a file in the app's cache; returns its path. */
+export const savePaste = (bytes: Uint8Array, ext: string) => invoke<string>("save_paste", bytes, { headers: { "x-ext": ext } });

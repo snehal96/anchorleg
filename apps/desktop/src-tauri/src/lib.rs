@@ -1,9 +1,12 @@
 //! anchorleg's desktop app: a window over the CLI it ships with (D30, D31). Commands here are thin: run
 //! `anchorleg … --json` off the UI thread and hand the result to the React side.
 
+mod appmenu;
 mod cli;
 mod notices;
+mod paste;
 mod settings;
+mod signin;
 mod tray;
 
 use serde::Deserialize;
@@ -64,6 +67,16 @@ struct Start {
     worktree: bool,
     name: Option<String>,
     attach: Vec<String>,
+    /// The model (`--model`), the CLI to use (`--cli`), how to pick accounts (`--policy`).
+    model: Option<String>,
+    cli: Option<String>,
+    policy: Option<String>,
+    /// Most tokens the task may use, e.g. `500k` (`--budget`).
+    budget: Option<String>,
+    /// At most this many turns toward the goal (`--goal-turns`).
+    goal_turns: Option<u32>,
+    /// How long a question waits for the person, e.g. `10m` (`--answer-wait`).
+    answer_wait: Option<String>,
 }
 
 impl Start {
@@ -85,6 +98,12 @@ impl Start {
         opt("--prefer", self.prefer);
         opt("--account", self.account);
         opt("--name", self.name);
+        opt("--model", self.model);
+        opt("--cli", self.cli);
+        opt("--policy", self.policy);
+        opt("--budget", self.budget);
+        opt("--goal-turns", self.goal_turns.map(|n| n.to_string()));
+        opt("--answer-wait", self.answer_wait);
         for f in self.attach {
             args.extend(["--attach".into(), f]);
         }
@@ -234,8 +253,11 @@ pub fn run() {
         .setup(|app| {
             notices::start(app.handle().clone());
             tray::create(app.handle())?;
+            #[cfg(target_os = "macos")]
+            app.set_menu(appmenu::create(app.handle())?)?;
             Ok(())
         })
+        .on_menu_event(|app, e| appmenu::handle(app, e.id.as_ref()))
         // Closing the window hides it: sessions, notices and the menu bar item go on until Quit.
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = e {
@@ -271,6 +293,10 @@ pub fn run() {
             settings::notify,
             settings::mcp_sync,
             tray::update_tray,
+            signin::login_account,
+            signin::cancel_login,
+            signin::login_in_terminal,
+            paste::save_paste,
             terminal,
             link_terminal
         ])
@@ -288,6 +314,38 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_args_options() {
+        let s: Start = serde_json::from_str(
+            r#"{"text":"t","goal":"tests pass","goal_turns":5,"model":"sonnet","cli":"codex","policy":"drain","budget":"500k","answer_wait":"10m"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.args(),
+            [
+                "run",
+                "--detach",
+                "--json",
+                "--goal",
+                "tests pass",
+                "--model",
+                "sonnet",
+                "--cli",
+                "codex",
+                "--policy",
+                "drain",
+                "--budget",
+                "500k",
+                "--goal-turns",
+                "5",
+                "--answer-wait",
+                "10m",
+                "--",
+                "t"
+            ]
+        );
+    }
 
     #[test]
     fn start_args() {

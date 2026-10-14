@@ -172,6 +172,21 @@ pub fn text<S: AsRef<OsStr>>(args: &[S]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Start `anchorleg <args>` without waiting, its stdout and stderr piped: for the long ones
+/// the window can cancel (signing in an account).
+pub fn spawn<S: AsRef<OsStr>>(args: &[S]) -> Result<std::process::Child, String> {
+    let path = find().ok_or("the anchorleg CLI isn't installed")?;
+    let mut cmd = Command::new(&path);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(p) = shell_path() {
+        cmd.env("PATH", p);
+    }
+    cmd.spawn().map_err(|e| format!("running anchorleg: {e}"))
+}
+
 /// Run `anchorleg <args>` and parse its JSON output.
 pub fn json<S: AsRef<OsStr>>(args: &[S]) -> Result<Value, String> {
     serde_json::from_str(&text(args)?).map_err(|e| format!("reading anchorleg's output: {e}"))

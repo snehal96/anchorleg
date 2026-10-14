@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
-import { start, type Account, type Run } from "./api";
+import { cliSettings, start, type Account, type Run, type Status } from "./api";
+import { windowName } from "./Accounts";
+import { nextAccount, Ring, roomLeft, VENDORS } from "./Limits";
+import { pastedImages } from "./paste";
 import { tilde } from "./sessions";
 import { APPROVAL, Field, Icon, Menu, Switch } from "./ui";
 
@@ -12,6 +15,7 @@ export default function NewTask({
   setFolder,
   runs,
   accounts,
+  status,
   onStarted,
 }: {
   folder: string;
@@ -19,6 +23,8 @@ export default function NewTask({
   /** For the recent folders. */
   runs: Run[];
   accounts: Account[];
+  /** For the line under the greeting: where the task would start and the room there. */
+  status: Status | null;
   onStarted: (run: number) => void;
 }) {
   const [task, setTask] = useState("");
@@ -31,6 +37,18 @@ export default function NewTask({
   const [onlyThat, setOnlyThat] = useState(false);
   const [worktree, setWorktree] = useState(false);
   const [name, setName] = useState("");
+  const [model, setModel] = useState("");
+  const [cli, setCli] = useState("");
+  const [policy, setPolicy] = useState("");
+  const [budget, setBudget] = useState("");
+  const [goalTurns, setGoalTurns] = useState("");
+  const [answerWait, setAnswerWait] = useState("");
+  const [models, setModels] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    cliSettings()
+      .then((s) => setModels(Object.fromEntries(Object.entries(s.vendors).map(([v, x]) => [v, x.model]))))
+      .catch(() => {});
+  }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,6 +87,12 @@ export default function NewTask({
         account: account && onlyThat ? account : undefined,
         worktree,
         name: name.trim() || undefined,
+        model: model.trim() || undefined,
+        cli: cli || undefined,
+        policy: policy || undefined,
+        budget: budget.trim() || undefined,
+        goal_turns: goal.trim() && Number(goalTurns) > 0 ? Number(goalTurns) : undefined,
+        answer_wait: answerWait || undefined,
       });
       setTask("");
       setAttach([]);
@@ -80,12 +104,37 @@ export default function NewTask({
     }
   };
 
-  const options = [mode, plan, goal.trim(), account, worktree, name.trim()].filter(Boolean).length;
+  const options = [mode, plan, goal.trim(), account, worktree, name.trim(), model.trim(), cli, policy, budget.trim(), answerWait].filter(Boolean).length;
+  // Where it would start: the account picked here, else the one the next run would use.
+  const starts = account ? status?.accounts.find((a) => a.name === account) ?? null : nextAccount(status);
+  const startModel = model.trim() || (starts ? models[starts.vendor] : null);
   const folderName = folder.split("/").filter(Boolean).pop();
   return (
     <div className="page new-task">
-      <h2 className="page-title">What should the agent do?</h2>
-      <p className="muted">It works in the background, on whichever account has room, and keeps going if you close this window.</p>
+      <h2 className="page-title">What's on your mind?</h2>
+      <p className="start-line">
+        {starts ? (
+          <>
+            <span className={`level-${(roomLeft(starts) ?? 1) <= 0.05 ? "full" : (roomLeft(starts) ?? 1) <= 0.2 ? "high" : "ok"}`}>
+              <Ring left={roomLeft(starts)} />
+            </span>
+            <span>
+              Starts on <b>{starts.name}</b>
+            </span>
+            <span className="dot-sep">{VENDORS[starts.vendor] ?? starts.vendor}</span>
+            <span className="dot-sep">{startModel || "default model"}</span>
+            {starts.windows.map((w) => (
+              <span key={w.window} className="dot-sep">
+                {windowName(w.window)} {w.used == null ? "?" : `${Math.round((1 - w.used) * 100)}% left`}
+              </span>
+            ))}
+          </>
+        ) : status?.next.action === "no_accounts" ? (
+          <span>Add an account first: Accounts in the limits menu at the top.</span>
+        ) : (
+          <span className="muted">It works in the background and keeps going if you close this window.</span>
+        )}
+      </p>
 
       <div className="task-card">
         {attach.length > 0 && (
@@ -105,9 +154,15 @@ export default function NewTask({
           autoFocus
           rows={4}
           value={task}
-          placeholder="e.g. Fix the failing login tests and explain what was wrong"
+          placeholder="e.g. Fix the failing login tests and explain what was wrong (paste screenshots here too)"
           onChange={(e) => setTask(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && ready && !busy && go()}
+          onPaste={(e) =>
+            pastedImages(e)?.then(
+              (paths) => setAttach((a) => [...a, ...paths]),
+              (err) => setError(String(err)),
+            )
+          }
         />
         <div className="task-bar">
           <Menu
@@ -132,11 +187,6 @@ export default function NewTask({
           </button>
         </div>
       </div>
-      {folder && (
-        <p className="folder-line muted small" title={folder}>
-          <Icon name="folder" size={12} /> {tilde(folder)}
-        </p>
-      )}
 
       {more && (
         <div className="options">
@@ -167,6 +217,44 @@ export default function NewTask({
           <Field label="Name">
             <input value={name} placeholder="e.g. login fix" onChange={(e) => setName(e.target.value)} />
           </Field>
+          <Field label="Agent">
+            <select value={cli} onChange={(e) => setCli(e.target.value)}>
+              <option value="">Any (recommended)</option>
+              {Object.entries(VENDORS).map(([v, l]) => (
+                <option key={v} value={v}>
+                  Only {l}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Model">
+            <input value={model} placeholder={(starts && models[starts.vendor]) || "The agent's default"} onChange={(e) => setModel(e.target.value)} />
+          </Field>
+          <Field label="Choosing accounts">
+            <select value={policy} onChange={(e) => setPolicy(e.target.value)}>
+              <option value="">My usual setting</option>
+              <option value="drain">Use one up before the next</option>
+              <option value="balance">Spread use evenly</option>
+              <option value="save-weekly">Save weekly limits</option>
+            </select>
+          </Field>
+          <Field label="Token budget" hint="It stops at a clean point once this is used.">
+            <input value={budget} placeholder="No limit, or e.g. 500k" onChange={(e) => setBudget(e.target.value)} />
+          </Field>
+          <Field label="If I don't answer, go on after">
+            <select value={answerWait} onChange={(e) => setAnswerWait(e.target.value)}>
+              <option value="">Usual: questions wait, approvals 30 min</option>
+              <option value="2m">2 minutes</option>
+              <option value="10m">10 minutes</option>
+              <option value="30m">30 minutes</option>
+              <option value="2h">2 hours</option>
+            </select>
+          </Field>
+          {goal.trim() && (
+            <Field label="Turns toward the goal">
+              <input type="number" min={1} value={goalTurns} placeholder="10" onChange={(e) => setGoalTurns(e.target.value)} />
+            </Field>
+          )}
           <div className="switches">
             <Switch checked={plan} onChange={setPlan} label="Show me a plan first" hint="Nothing changes until you approve it." />
             <Switch checked={worktree} onChange={setWorktree} label="Work on a separate copy" hint="Its own git branch, so it can't get in your way." />

@@ -18,6 +18,7 @@ import {
 import Accounts, { windowName } from "./Accounts";
 import Settings from "./Settings";
 import Usage from "./Usage";
+import Limits from "./Limits";
 import Conversation, { firstLine } from "./Conversation";
 import NewTask from "./NewTask";
 import { ago, heads, isWorking, nameOf, newest } from "./sessions";
@@ -33,13 +34,6 @@ const NOTICE_FOCUS_MS = 20_000;
 const STATUS_POLL_MS = 15_000;
 
 type Page = "sessions" | "accounts" | "usage" | "settings";
-const PAGES: [Page, string, string][] = [
-  ["sessions", "Tasks", "tasks"],
-  ["accounts", "Accounts", "people"],
-  ["usage", "Usage", "chart"],
-  ["settings", "Settings", "gear"],
-];
-
 /** The menu bar item: the fullest window of the account the next run would use, and one line per account. */
 function trayOf(st: Status, waiting: number): { title: string | null; lines: string[] } {
   const fullest = (a: Status["accounts"][number]) => Math.max(0, ...a.windows.map((w) => w.used ?? 0));
@@ -52,6 +46,14 @@ function trayOf(st: Status, waiting: number): { title: string | null; lines: str
   const pct = next && next.windows.length ? `${Math.round(fullest(next) * 100)}%` : null;
   const title = waiting > 0 ? `! ${waiting}${pct ? ` · ${pct}` : ""}` : pct;
   return { title, lines };
+}
+
+function Back({ onBack }: { onBack: () => void }) {
+  return (
+    <button className="link back" onClick={onBack}>
+      <Icon name="back" size={14} /> Tasks
+    </button>
+  );
 }
 
 /** Shown once on first launch; the header button opens it again. */
@@ -217,6 +219,19 @@ export default function App() {
     return () => clearInterval(t);
   }, [refresh]);
 
+  // The menu bar's Window and Settings items.
+  useEffect(() => {
+    const off = listen<string>("navigate", (e) => {
+      if (e.payload === "new") {
+        setPage("sessions");
+        setSelected("new");
+      } else if (["sessions", "accounts", "usage", "settings"].includes(e.payload)) setPage(e.payload as Page);
+    });
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
+
   // Notices from runs (D65): the Rust side shows the notification; here, refresh at once and
   // remember the run, so coming back to the window (a click on the notification) opens it.
   useEffect(() => {
@@ -279,15 +294,6 @@ export default function App() {
       <header>
         <Logo />
         <h1 title={info?.ok ? `CLI ${info.version}${info.bundled ? "" : " (installed)"}` : undefined}>anchorleg</h1>
-        {info?.ok && (
-          <nav className="tabs">
-            {PAGES.map(([p, label, icon]) => (
-              <button key={p} className={page === p ? "tab active" : "tab"} onClick={() => setPage(p)}>
-                <Icon name={icon} /> {label}
-              </button>
-            ))}
-          </nav>
-        )}
         <span className="spacer" />
         {requests.length > 0 && (
           <button
@@ -300,6 +306,7 @@ export default function App() {
             {requests.length} waiting for you
           </button>
         )}
+        {info?.ok && <Limits st={st} refreshing={refreshing} onRefresh={refreshQuota} onPage={setPage} />}
         {info?.bundled && (
           <button className="icon-text" onClick={() => setShowTerminal(true)} data-tip="Use anchorleg from the Terminal too">
             <Icon name="terminal" size={14} /> Terminal
@@ -317,14 +324,17 @@ export default function App() {
       ) : (
         page === "accounts" ? (
           <main>
+            <Back onBack={() => setPage("sessions")} />
             <Accounts status={st} list={list} refreshing={refreshing} onRefresh={refreshQuota} onChanged={() => loadAccounts()} />
           </main>
         ) : page === "usage" ? (
           <main>
+            <Back onBack={() => setPage("sessions")} />
             <Usage />
           </main>
         ) : page === "settings" ? (
           <main>
+            <Back onBack={() => setPage("sessions")} />
             <Settings onChanged={() => loadAccounts()} />
           </main>
         ) : (
@@ -337,7 +347,7 @@ export default function App() {
               </div>
             )}
             {selected === "new" ? (
-              <NewTask folder={folder} setFolder={setFolder} runs={runs ?? []} accounts={list ?? []} onStarted={started} />
+              <NewTask folder={folder} setFolder={setFolder} runs={runs ?? []} accounts={list ?? []} status={st} onStarted={started} />
             ) : (
               <Conversation
                 run={selected}

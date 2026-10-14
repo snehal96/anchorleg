@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { files, rename, send, shell, start, type Session } from "./api";
+import { pastedImages } from "./paste";
 import { Icon, Menu, Modal } from "./ui";
 
 /** Typed shortcuts for people who like them; every one is also a button or menu item. */
@@ -240,6 +241,12 @@ export default function Composer({
         placeholder={working ? "Write a message for the agent…" : "Reply to the agent…"}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKey}
+        onPaste={(e) =>
+          pastedImages(e)?.then(
+            (paths) => setAttach((a) => [...a, ...paths]),
+            (err) => setNote({ text: String(err), error: true }),
+          )
+        }
         disabled={busy}
       />
       <div className="composer-bar">

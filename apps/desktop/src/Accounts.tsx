@@ -1,9 +1,13 @@
 // Accounts and their quota (`anchorleg status --json` joined with `accounts list --json`), and
-// everything `anchorleg accounts set / add / rm / import-aliases` can change.
-import { useState } from "react";
+// everything `anchorleg accounts set / add / login / rm / import-aliases` can change.
+import { useEffect, useRef, useState } from "react";
 import {
+  accounts as listAccounts,
   addAccount,
+  cancelLogin,
   importAliases,
+  loginAccount,
+  loginInTerminal,
   removeAccount,
   setAccounts,
   type Account,
@@ -93,6 +97,7 @@ export default function Accounts({
           />
         ))}
       </div>
+      <SignIn existing={list.map((a) => a.name)} onAdded={onChanged} />
       <AddAccount run={run} />
     </div>
   );
@@ -197,7 +202,7 @@ function Meter({ w, stopAt, reserve }: { w: WindowStatus; stopAt?: number; reser
         <span className={`fill ${level}`} style={{ width: `${Math.min(100, pct)}%` }} />
         {limit < 1 && <span className="limit" style={{ left: `${limit * 100}%` }} />}
       </span>
-      <span className="meter-value mono">{w.used == null ? "?" : `${pct}%`}</span>
+      <span className="meter-value mono">{w.used == null ? "?" : `${pct}% used`}</span>
       {stale && <span className="muted small">read {ago(w.updated_at)} ago</span>}
     </span>
   );
@@ -265,6 +270,124 @@ function Editor({ s, a, onSet, onRemove }: { s: AccountStatus; a: Account | unde
   );
 }
 
+/** A new account in one step: a name, which agent, and the agent's own sign-in in the browser. */
+function SignIn({ existing, onAdded }: { existing: string[]; onAdded: () => void }) {
+  const [name, setName] = useState("");
+  const [vendor, setVendor] = useState("claude");
+  const [state, setState] = useState<"idle" | "waiting" | "done">("idle");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const clean = name.trim();
+  const bad = clean !== "" && !/^[A-Za-z0-9_-]+$/.test(clean) ? "Letters, digits, - and _ only" : existing.includes(clean) ? "That name is taken" : null;
+  const folder = `~/.${vendor === "codex" ? "codex" : vendor === "antigravity" ? "agy" : "claude"}-${clean || "name"}`;
+  // Antigravity signs in from its own screen in a Terminal window: watch for the account.
+  const [terminalFor, setTerminalFor] = useState<string | null>(null);
+  const added = useRef(onAdded);
+  added.current = onAdded;
+  useEffect(() => {
+    if (!terminalFor) return;
+    const started = Date.now();
+    const t = setInterval(async () => {
+      const list = await listAccounts().catch(() => null);
+      if (list?.some((a) => a.name === terminalFor)) {
+        clearInterval(t);
+        setTerminalFor(null);
+        setState("done");
+        setMsg(`Signed in. ${terminalFor} is ready and will be used when it has room.`);
+        setName("");
+        added.current();
+      } else if (Date.now() - started > 15 * 60_000) {
+        clearInterval(t);
+        setTerminalFor(null);
+        setState("idle");
+      }
+    }, 3000);
+    return () => clearInterval(t);
+  }, [terminalFor]);
+  const inTerminal = (n: string, v: string) => {
+    setError(null);
+    setMsg(null);
+    loginInTerminal(n, v).then(
+      () => (setState("waiting"), setTerminalFor(n)),
+      (e) => (setState("idle"), setError(String(e))),
+    );
+  };
+  const go = async () => {
+    if (vendor === "antigravity") return inTerminal(clean, vendor);
+    setState("waiting");
+    setError(null);
+    setMsg(null);
+    try {
+      const r = await loginAccount(clean, vendor);
+      setState("done");
+      setMsg(`Signed in. ${r.name} is ready and will be used when it has room.`);
+      setName("");
+      onAdded();
+    } catch (e) {
+      setState("idle");
+      if (String(e) !== "sign-in cancelled") setError(String(e));
+    }
+  };
+  return (
+    <section className="card sign-in">
+      <h3>Add an account</h3>
+      <p className="muted small">
+        Sign in to another subscription. It gets its own folder (<code>{folder}</code>) and the agent's own sign-in page opens in your browser. Your
+        login stays with the agent; anchorleg never sees it.
+      </p>
+      <div className="add-row">
+        <div className="segmented" role="radiogroup" aria-label="Agent">
+          {[
+            ["claude", "Claude Code"],
+            ["codex", "Codex"],
+            ["antigravity", "Antigravity"],
+          ].map(([v, l]) => (
+            <button key={v} role="radio" aria-checked={vendor === v} className={vendor === v ? "on" : ""} disabled={state === "waiting"} onClick={() => setVendor(v)}>
+              {l}
+            </button>
+          ))}
+        </div>
+        <input placeholder="Name, e.g. work" value={name} disabled={state === "waiting"} onChange={(e) => (setName(e.target.value), setState("idle"))} />
+        {state === "waiting" ? (
+          <button className="secondary" onClick={() => (terminalFor ? (setTerminalFor(null), setState("idle")) : cancelLogin())}>
+            Cancel
+          </button>
+        ) : (
+          <button className="primary" disabled={!clean || bad != null} onClick={go}>
+            Sign in…
+          </button>
+        )}
+      </div>
+      {bad && <p className="error small">{bad}</p>}
+      {state === "waiting" && terminalFor && (
+        <p className="sign-in-wait small">
+          <span className="spinner" /> A Terminal window opened with Antigravity: sign in there (it opens your browser), then quit agy. The account
+          shows up here by itself.
+        </p>
+      )}
+      {state === "waiting" && !terminalFor && (
+        <p className="sign-in-wait small">
+          <span className="spinner" /> Finish signing in in your browser, then come back here.{" "}
+          <button className="link" onClick={() => (cancelLogin(), inTerminal(clean, vendor))}>
+            Do it in Terminal instead
+          </button>
+        </p>
+      )}
+      {msg && <p className="ok small">{msg}</p>}
+      {error && (
+        <p className="error small">
+          {error}{" "}
+          {clean && (
+            <button className="link" onClick={() => inTerminal(clean, vendor)}>
+              Try in Terminal
+            </button>
+          )}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function AddAccount({ run }: { run: (f: () => Promise<unknown>) => Promise<void> }) {
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
@@ -272,9 +395,9 @@ function AddAccount({ run }: { run: (f: () => Promise<unknown>) => Promise<void>
   const [note, setNote] = useState<string | null>(null);
   return (
     <section className="card add-account">
-      <h3>Add an account</h3>
+      <h3>Add with a command</h3>
       <p className="muted small">
-        The command you'd type to run it, e.g. <code>CLAUDE_CONFIG_DIR=~/.claude-work claude</code> or <code>CODEX_HOME=~/.codex-2 codex</code>. For
+        For an account you already use from a terminal. The command you'd type to run it, e.g. <code>CLAUDE_CONFIG_DIR=~/.claude-work claude</code> or <code>CODEX_HOME=~/.codex-2 codex</code>. For
         a token from <code>claude setup-token</code>, use <code>anchorleg accounts add NAME --token-stdin</code> in a terminal; the token goes
         straight to the Keychain.
       </p>
