@@ -2,70 +2,53 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { files, rename, send, shell, start, type Session } from "./api";
+import { Icon, Menu, Modal } from "./ui";
 
-/** anchorleg's own slash commands; the rest go to the session's CLI as the message. */
+/** Typed shortcuts for people who like them; every one is also a button or menu item. */
 const OWN: [string, string][] = [
-  ["clear", "a new session in this folder"],
-  ["compact", "summarise the session to free context"],
-  ["fork", "<message>: a new session from this one's history"],
-  ["rename", "<name>: name this session"],
-  ["btw", "<question>: a side question; a read-only copy answers"],
-  ["review", "[fix] [notes]: review this session's changes on another account"],
-  ["rewind", "<run> <message>: go back to before that run, files too"],
-  ["goal", "<condition>: keep working until it holds"],
-  ["mode", "ask | edits | auto: how tool calls are approved from the next message"],
+  ["clear", "a new task in this folder"],
+  ["compact", "free up memory: summarise the conversation"],
+  ["fork", "<message>: try another direction in a new task"],
+  ["rename", "<name>: name this task"],
+  ["btw", "<question>: a side question"],
+  ["review", "[fix] [notes]: a second opinion from another account"],
+  ["rewind", "<run> <message>: go back to before that run"],
+  ["goal", "<condition>: keep going until it holds"],
 ];
-/** For a new session. */
-const NEW: [string, string][] = [
-  ["plan", "<task>: plan first; you approve the plan before it runs"],
-  ["goal", "<condition>: work until it holds"],
-  ["mode", "ask | edits | auto: how tool calls are approved"],
-];
-const MODES = ["ask", "edits", "auto"];
-
 const MAX_SUGGESTIONS = 8;
 
 /**
- * The message box. Without a session (`view` null) it starts one in `cwd`; with one, Enter
- * sends into it: `anchorleg send` while it works (queued for the end of the turn, or
- * interrupting it), a reply (`run --follow-up`) once it's done.
+ * The reply box of a task. Send replies (`run --follow-up`); while the agent works, a message
+ * waits for the end of its step (`send`) or stops it and goes in now (`send --interrupt`).
  */
 export default function Composer({
   view,
-  cwd,
-  seed,
+  mode,
+  onSent,
   onStarted,
   onNew,
   onSide,
 }: {
-  view: Session | null;
-  /** New sessions: the folder they run in. */
-  cwd?: string;
-  /** Text put in the box from elsewhere; a new `key` puts it again. */
-  seed?: { text: string; key: number } | null;
+  view: Session;
+  /** The approval setting for this message (`null`: the task's own). */
+  mode: string | null;
+  /** The message went: the one-off settings are used up. */
+  onSent: () => void;
   onStarted: (run: number) => void;
-  onNew?: (cwd: string) => void;
-  /** A side question was asked: show the answers. */
-  onSide?: () => void;
+  onNew: (cwd: string) => void;
+  onSide: () => void;
 }) {
   const [text, setText] = useState("");
-  // `!cmd` output waiting to go in front of the next message, as in `anchorleg ui`.
-  const [shellOut, setShellOut] = useState<string[]>([]);
-  // `/mode`: for the next run started from here.
-  const [mode, setMode] = useState<string | null>(null);
-  useEffect(() => {
-    if (seed) {
-      setText(seed.text);
-      box.current?.focus();
-    }
-  }, [seed?.key]);
   const [attach, setAttach] = useState<string[]>([]);
+  // Output of "Run a command", put in front of the next message, as `anchorleg ui` does with `!`.
+  const [shellOut, setShellOut] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
   const [pick, setPick] = useState(0);
+  const [dialog, setDialog] = useState<"mention" | "command" | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
-  const folder = view?.run.cwd ?? cwd ?? "";
-  const working = view?.working ?? false;
+  const folder = view.run.cwd;
+  const working = view.working;
 
   // Files dropped on the window go with the message.
   useEffect(() => {
@@ -78,32 +61,24 @@ export default function Composer({
     };
   }, []);
 
-  // `@` completions read the folder's files once per folder.
+  // `@` completions and "Mention a file" read the folder's files once per folder.
   const [list, setList] = useState<{ folder: string; files: string[] } | null>(null);
   const atWord = text.match(/(^|\s)@(\S*)$/);
+  const loadFiles = () => {
+    if (list?.folder !== folder) files(folder).then((f) => setList({ folder, files: f }), () => setList({ folder, files: [] }));
+  };
   useEffect(() => {
-    if (atWord && folder && list?.folder !== folder)
-      files(folder).then((f) => setList({ folder, files: f }), () => setList({ folder, files: [] }));
+    if (atWord) loadFiles();
   }, [atWord != null, folder]);
 
   const suggestions = useMemo((): [string, string][] => {
     const slash = text.match(/^\/(\S*)$/);
     if (slash) {
       const typed = slash[1].toLowerCase();
-      const own = (view ? OWN : NEW).map(([n, d]): [string, string] => [n, `anchorleg: ${d}`]);
-      const theirs = (view?.slash_commands ?? [])
-        .filter((c) => !OWN.some(([n]) => n === c))
-        .map((c): [string, string] => [c, ""]);
-      return [...own, ...theirs].filter(([n]) => n.toLowerCase().startsWith(typed)).slice(0, MAX_SUGGESTIONS);
+      const theirs = (view.slash_commands ?? []).filter((c) => !OWN.some(([n]) => n === c)).map((c): [string, string] => [c, "the agent's command"]);
+      return [...OWN, ...theirs].filter(([n]) => n.toLowerCase().startsWith(typed)).slice(0, MAX_SUGGESTIONS);
     }
-    if (atWord && list?.folder === folder) {
-      const typed = atWord[2].toLowerCase();
-      return list.files
-        .filter((f) => f.toLowerCase().includes(typed))
-        .sort((a, b) => Number(!a.toLowerCase().startsWith(typed)) - Number(!b.toLowerCase().startsWith(typed)))
-        .slice(0, MAX_SUGGESTIONS)
-        .map((f): [string, string] => [f, ""]);
-    }
+    if (atWord && list?.folder === folder) return match(list.files, atWord[2]).map((f): [string, string] => [f, ""]);
     return [];
   }, [text, view, atWord, list, folder]);
   useEffect(() => setPick(0), [suggestions.length]);
@@ -111,6 +86,10 @@ export default function Composer({
   const complete = (choice: string) => {
     if (text.startsWith("/")) setText(`/${choice} `);
     else setText(text.replace(/@\S*$/, `@${choice} `));
+    box.current?.focus();
+  };
+  const insert = (s: string) => {
+    setText((t) => (t && !t.endsWith(" ") && !t.endsWith("\n") ? `${t} ${s}` : `${t}${s}`));
     box.current?.focus();
   };
 
@@ -121,7 +100,7 @@ export default function Composer({
 
   const submit = async (interrupt = false) => {
     const t = text.trim();
-    if (busy || (!t && attach.length === 0)) return;
+    if (busy || (!t && attach.length === 0 && shellOut.length === 0)) return;
     setBusy(true);
     setNote(null);
     const done = (msg: string) => {
@@ -129,84 +108,67 @@ export default function Composer({
       setAttach([]);
       setNote({ text: msg });
     };
-    // What a run started from here sends: earlier `!cmd` output, then the message.
+    // What a message sends: earlier command output, then the message.
     const withShell = (msg: string) => (shellOut.length ? `${shellOut.join("\n\n")}\n\n${msg}` : msg);
     const sent = () => {
       setShellOut([]);
-      setMode(null);
+      onSent();
     };
     try {
       const [cmd, ...rest] = t.startsWith("/") ? t.slice(1).split(" ") : [""];
       const arg = rest.join(" ").trim();
       if (t.startsWith("!")) {
-        if (!folder) throw "choose a folder first";
         const command = t.slice(1).trim();
         const out = await shell(folder, command);
         setShellOut((o) => [...o, `$ ${command}\n${out}`]);
-        done("the output goes with your next message");
-      } else if (cmd === "mode") {
-        if (!MODES.includes(arg)) throw `/mode ${MODES.join(" | ")}`;
-        setMode(arg);
-        done(`mode ${arg} from the next message`);
-      } else if (!view) {
-        if (!folder) throw "choose a folder first";
-        const plan = cmd === "plan";
-        const goal = cmd === "goal" ? arg : undefined;
-        const task = plan ? arg : goal != null ? "" : t;
-        if (plan && !arg) throw "/plan <task>";
-        if (cmd === "goal" && !arg) throw "/goal <condition>";
-        const r = await start({ text: withShell(task), cwd: folder, attach, plan, goal, mode: mode ?? undefined });
-        sent();
-        done(`started #${r.run_id}`);
+        done("The output goes with your next message.");
+      } else if (cmd === "clear") {
+        done("");
+        onNew(folder);
+      } else if (cmd === "rename") {
+        await rename(view.run.id, arg);
+        done(arg ? `Named “${arg}”.` : "Name cleared.");
+      } else if (cmd === "fork") {
+        if (!arg) throw "/fork <message>";
+        const r = await start({ text: arg, fork: view.run.id, attach });
+        done(`Started a new task (#${r.run_id}).`);
         onStarted(r.run_id);
       } else if (cmd === "btw") {
         if (!arg) throw "/btw <question>";
         await start({ text: arg, btw: view.run.id });
-        done("asked a read-only copy; the session goes on untouched");
-        onSide?.();
+        done("Asked. The answer shows under Side questions.");
+        onSide();
       } else if (cmd === "review") {
-        if (working) throw "the session is working; review it once it's done";
+        if (working) throw "Wait until it finishes, or stop it first.";
         const fix = rest[0] === "fix";
-        const notes = (fix ? rest.slice(1) : rest).join(" ").trim();
-        const r = await start({ text: notes, review: view.run.id, fix });
-        done(`reviewing as #${r.run_id}`);
+        const r = await start({ text: (fix ? rest.slice(1) : rest).join(" ").trim(), review: view.run.id, fix });
+        done(`Review started (#${r.run_id}).`);
         onStarted(r.run_id);
       } else if (cmd === "rewind") {
         const id = Number((rest[0] ?? "").replace(/^#/, ""));
         const message = rest.slice(1).join(" ").trim();
-        if (!id || !message) throw "/rewind <run> <message>: the run to go back to before, and how to go on";
-        if (working) throw "the session is working; stop it first";
+        if (!id || !message) throw "/rewind <run> <message>";
+        if (working) throw "Wait until it finishes, or stop it first.";
         const r = await start({ text: withShell(message), rewind: id, attach });
         sent();
-        done(`went back to before #${id}; going on as #${r.run_id}`);
+        done(`Went back; going on as #${r.run_id}.`);
         onStarted(r.run_id);
       } else if (cmd === "goal") {
         if (!arg) throw "/goal <condition>";
-        if (working) throw "the session is working; set the goal once it's done";
+        if (working) throw "Wait until it finishes, or stop it first.";
         const r = await start({ text: "", follow_up: view.run.id, goal: arg, mode: mode ?? undefined });
         sent();
-        done(`working toward the goal as #${r.run_id}`);
-        onStarted(r.run_id);
-      } else if (cmd === "clear") {
-        done("");
-        onNew?.(folder);
-      } else if (cmd === "rename") {
-        await rename(view.run.id, arg);
-        done(arg ? `named “${arg}”` : "name cleared");
-      } else if (cmd === "fork") {
-        if (!arg) throw "/fork <message>: what the new session should do";
-        const r = await start({ text: arg, fork: view.run.id, attach });
-        done(`forked into #${r.run_id}`);
+        done("Working toward the goal.");
         onStarted(r.run_id);
       } else if (working) {
-        if (cmd === "compact") throw "the session is working; /compact once it's done";
+        if (cmd === "compact") throw "Wait until it finishes, or stop it first.";
         await send(view.run.id, withShell(t), interrupt, attach);
         sent();
-        done(interrupt ? "interrupting; sent" : "sent; it goes in when the turn ends");
+        done(interrupt ? "Stopping the current step; your message goes in now." : "Sent. It goes in when the current step ends.");
       } else {
         const r = await start({ text: withShell(t), follow_up: view.run.id, attach, mode: mode ?? undefined });
         sent();
-        done(`replied as #${r.run_id}`);
+        done("");
         onStarted(r.run_id);
       }
     } catch (e) {
@@ -236,12 +198,8 @@ export default function Composer({
     }
   };
 
-  const placeholder = !view
-    ? "What should the agent do?  ·  /plan  /goal  /mode  ·  !command"
-    : working
-      ? "Message (goes in when the turn ends; ⌘⏎ interrupts)"
-      : "Reply  ·  / commands  ·  @ files  ·  !command";
-
+  const agentCommands = view.slash_commands ?? [];
+  const empty = !text.trim() && attach.length === 0 && shellOut.length === 0;
   return (
     <div className="composer">
       {suggestions.length > 0 && (
@@ -254,32 +212,21 @@ export default function Composer({
           ))}
         </ul>
       )}
-      {(shellOut.length > 0 || mode) && (
+      <div className="composer-box">
+      {(attach.length > 0 || shellOut.length > 0) && (
         <div className="chips">
-          {shellOut.map((o, i) => (
-            <span key={i} className="chip mono" title={o}>
-              {o.split("\n")[0]}
-              <button className="link" onClick={() => setShellOut(shellOut.filter((_, j) => j !== i))} aria-label="Remove">
+          {attach.map((p) => (
+            <span key={p} className="chip" title={p}>
+              <Icon name="clip" size={12} /> {p.split("/").pop()}
+              <button className="link" onClick={() => setAttach(attach.filter((x) => x !== p))} aria-label="Remove">
                 ×
               </button>
             </span>
           ))}
-          {mode && (
-            <span className="chip">
-              mode {mode}
-              <button className="link" onClick={() => setMode(null)} aria-label="Remove">
-                ×
-              </button>
-            </span>
-          )}
-        </div>
-      )}
-      {attach.length > 0 && (
-        <div className="chips">
-          {attach.map((p) => (
-            <span key={p} className="chip mono" title={p}>
-              {p.split("/").pop()}
-              <button className="link" onClick={() => setAttach(attach.filter((x) => x !== p))} aria-label="Remove">
+          {shellOut.map((o, i) => (
+            <span key={i} className="chip mono" title={o}>
+              <Icon name="terminal" size={12} /> {o.split("\n")[0].slice(2)}
+              <button className="link" onClick={() => setShellOut(shellOut.filter((_, j) => j !== i))} aria-label="Remove">
                 ×
               </button>
             </span>
@@ -290,27 +237,132 @@ export default function Composer({
         ref={box}
         rows={Math.min(8, Math.max(2, text.split("\n").length))}
         value={text}
-        placeholder={placeholder}
+        placeholder={working ? "Write a message for the agent…" : "Reply to the agent…"}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKey}
         disabled={busy}
       />
       <div className="composer-bar">
-        <button className="link" onClick={attachFiles} title="Attach files (or drop them on the window)">
-          Attach…
+        <button className="icon-text" onClick={attachFiles} title="Send files with your message (or drop them on the window)">
+          <Icon name="clip" /> Attach
         </button>
-        <span className={note?.error ? "error" : "muted"}>{note?.text}</span>
+        <button className="icon-text" onClick={() => (loadFiles(), setDialog("mention"))} title="Point the agent at a file in the project">
+          <Icon name="file" /> Mention a file
+        </button>
+        <button className="icon-text" onClick={() => setDialog("command")} title="Run a command in the project folder and send its output with your message">
+          <Icon name="terminal" /> Run a command
+        </button>
+        {agentCommands.length > 0 && (
+          <Menu label="Agent commands" align="left" items={agentCommands.slice(0, 30).map((c) => ({ label: `/${c}`, onClick: () => setText(`/${c} `) }))} />
+        )}
+        <span className={`composer-note ${note?.error ? "error" : "muted"}`}>{note?.text}</span>
         <span className="spacer" />
-        {working && (
-          <button className="secondary" disabled={busy || !text.trim()} onClick={() => submit(true)}>
-            Interrupt &amp; send
+        {working ? (
+          <>
+            <button className="secondary" disabled={busy || empty} onClick={() => submit(false)} title="Your message goes in when the current step ends">
+              Send after this step
+            </button>
+            <button className="primary" disabled={busy || empty} onClick={() => submit(true)} title="Stop what the agent is doing and send your message now (⌘⏎)">
+              Stop and send now
+            </button>
+          </>
+        ) : (
+          <button className="primary" disabled={busy || empty} onClick={() => submit()}>
+            <Icon name="send" /> Send
           </button>
         )}
-        <button disabled={busy || (!text.trim() && attach.length === 0)} onClick={() => submit()}>
-          {!view ? "Start" : working ? "Queue" : "Send"}
+      </div>
+      </div>
+      {dialog === "mention" && (
+        <MentionDialog
+          files={list?.folder === folder ? list.files : null}
+          onClose={() => setDialog(null)}
+          onPick={(f) => {
+            insert(`@${f} `);
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog === "command" && (
+        <CommandDialog
+          folder={folder}
+          onClose={() => setDialog(null)}
+          onInclude={(o) => {
+            setShellOut((s) => [...s, o]);
+            setDialog(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function match(all: string[], typed: string): string[] {
+  const t = typed.toLowerCase();
+  return all
+    .filter((f) => f.toLowerCase().includes(t))
+    .sort((a, b) => Number(!a.toLowerCase().startsWith(t)) - Number(!b.toLowerCase().startsWith(t)))
+    .slice(0, MAX_SUGGESTIONS);
+}
+
+function MentionDialog({ files, onClose, onPick }: { files: string[] | null; onClose: () => void; onPick: (f: string) => void }) {
+  const [q, setQ] = useState("");
+  const found = files ? match(files, q) : [];
+  return (
+    <Modal title="Mention a file" onClose={onClose}>
+      <p className="muted small">The agent will look at this file. Start typing its name.</p>
+      <input autoFocus placeholder="e.g. login" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && found[0] && onPick(found[0])} />
+      <ul className="pick-list">
+        {!files && <li className="muted">Reading the project…</li>}
+        {files && found.length === 0 && <li className="muted">No file matches.</li>}
+        {found.map((f) => (
+          <li key={f}>
+            <button onClick={() => onPick(f)}>
+              <Icon name="file" size={13} /> {f}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Modal>
+  );
+}
+
+function CommandDialog({ folder, onClose, onInclude }: { folder: string; onClose: () => void; onInclude: (o: string) => void }) {
+  const [command, setCommand] = useState("");
+  const [out, setOut] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      setOut(await shell(folder, command.trim()));
+    } catch (e) {
+      setOut(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="Run a command" onClose={onClose} wide>
+      <p className="muted small">
+        Runs in the project folder (at most a minute) and shows you the output; you choose whether it goes to the agent with your next
+        message. The agent doesn't run it.
+      </p>
+      <div className="add-row">
+        <input className="mono grow" autoFocus placeholder="e.g. npm test" value={command} onChange={(e) => setCommand(e.target.value)} onKeyDown={(e) => e.key === "Enter" && command.trim() && run()} />
+        <button className="secondary" disabled={busy || !command.trim()} onClick={run}>
+          {busy ? "Running…" : "Run"}
         </button>
       </div>
-    </div>
+      {out != null && <pre className="command-out">{out || "(no output)"}</pre>}
+      <div className="modal-actions">
+        <button className="secondary" onClick={onClose}>
+          Close
+        </button>
+        <button className="primary" disabled={out == null} onClick={() => out != null && onInclude(`$ ${command.trim()}\n${out}`)}>
+          Include with my next message
+        </button>
+      </div>
+    </Modal>
   );
 }
 

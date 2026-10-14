@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   accounts,
   cliInfo,
@@ -17,12 +16,13 @@ import {
   type Status,
 } from "./api";
 import Accounts, { windowName } from "./Accounts";
-import Composer from "./Composer";
 import Settings from "./Settings";
 import Usage from "./Usage";
-import Conversation from "./Conversation";
-import { ago, heads, isWorking, nameOf, newest, tilde } from "./sessions";
+import Conversation, { firstLine } from "./Conversation";
+import NewTask from "./NewTask";
+import { ago, heads, isWorking, nameOf, newest } from "./sessions";
 import TerminalCard from "./TerminalCard";
+import { Icon } from "./ui";
 
 const POLL_MS = 2000;
 const TERMINAL_SEEN = "terminal-card-seen";
@@ -33,11 +33,11 @@ const NOTICE_FOCUS_MS = 20_000;
 const STATUS_POLL_MS = 15_000;
 
 type Page = "sessions" | "accounts" | "usage" | "settings";
-const PAGES: [Page, string][] = [
-  ["sessions", "Sessions"],
-  ["accounts", "Accounts"],
-  ["usage", "Usage"],
-  ["settings", "Settings"],
+const PAGES: [Page, string, string][] = [
+  ["sessions", "Tasks", "tasks"],
+  ["accounts", "Accounts", "people"],
+  ["usage", "Usage", "chart"],
+  ["settings", "Settings", "gear"],
 ];
 
 /** The menu bar item: the fullest window of the account the next run would use, and one line per account. */
@@ -106,8 +106,6 @@ function Setup({ info }: { info: CliInfo }) {
   );
 }
 
-const MARK: Record<string, string> = { done: "✓", failed: "✗", stopped: "■" };
-
 function Sidebar({
   runs,
   waiting,
@@ -122,64 +120,54 @@ function Sidebar({
   selected: number | "new";
   onSelect: (s: number | "new") => void;
 }) {
+  const [q, setQ] = useState("");
+  const list = runs ? heads(runs) : [];
+  const shown = q.trim()
+    ? list.filter((r) => `${nameOf(runs ?? [], r) ?? ""} ${r.task} ${r.cwd}`.toLowerCase().includes(q.trim().toLowerCase()))
+    : list;
   return (
     <nav className="sidebar">
-      <button className={`item new ${selected === "new" ? "selected" : ""}`} onClick={() => onSelect("new")}>
-        + New session
-      </button>
+      <div className="sidebar-top">
+        <button className={`primary new-task-button ${selected === "new" ? "selected" : ""}`} onClick={() => onSelect("new")}>
+          <Icon name="plus" /> New task
+        </button>
+        {list.length > 5 && (
+          <div className="search">
+            <Icon name="search" size={13} />
+            <input placeholder="Search tasks" value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+        )}
+      </div>
       {error && <p className="error pad">{error}</p>}
       {!runs && !error && <p className="muted pad">Loading…</p>}
-      {runs && runs.length === 0 && <p className="muted pad">No sessions yet.</p>}
-      {runs &&
-        heads(runs).map((r) => {
-          const working = isWorking(r);
-          return (
-            <button
-              key={r.id}
-              className={`item ${selected === r.id ? "selected" : ""}`}
-              onClick={() => onSelect(r.id)}
-              title={`${r.task}\n\n${r.cwd}`}
-            >
-              <span className={`mark state-${working ? "running" : r.state}`}>
-                {waiting.has(r.id) ? <span className="waiting-badge">!</span> : working ? <span className="spinner" /> : (MARK[r.state] ?? "●")}
+      {runs && list.length === 0 && <p className="muted pad">Your tasks show up here.</p>}
+      {shown.map((r) => {
+        const working = isWorking(r);
+        const needs = waiting.has(r.id);
+        const [cls, word] = needs
+          ? ["waiting", "Needs you"]
+          : working
+            ? ["running", "Working"]
+            : r.state === "failed"
+              ? ["failed", "Failed"]
+              : r.state === "done"
+                ? ["done", "Done"]
+                : ["stopped", "Stopped"];
+        return (
+          <button key={r.id} className={`item ${selected === r.id ? "selected" : ""}`} onClick={() => onSelect(r.id)} title={`${r.task}\n\n${r.cwd}`}>
+            <span className="item-text">
+              <span className="item-title">{nameOf(runs ?? [], r) ?? firstLine(r.task)}</span>
+              <span className="item-meta muted">
+                <span className={`pill pill-${cls} small-pill`}>
+                  {working && !needs && <span className="spinner" />} {word}
+                </span>{" "}
+                {r.cwd.split("/").filter(Boolean).pop()} · {ago(r.started_at)} ago
               </span>
-              <span className="item-text">
-                <span className="item-title">{nameOf(runs, r) ?? r.task.replace(/\s+/g, " ")}</span>
-                <span className="item-meta muted">
-                  #{r.id} · {tilde(r.cwd).split("/").pop()} · {ago(r.started_at)}
-                </span>
-              </span>
-            </button>
-          );
-        })}
-    </nav>
-  );
-}
-
-function NewSession({ folder, setFolder, onStarted }: { folder: string; setFolder: (f: string) => void; onStarted: (run: number) => void }) {
-  const choose = async () => {
-    const picked = await open({ directory: true, defaultPath: folder || undefined });
-    if (typeof picked === "string") setFolder(picked);
-  };
-  return (
-    <div className="pane">
-      <div className="pane-head">
-        <h2>New session</h2>
-        <div className="folder">
-          <input className="mono" value={folder} placeholder="/path/to/project" onChange={(e) => setFolder(e.target.value)} />
-          <button className="secondary" onClick={choose}>
-            Choose…
+            </span>
           </button>
-        </div>
-      </div>
-      <div className="conversation">
-        <p className="muted">
-          The session runs in the background as <code>anchorleg run</code>, on the account the policy picks, and keeps going if
-          you close the app.
-        </p>
-      </div>
-      <Composer view={null} cwd={folder} onStarted={onStarted} />
-    </div>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -290,23 +278,17 @@ export default function App() {
     <div className="app">
       <header>
         <Logo />
-        <h1>anchorleg</h1>
+        <h1 title={info?.ok ? `CLI ${info.version}${info.bundled ? "" : " (installed)"}` : undefined}>anchorleg</h1>
         {info?.ok && (
           <nav className="tabs">
-            {PAGES.map(([p, label]) => (
+            {PAGES.map(([p, label, icon]) => (
               <button key={p} className={page === p ? "tab active" : "tab"} onClick={() => setPage(p)}>
-                {label}
+                <Icon name={icon} /> {label}
               </button>
             ))}
           </nav>
         )}
         <span className="spacer" />
-        {info?.ok && (
-          <span className="muted mono">
-            CLI {info.version}
-            {!info.bundled && " (installed)"}
-          </span>
-        )}
         {requests.length > 0 && (
           <button
             className="waiting-count"
@@ -319,8 +301,8 @@ export default function App() {
           </button>
         )}
         {info?.bundled && (
-          <button className="link" onClick={() => setShowTerminal(true)}>
-            Use in Terminal
+          <button className="icon-text" onClick={() => setShowTerminal(true)} data-tip="Use anchorleg from the Terminal too">
+            <Icon name="terminal" size={14} /> Terminal
           </button>
         )}
       </header>
@@ -355,7 +337,7 @@ export default function App() {
               </div>
             )}
             {selected === "new" ? (
-              <NewSession folder={folder} setFolder={setFolder} onStarted={started} />
+              <NewTask folder={folder} setFolder={setFolder} runs={runs ?? []} accounts={list ?? []} onStarted={started} />
             ) : (
               <Conversation
                 run={selected}

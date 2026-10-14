@@ -57,6 +57,12 @@ struct Start {
     goal: Option<String>,
     mode: Option<String>,
     plan: bool,
+    /// Start on this account (`--prefer`), or use only it (`--account`).
+    prefer: Option<String>,
+    account: Option<String>,
+    /// In a git worktree of its own.
+    worktree: bool,
+    name: Option<String>,
     attach: Vec<String>,
 }
 
@@ -76,6 +82,9 @@ impl Start {
         opt("--review", self.review.map(|i| i.to_string()));
         opt("--goal", self.goal);
         opt("--mode", self.mode);
+        opt("--prefer", self.prefer);
+        opt("--account", self.account);
+        opt("--name", self.name);
         for f in self.attach {
             args.extend(["--attach".into(), f]);
         }
@@ -87,6 +96,10 @@ impl Start {
         }
         if self.plan {
             args.push("--plan".into());
+        }
+        // Last: `--worktree` takes an optional name, and `--` ends it.
+        if self.worktree {
+            args.push("--worktree".into());
         }
         args.extend(["--".into(), self.text]);
         args
@@ -284,6 +297,28 @@ mod tests {
             s.args(),
             [
                 "run", "--detach", "--json", "--btw", "4", "--attach", "/a b", "--", "-why?"
+            ]
+        );
+        let s: Start = serde_json::from_str(
+            r#"{"text":"t","cwd":"/p","plan":true,"worktree":true,"prefer":"work","name":"n"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.args(),
+            [
+                "run",
+                "--detach",
+                "--json",
+                "--cwd",
+                "/p",
+                "--prefer",
+                "work",
+                "--name",
+                "n",
+                "--plan",
+                "--worktree",
+                "--",
+                "t"
             ]
         );
         let s: Start =

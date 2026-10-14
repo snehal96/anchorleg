@@ -84,6 +84,12 @@ export interface Start {
   goal?: string;
   mode?: string;
   plan?: boolean;
+  /** Start on this account; `account`: use only it. */
+  prefer?: string;
+  account?: string;
+  /** Work in a git worktree of its own. */
+  worktree?: boolean;
+  name?: string;
   attach?: string[];
 }
 /** `anchorleg run --detach --json`: returns once the run has an id. */

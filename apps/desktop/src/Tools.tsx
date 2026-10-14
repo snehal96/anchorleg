@@ -26,7 +26,7 @@ export default function Tools({
     <aside className="tools">
       <div className="tools-head">
         <button className={tab === "changes" ? "tab active" : "tab"} onClick={() => onTab("changes")}>
-          Changes
+          Changed files
         </button>
         <button className={tab === "side" ? "tab active" : "tab"} onClick={() => onTab("side")}>
           Side questions{side.length ? ` (${side.length})` : ""}
@@ -80,41 +80,41 @@ function Changes({ view, onStarted }: { view: Session; onStarted: (run: number) 
         <button
           className="secondary small"
           disabled={busy || working}
-          title={working ? "Stop the session first" : "Put the files back as they were when the session started"}
+          title={working ? "Stop the task first" : "Put the files back as they were when the task started"}
           onClick={() => act(async () => setPreview((await undo(run, "preview")).preview ?? null))}
         >
-          Undo…
+          Undo changes…
         </button>
         <button className="secondary small" disabled={busy || working} title="Bring back what the last undo put back" onClick={() => act(async () => (setNote((await undo(run, "redo")).done ?? null), await load()))}>
-          Redo
+          Bring changes back
         </button>
         <span className="spacer" />
         <button
           className="secondary small"
           disabled={busy || working}
-          title="A read-only review of these changes on another account"
+          title="Another account looks over these changes without editing anything"
           onClick={() => act(async () => onStarted((await start({ text: "", review: run })).run_id))}
         >
-          Review
+          Second opinion
         </button>
         <button
           className="secondary small"
           disabled={busy || working}
-          title="Review, then send the findings back to this session"
+          title="Get a second opinion, then have this task fix what it finds"
           onClick={() => act(async () => onStarted((await start({ text: "", review: run, fix: true })).run_id))}
         >
-          Review &amp; fix
+          Second opinion &amp; fix
         </button>
       </div>
       {preview !== undefined && (
         <div className="request">
           {preview == null ? (
-            <p className="muted">No changes since the session started.</p>
+            <p className="muted">No files have changed since the task started.</p>
           ) : (
             <>
-              <div className="request-title">Put these files back as they were when the session started?</div>
+              <div className="request-title">Put these files back as they were when the task started?</div>
               <pre className="diff">{preview}</pre>
-              <p className="muted small">A backup is kept: Redo brings the changes back. The agent isn't told; say so in your next message.</p>
+              <p className="muted small">A backup is kept: “Bring changes back” restores them. The agent isn't told; say so in your next message.</p>
               <div className="request-actions">
                 <button className="danger" disabled={busy} onClick={() => act(async () => (setNote((await undo(run, "undo")).done ?? null), setPreview(undefined), await load()))}>
                   Undo the changes
@@ -129,7 +129,7 @@ function Changes({ view, onStarted }: { view: Session; onStarted: (run: number) 
       )}
       {note && <p className="ok small">{note}</p>}
       {error && <p className="error small">{error}</p>}
-      {text != null && (text.trim() === "" || text.startsWith("no changes") ? <p className="muted">No changes since the session started.</p> : <Diff text={text} />)}
+      {text != null && (text.trim() === "" || text.startsWith("no changes") ? <p className="muted">No files have changed since the task started.</p> : <Diff text={text} />)}
     </div>
   );
 }

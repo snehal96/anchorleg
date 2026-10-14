@@ -47,9 +47,7 @@ function ToolCall({ r, busy, run }: Act) {
   const say = (a: string) => run(() => answer(r.id, [a]));
   return (
     <>
-      <div className="request-title">
-        Allow <span className="mono">{r.summary ?? r.tool}</span>?
-      </div>
+      <div className="request-title">The agent wants to {intent(r.summary ?? r.tool)}</div>
       {r.reason && <div className="muted small">{r.reason}</div>}
       {r.preview && r.preview.length > 0 && (
         <pre className="diff">
@@ -61,19 +59,19 @@ function ToolCall({ r, busy, run }: Act) {
         </pre>
       )}
       <div className="request-actions">
-        <button disabled={busy} onClick={() => say("yes")}>
-          Yes
+        <button className="primary" disabled={busy} onClick={() => say("yes")}>
+          Allow
         </button>
-        <button className="secondary" disabled={busy} onClick={() => say("always")} title="This tool, for the rest of this session">
-          Yes, this session
+        <button className="secondary" disabled={busy} onClick={() => say("always")} title="Don't ask again about this kind of step in this task">
+          Allow for this task
         </button>
         {r.rule && (
-          <button className="secondary" disabled={busy} onClick={() => say("rule")} title="Saved as a lasting rule for every session">
-            Always <span className="mono small">{r.rule}</span>
+          <button className="secondary" disabled={busy} onClick={() => say("rule")} title={`Saved as a lasting rule for every task: ${r.rule}`}>
+            Always allow
           </button>
         )}
         <button className="danger" disabled={busy} onClick={() => say("no")}>
-          No
+          Don't allow
         </button>
       </div>
     </>
@@ -94,7 +92,7 @@ function Questions({ r, busy, run }: Act) {
     );
   return (
     <>
-      <div className="request-title">The agent asks</div>
+      <div className="request-title">The agent has a question</div>
       {qs.map((q, i) => (
         <fieldset key={q.id} className="question">
           <legend>
@@ -134,11 +132,11 @@ function Questions({ r, busy, run }: Act) {
         </fieldset>
       ))}
       <div className="request-actions">
-        <button disabled={busy || !ready} onClick={() => run(() => answer(r.id, qs.map(toAnswer)))}>
-          Answer
+        <button className="primary" disabled={busy || !ready} onClick={() => run(() => answer(r.id, qs.map(toAnswer)))}>
+          Send answer
         </button>
-        <button className="secondary" disabled={busy} onClick={() => run(() => answer(r.id, [], true))} title="The agent is told you didn't answer">
-          Skip
+        <button className="secondary" disabled={busy} onClick={() => run(() => answer(r.id, [], true))} title="The agent is told you didn't answer and decides itself">
+          Let the agent decide
         </button>
       </div>
     </>
@@ -152,11 +150,12 @@ function Plan({ r, busy, run }: Act) {
   const edited = text.trim() !== original.trim();
   return (
     <>
-      <div className="request-title">Approve the plan?</div>
+      <div className="request-title">The plan is ready. Approve it?</div>
+      <p className="muted small">Nothing has changed yet. You can edit the plan below before approving it.</p>
       <textarea className="plan" value={text} rows={Math.min(16, Math.max(4, text.split("\n").length))} disabled={busy} onChange={(e) => setText(e.target.value)} />
       <div className="request-actions">
-        <button disabled={busy} onClick={() => run(() => (edited ? approvePlan(r.id, text) : answer(r.id, ["Approve"])))}>
-          {edited ? "Approve as edited" : "Approve"}
+        <button className="primary" disabled={busy} onClick={() => run(() => (edited ? approvePlan(r.id, text) : answer(r.id, ["Approve"])))}>
+          {edited ? "Approve my version" : "Approve and start"}
         </button>
         <input
           className="own-words"
@@ -167,7 +166,7 @@ function Plan({ r, busy, run }: Act) {
           onKeyDown={(e) => e.key === "Enter" && changes.trim() && run(() => answer(r.id, [changes.trim()]))}
         />
         <button className="secondary" disabled={busy} onClick={() => run(() => answer(r.id, [changes.trim() || "Keep planning"]))}>
-          {changes.trim() ? "Send changes" : "Keep planning"}
+          {changes.trim() ? "Ask for these changes" : "Keep planning"}
         </button>
       </div>
     </>
@@ -189,4 +188,25 @@ function Countdown({ deadline }: { deadline: number | null }) {
       {left === 0 ? "timing out" : `answer within ${m > 0 ? `${m}m ` : ""}${left % 60}s`}
     </span>
   );
+}
+
+/** `Write  src/a.rs` → "create src/a.rs". */
+function intent(what: string): string {
+  const [tool, ...rest] = what.split("  ");
+  const detail = rest.join("  ").trim();
+  const verb: Record<string, string> = {
+    Bash: "run",
+    Write: "create",
+    Edit: "change",
+    MultiEdit: "change",
+    NotebookEdit: "change",
+    Read: "read",
+    WebFetch: "open",
+    WebSearch: "search the web for",
+    Permissions: "get more access:",
+  };
+  const v = verb[tool];
+  if (v) return `${v} ${detail}`;
+  if (tool.startsWith("mcp__")) return `use ${tool.split("__").slice(1).join(" ")}${detail ? ` (${detail})` : ""}`;
+  return what;
 }
