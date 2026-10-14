@@ -1,0 +1,42 @@
+crates/anchorleg-core/src/task_options.rs
+  s_24d456e49210ef::t_454f68c2cc5544 1-290
+  s_24d456e49210ef::t_d04f046cd82f34 291-310
+CHANGELOG.md
+  s_24d456e49210ef::t_c42e08e95d4bc1 10-16
+README.md
+  s_24d456e49210ef::t_258e0012e6b898 84-86
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_24d456e49210ef::t_29a6c24bcde229 70-73,160-165,1653-1654
+crates/anchorleg-core/src/lib.rs
+  s_24d456e49210ef::t_bc7879e4a83ab2 22
+crates/anchorleg-core/src/store.rs
+  s_24d456e49210ef::t_0b7ca930a1a9d6 257-260,263-271,291,415-417,739-746
+crates/anchorleg-core/src/supervisor.rs
+  s_24d456e49210ef::t_dbf4b346a8474c 29,118-119,239,497-499,1345-1355,1357-1367,1391-1394,1431-1435,1438,1489-1493,1530-1531
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_9150cbc86ab743 390-403,409-454
+crates/anchorleg/src/run.rs
+  s_24d456e49210ef::t_b889f6ccb5288b 15-17,361-379,891-944
+crates/anchorleg/tests/fake/fake-codex.py
+  s_24d456e49210ef::t_a9cdf40243c41b 15,161-162
+crates/anchorleg/tests/run.rs
+  s_24d456e49210ef::t_8004fdb5120dea 2950-3053
+docs/CLI.md
+  s_24d456e49210ef::t_963e9db776b8fd 42,484-509
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f4af9ba4696fc83f95f5ec27a24222a0ed5b9877",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
