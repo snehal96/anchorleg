@@ -1,9 +1,9 @@
 <h1 align="center"><img src="docs/images/logo.svg" alt="anchorleg" width="400"></h1>
 
 <p align="center">
-  <b>Keep your coding agents working when an account hits its limit.</b><br>
+  <b>Keep your coding agents working when you hit your limit, without paying for extra usage.</b><br>
   A session manager for Claude Code and Codex (Antigravity coming) that pauses a task at a clean point
-  when an account runs low and continues it on another of your accounts.
+  when an account runs low and continues it on your other subscription or account.
 </p>
 
 <p align="center">
@@ -17,8 +17,17 @@
 ---
 
 Long agent runs die at the worst moment: the 5-hour window fills up at 92% of the work, or the
-weekly limit lands mid-refactor. If you have more than one account, you end up copying context
-by hand and starting over.
+weekly limit lands mid-refactor. Then you either pay for extra usage, metered, which adds up fast
+on long runs, or you copy the context by hand to another tool or account and start over.
+
+**Who it's for**
+
+- **One Claude subscription and a big extra-usage bill.** Add a ChatGPT plan next to it. When
+  Claude runs low, anchorleg continues the task on Codex from a handoff, and it never spends usage
+  credits unless you allow it. A flat monthly plan instead of open-ended overage, and `anchorleg
+  usage` shows what each account costs you.
+- **Several accounts already** (work and personal, Claude and ChatGPT). anchorleg watches all
+  of them and moves the task to whichever has room.
 
 `anchorleg` does that for you. It starts the official CLI (`claude`, `codex` or `agy`) headless,
 watches every account's quota, and when one gets close to its limit it:
@@ -406,6 +415,12 @@ Claude subscription and a ChatGPT one are separate products, and continuing a ta
 when Claude runs low is just using both. Several accounts of the same provider are your call:
 read that provider's terms (Anthropic's, for example, forbid sharing an account with anyone
 else). Don't use anchorleg to share accounts.
+
+**I have one Claude account and my extra-usage bill is high. Will anchorleg help?** Yes, two
+ways. By default it never spends credits: when a run starts paying, anchorleg stops it at a clean
+point. And with a second provider's plan (ChatGPT for Codex), the task continues there instead
+of on credits. `anchorleg usage` shows the cost per account so you can compare. We don't suggest
+opening more accounts with the same provider to get around its limits.
 
 **What about usage credits / extra usage?** Never spent unless you allow it per account
 (`--credits last-resort` or `allow`); by default anchorleg stops a launch that starts paying.
