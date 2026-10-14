@@ -177,8 +177,8 @@ version. Run it again to update; delete the binary to remove it.
 
 ```bash
 arch=$(dpkg --print-architecture)   # amd64 or arm64
-curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.6.1-1_${arch}.deb"
-sudo apt install "./anchorleg_0.6.1-1_${arch}.deb"
+curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.7.0-1_${arch}.deb"
+sudo apt install "./anchorleg_0.7.0-1_${arch}.deb"
 ```
 
 **Prebuilt binaries:** every [release](https://github.com/snehal96/anchorleg/releases/latest)
