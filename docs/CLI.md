@@ -23,7 +23,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg policy [drain\|balance\|save-weekly]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
-| `anchorleg sessions [--json] [--limit N]` | works |
+| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
 | `anchorleg rules [--add RULE]… [--rm RULE]…` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
@@ -38,7 +38,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
-| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--detach] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -122,6 +122,12 @@ until its reset, copies the session (transcript, subagent transcripts, and newer
 `memory/` files) into the next account's config dir and resumes it with
 "Continue from where you stopped." If the next account can't see the session, it starts once
 more from a handoff prompt. Without `--json`, progress goes to stderr and the final message to stdout.
+
+`--detach` starts the run in the background (its own process group, so it outlives the terminal
+or app that started it) and returns as soon as it has a run id: `started run #57 …`, or with
+`--json` `{"run_id": 57, "pid": 4242}`. Errors before the run starts (a bad `--follow-up`, no such
+folder) are reported and exit 1. Follow the run with `anchorleg sessions show 57`, stop it with
+`anchorleg stop 57`. Every other `run` option works with it.
 
 anchorleg-mod is loaded into every Claude launch (`--plugin-dir`, embedded in the binary; `--no-mod`
 turns it off). It reports exact quota and, once any window reaches `--stop-at` (default 0.9),
@@ -726,6 +732,35 @@ With `--goal`, `--budget` or `--json-schema` the report also has `goal`, `budget
 `account`), or `no_accounts`. `credits` is `null` until the CLI has reported it; `state` is `off`,
 `available`, `in_use` or `unlimited`. `used` is a fraction 0–1 and may be `null` (Claude often omits it).
 `source` is `stream` (CLI events), `mod` (exact, from anchorleg-mod) or `manual`.
+
+## `anchorleg sessions show <run> --json` → session
+
+One session (the run and the runs it follows up, oldest first) as `anchorleg ui` shows it:
+
+```json
+{
+  "schema": 1,
+  "run": { "id": 57, "state": "running", "...": "as in `sessions --json`" },
+  "runs": [56, 57],
+  "name": "fix-build",
+  "working": true,
+  "since": 0,
+  "next": 42,
+  "messages": [{ "role": "user", "text": "fix the build" }, { "role": "tool", "text": "Bash  cargo test" }],
+  "running": { "what": "Bash  cargo test", "output": "running 124 tests…" },
+  "subagents": [{ "id": "t1", "name": "find the flaky test", "done": false, "steps": 3, "doing": "Read  src/lib.rs" }],
+  "steps": [{ "text": "Fix the build", "status": "done" }],
+  "context": { "tokens": 50401, "window": 1000000 },
+  "slash_commands": ["compact", "..."]
+}
+```
+
+`role` is `user`, `agent`, `tool`, `tool_error`, `output`, `thinking`, `anchorleg` or `error`.
+`working` is true while the run's process is alive. `steps[].status` is `pending`, `in_progress`
+or `done`. `context.window` and `slash_commands` are `null` when the CLI didn't report them.
+To poll, pass the last `next` as `--since`, and replace your copy from index `since` onward
+(the last message can still grow while the agent works). `schema` changes only when a field
+changes meaning.
 
 ## `anchorleg report --json` (stdin)
 

@@ -1276,11 +1276,10 @@ fn live_claude_quota_sees_use_from_outside_anchorleg() {
     assert_eq!(code, 0, "{r}");
     assert_eq!(r["accounts_used"], serde_json::json!(["a"]), "{r}");
     let asked = std::fs::read_to_string(env.path("fake/usage.log")).unwrap();
-    assert_eq!(
-        asked.lines().collect::<Vec<_>>(),
-        ["a", "b", "a"],
-        "{asked}"
-    );
+    let mut lines: Vec<_> = asked.lines().collect();
+    // The first pick asks both accounts at once, so their order varies.
+    lines[..2].sort_unstable();
+    assert_eq!(lines, ["a", "b", "a"], "{asked}");
 }
 
 #[test]
@@ -2727,4 +2726,95 @@ fn sync_mcp_adds_missing_servers_through_each_cli() {
     );
     // The token-carrying server stays where it is.
     assert!(!log.contains("api"), "{log}");
+}
+
+#[test]
+fn detach_returns_the_run_id_while_the_run_goes_on() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done in the background"));
+    let started = std::time::Instant::now();
+    let out = env
+        .anchorleg()
+        .env("FAKE_SLEEP", "30")
+        .args(["run", "--detach", "--json", "--cwd"])
+        .arg(env.path("work"))
+        .args(["--", "keep", "--detach", "in", "the", "task"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        started.elapsed().as_secs() < 10,
+        "detach waited for the run"
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = v["run_id"].as_i64().unwrap();
+    assert!(v["pid"].as_i64().is_some());
+
+    let show = env
+        .anchorleg()
+        .args(["sessions", "show", &id.to_string(), "--json"])
+        .output()
+        .unwrap();
+    let s: Value = serde_json::from_slice(&show.stdout).unwrap();
+    assert_eq!(s["schema"], 1);
+    assert_eq!(s["run"]["id"], id);
+    // Only the option was dropped; the task keeps its own `--detach`.
+    assert_eq!(s["run"]["task"], "keep --detach in the task");
+
+    env.anchorleg()
+        .args(["stop", &id.to_string()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn detach_reports_a_run_that_ends_before_it_is_seen() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done at once"));
+    let out = env
+        .anchorleg()
+        .args(["run", "--detach", "--json", "--cwd"])
+        .arg(env.path("work"))
+        .args(["--", "quick"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let id = v["run_id"].as_i64().unwrap();
+    // Wait for it to be recorded as done; the run id is the one it reports.
+    for _ in 0..100 {
+        let show = env
+            .anchorleg()
+            .args(["sessions", "show", &id.to_string(), "--json"])
+            .output()
+            .unwrap();
+        let s: Value = serde_json::from_slice(&show.stdout).unwrap();
+        if s["run"]["state"] == "done" {
+            assert_eq!(s["run"]["task"], "quick");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("run {id} never finished");
+}
+
+#[test]
+fn detach_reports_why_a_run_couldnt_start() {
+    let env = Env::new(&["a"]);
+    let out = env
+        .anchorleg()
+        .args(["run", "--detach", "--follow-up", "999", "--", "hi"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no run 999"), "{err}");
 }

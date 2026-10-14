@@ -369,7 +369,7 @@ pub fn output_excerpt(text: &str) -> Option<String> {
 
 /// What the agent is doing right now, from a run's log: the last tool call that hasn't finished,
 /// and its output so far (Codex streams it; Claude and agy send it when the call is done).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Running {
     /// `Bash  cargo test`, as [`describe_tool`] puts it.
     pub what: String,
@@ -478,7 +478,7 @@ fn is_sidechain(v: &Value) -> bool {
 }
 
 /// A subagent the session started, and how far it got.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Subagent {
     /// Claude: the Agent call's id; Codex: the subagent's thread; agy: its conversation.
     pub id: String,
@@ -491,6 +491,7 @@ pub struct Subagent {
     pub doing: Option<String>,
     /// agy: the subagent's own transcript, which `read_transcripts` reads for its progress
     /// (agy runs subagents on their own; their steps aren't in the session's stream).
+    #[serde(skip)]
     pub transcript: Option<std::path::PathBuf>,
 }
 
@@ -938,8 +939,102 @@ pub fn fork_point(log: &str, session: &str) -> Option<String> {
     point
 }
 
+/// A session as people see it: the conversation of every run in it, and what its newest run is
+/// doing. What `anchorleg ui` draws and `anchorleg sessions show` prints.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SessionView {
+    pub messages: Vec<Message>,
+    /// The tool call the newest run is in, if it's working.
+    pub running: Option<Running>,
+    /// The newest run's subagents.
+    pub subagents: Vec<Subagent>,
+    /// The agent's last task list.
+    pub steps: Vec<crate::handoff::Step>,
+    /// Tokens in the context at the last model request, and the model's window.
+    pub context_tokens: Option<u64>,
+    pub context_window: Option<u64>,
+}
+
+/// The view of a session from its runs' logs (`<log_dir>/run-<id>.jsonl`), oldest run first.
+pub fn session_view(runs: &[&crate::store::Run], log_dir: &std::path::Path) -> SessionView {
+    let read = |id: i64| {
+        std::fs::read_to_string(log_dir.join(format!("run-{id}.jsonl"))).unwrap_or_default()
+    };
+    let mut view = SessionView::default();
+    let mut whole = String::new();
+    let mut newest = String::new();
+    for run in runs {
+        let log = read(run.id);
+        let mut part = from_log(&log);
+        // Paths inside the session's folder read better relative to it.
+        let prefix = format!("{}/", run.cwd.trim_end_matches('/'));
+        for m in part.iter_mut().filter(|m| m.role == Role::Tool) {
+            m.text = m.text.replace(&prefix, "");
+        }
+        // Logs from before anchorleg recorded the prompt: show the task as the user's message.
+        if !part.iter().any(|m| m.role == Role::User) {
+            part.insert(0, msg(Role::User, run.task.clone()));
+        }
+        view.messages.extend(part);
+        whole.push_str(&log);
+        newest = log;
+    }
+    view.running = running(&newest);
+    view.subagents = subagents(&newest);
+    read_transcripts(&mut view.subagents);
+    let t = crate::handoff::extract(&whole);
+    view.context_tokens = t.context_tokens;
+    view.context_window = t.context_window;
+    view.steps = t.steps;
+    view
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_session_view_joins_its_runs_and_reads_the_newest() {
+        let store = crate::store::Store::open_in_memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let first = store.start_run("fix the build", "/w", None, 1).unwrap();
+        let second = store
+            .start_run("now the tests", "/w", Some(first), 2)
+            .unwrap();
+        let text = |t: &str| {
+            format!(
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"{t}"}}]}}}}"#
+            )
+        };
+        let tool = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"cargo test"}}]}}"#;
+        std::fs::write(dir.path().join(format!("run-{first}.jsonl")), text("built")).unwrap();
+        std::fs::write(
+            dir.path().join(format!("run-{second}.jsonl")),
+            [text("testing"), tool.to_owned()].join("\n"),
+        )
+        .unwrap();
+        let runs = [
+            store.run(first).unwrap().unwrap(),
+            store.run(second).unwrap().unwrap(),
+        ];
+        let view = session_view(&runs.iter().collect::<Vec<_>>(), dir.path());
+        let roles: Vec<_> = view
+            .messages
+            .iter()
+            .map(|m| (m.role, m.text.as_str()))
+            .collect();
+        // Old logs without the prompt get the task as the person's message.
+        assert_eq!(roles[0], (Role::User, "fix the build"));
+        assert_eq!(roles[1], (Role::Agent, "built"));
+        assert_eq!(roles[2], (Role::User, "now the tests"));
+        assert_eq!(roles[3], (Role::Agent, "testing"));
+        assert!(
+            view.running
+                .as_ref()
+                .is_some_and(|r| r.what.contains("cargo test"))
+        );
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["messages"][0]["role"], "user");
+    }
 
     #[test]
     fn a_rewind_forks_from_the_last_main_thread_message_or_turn() {

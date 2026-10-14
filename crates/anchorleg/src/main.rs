@@ -23,6 +23,21 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum SessionsCmd {
+    /// One session's conversation (every run in it, oldest first), what it's doing now, its
+    /// task list and context.
+    Show {
+        /// Any run of the session; its session is shown up to this run.
+        run: i64,
+        /// Only messages from this index on (the `next` of an earlier `--json` call), for polling.
+        #[arg(long, default_value_t = 0)]
+        since: usize,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Run a task, switching accounts when one runs out.
     Run(Box<RunArgs>),
@@ -172,8 +187,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List recent sessions (runs), newest first.
+    /// List recent sessions (runs), newest first; `show RUN` prints one session's conversation.
+    #[command(args_conflicts_with_subcommands = true)]
     Sessions {
+        #[command(subcommand)]
+        show: Option<SessionsCmd>,
         #[arg(long)]
         json: bool,
         #[arg(long, default_value_t = 20)]
@@ -241,6 +259,11 @@ pub struct RunArgs {
     /// Directory the task runs in. Defaults to the current one (or the followed-up run's).
     #[arg(long)]
     pub cwd: Option<PathBuf>,
+    /// Start the run in the background and return at once with its run id (`--json`:
+    /// `{"run_id", "pid"}`); follow it with `anchorleg sessions show`. The run goes on after
+    /// this command, the terminal or the app that started it is gone.
+    #[arg(long)]
+    pub detach: bool,
     /// Print one JSON object (see docs/CLI.md) instead of progress text.
     #[arg(long)]
     pub json: bool,
@@ -468,7 +491,15 @@ fn main() -> ExitCode {
             no_command,
             test,
         } => settings::notify(desktop, command, no_command, test),
-        Command::Sessions { json, limit } => status::sessions(json, limit),
+        Command::Sessions {
+            show: Some(SessionsCmd::Show { run, since, json }),
+            ..
+        } => status::show_session(run, since, json),
+        Command::Sessions {
+            show: None,
+            json,
+            limit,
+        } => status::sessions(json, limit),
         Command::Usage { since, json } => usage::run(since, json),
         Command::Report { json: _ } => status::report(),
         Command::Review {
@@ -570,6 +601,15 @@ fn main() -> ExitCode {
             };
             return match run::run(*args) {
                 Ok(report) => ExitCode::from(report.outcome.exit_code()),
+                Err(e) => {
+                    eprintln!("anchorleg: {e:#}");
+                    ExitCode::from(exit::FAILED)
+                }
+            };
+        }
+        Command::Run(args) if args.detach => {
+            return match run::detach(args.json) {
+                Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("anchorleg: {e:#}");
                     ExitCode::from(exit::FAILED)

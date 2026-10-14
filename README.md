@@ -349,6 +349,7 @@ In `anchorleg ui`, press `p` in the Agents pane to change the policy.
 | `--policy P` | `anchorleg policy` | `drain`, `balance` or `save-weekly`, for this run |
 | `--prefer A` / `--account A` | none | Try account A first / use only account A |
 | `--no-wait` | off | If every account is blocked, exit 75 instead of waiting for a reset |
+| `--detach` | off | Start in the background and print the run id at once (`anchorleg sessions show RUN` follows it) |
 | `--no-mod` | off | Run without anchorleg-mod: switch only on hard limits, no approvals |
 
 ### The handoff file

@@ -116,6 +116,100 @@ fn rewind_point(store: &Store, db: &Path, id: i64) -> anyhow::Result<(i64, Strin
 }
 
 /// Run the task; returns the report so `main` can pick the exit code.
+/// How long `--detach` waits for the background run to record itself.
+const DETACH_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `anchorleg run --detach …`: start this same command without `--detach` in its own process
+/// group (so it outlives this one, and `anchorleg stop` ends it whole), wait until it has a run
+/// id, print it and return. What the run prints goes nowhere; until it has a run id its errors
+/// are read back from a file and reported here.
+pub fn detach(json: bool) -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt as _;
+    // Drop `--detach` from the options only: after `--` it's part of the task.
+    let mut options = true;
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os()
+        .skip(1)
+        .filter(|a| {
+            if a == "--" {
+                options = false;
+            }
+            !(options && a == "--detach")
+        })
+        .collect();
+    // The run reports in JSON (its run id, if it ends before it's seen working), into a file.
+    let end = args.iter().position(|a| a == "--").unwrap_or(args.len());
+    if !args[..end].iter().any(|a| a == "--json")
+        && let Some(i) = args[..end].iter().position(|a| a == "run")
+    {
+        args.insert(i + 1, "--json".into());
+    }
+    let db = Store::default_path()?;
+    let store = Store::open(&db)?;
+    let dir = db.parent().map(|d| d.join("runs")).unwrap_or_default();
+    std::fs::create_dir_all(&dir)?;
+    let base = dir.join(format!(".detach-{}-{}", std::process::id(), now()));
+    let (out_path, err_path) = (base.with_extension("out"), base.with_extension("err"));
+    let out = std::fs::File::create(&out_path)?;
+    let err = std::fs::File::create(&err_path)?;
+    let exe = std::env::current_exe()?;
+    let mut child = std::process::Command::new(&exe)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .process_group(0)
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("starting {}: {e}", exe.display()))?;
+    let pid = i64::from(child.id());
+    let started = std::time::Instant::now();
+    let result = loop {
+        if let Some(run) = store
+            .recent_runs(20)?
+            .into_iter()
+            .find(|r| r.pid == Some(pid))
+        {
+            break Ok(run.id);
+        }
+        if let Some(status) = child.try_wait()? {
+            // Ended before it was seen working: done already (its report has the run id), or
+            // it never started a run, and its error says why.
+            let report = std::fs::read_to_string(&out_path).unwrap_or_default();
+            if let Some(id) = serde_json::from_str::<serde_json::Value>(&report)
+                .ok()
+                .and_then(|r| r["run_id"].as_i64())
+            {
+                break Ok(id);
+            }
+            let msg = std::fs::read_to_string(&err_path).unwrap_or_default();
+            let msg = msg.trim().trim_start_matches("anchorleg: ");
+            break Err(if msg.is_empty() {
+                anyhow::anyhow!("the run ended at once ({status})")
+            } else {
+                anyhow::anyhow!("{msg}")
+            });
+        }
+        if started.elapsed() > DETACH_WAIT {
+            break Err(anyhow::anyhow!(
+                "the run (pid {pid}) hasn't started a session after {}s; it goes on in the background",
+                DETACH_WAIT.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    // The run keeps writing to the files it has open; the names can go.
+    let _ = std::fs::remove_file(&out_path);
+    let _ = std::fs::remove_file(&err_path);
+    let run_id = result?;
+    if json {
+        println!("{}", serde_json::json!({ "run_id": run_id, "pid": pid }));
+    } else {
+        println!(
+            "started run #{run_id} (pid {pid}); follow it with `anchorleg sessions show {run_id}`"
+        );
+    }
+    Ok(())
+}
+
 pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let config = Config::load(&Config::default_path()?)?;
     let db = Store::default_path()?;

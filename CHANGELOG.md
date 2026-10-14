@@ -7,6 +7,11 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- `anchorleg sessions show <run> [--since N] [--json]`: one session's conversation, the call
+  it's in, its subagents, task list and context, as `anchorleg ui` shows it (for scripts and the
+  desktop app).
+- `anchorleg run --detach`: starts the run in the background and returns its run id at once
+  (`--json`: `{"run_id", "pid"}`); errors before it starts are still reported.
 - Homebrew tap (in progress).
 
 ## [0.6.1] — 2026-10-13

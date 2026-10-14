@@ -18,14 +18,15 @@ const NOTES: &str = "## Notes";
 const NOTES_HINT: &str = "Decisions made, approaches tried and dropped (and why). \
 Keep this section up to date as you work; anchorleg keeps it when it rewrites the file.";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepStatus {
     Pending,
     InProgress,
     Done,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Step {
     pub text: String,
     pub status: StepStatus,
