@@ -1,0 +1,25 @@
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_b67e57cd1d20d0 1164-1165
+  s_3c59a91d489536::t_6f2f4037196589 464-466,1282-1284
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6232928b59d09954b72875318e57d9ff712967fe",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
