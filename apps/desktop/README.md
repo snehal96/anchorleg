@@ -28,6 +28,13 @@ failed, switched, blocked), so you don't get them twice: it keeps its pid in
 `<store dir>/desktop.pid` and reads `<store dir>/desktop-notices.jsonl`. Coming back to the
 window right after a notice opens that session. When the app quits, runs notify on their own again.
 
+## Menu bar
+
+The menu bar item shows the fullest quota window of the account the next run would use (and
+`! N` while something waits for you), one line per account, and Open / Quit. Closing the window
+only hides it: sessions, notices and the menu bar item go on until **Quit anchorleg**; the Dock
+icon brings the window back.
+
 ## Build a .dmg (macOS)
 
 ```bash

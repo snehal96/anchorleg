@@ -3,12 +3,14 @@
 
 mod cli;
 mod notices;
+mod settings;
+mod tray;
 
 use serde::Deserialize;
 use serde_json::Value;
 
 /// Run a blocking CLI call off the UI thread.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f)
@@ -159,7 +161,15 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             notices::start(app.handle().clone());
+            tray::create(app.handle())?;
             Ok(())
+        })
+        // Closing the window hides it: sessions, notices and the menu bar item go on until Quit.
+        .on_window_event(|w, e| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                let _ = w.hide();
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             cli_info,
@@ -173,14 +183,26 @@ pub fn run() {
             permissions,
             answer,
             approve_plan,
+            settings::status,
+            settings::accounts,
+            settings::usage,
+            settings::policy,
+            settings::settings,
+            settings::set_accounts,
+            settings::add_account,
+            settings::remove_account,
+            settings::import_aliases,
+            tray::update_tray,
             terminal,
             link_terminal
         ])
         .build(tauri::generate_context!())
         .expect("error while building the anchorleg app")
-        .run(|_, event| {
-            if let tauri::RunEvent::Exit = event {
-                notices::stop();
-            }
+        .run(|app, event| match event {
+            tauri::RunEvent::Exit => notices::stop(),
+            // macOS: a click on the Dock icon brings the hidden window back.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => tray::show(app),
+            _ => {}
         });
 }

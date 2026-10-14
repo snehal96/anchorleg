@@ -2,8 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { cliInfo, permissions, sessions, type CliInfo, type Notice, type Request, type Run } from "./api";
+import {
+  accounts,
+  cliInfo,
+  permissions,
+  sessions,
+  status,
+  updateTray,
+  type Account,
+  type CliInfo,
+  type Notice,
+  type Request,
+  type Run,
+  type Status,
+} from "./api";
+import Accounts, { windowName } from "./Accounts";
 import Composer from "./Composer";
+import Settings from "./Settings";
+import Usage from "./Usage";
 import Conversation from "./Conversation";
 import { ago, heads, isWorking, nameOf, newest, tilde } from "./sessions";
 import TerminalCard from "./TerminalCard";
@@ -13,6 +29,30 @@ const TERMINAL_SEEN = "terminal-card-seen";
 const LAST_FOLDER = "last-folder";
 /** Coming back to the window this soon after a notice opens its session (the notification was clicked). */
 const NOTICE_FOCUS_MS = 20_000;
+/** Quota readings come from the store (cheap); `status --refresh` asks the CLIs. */
+const STATUS_POLL_MS = 15_000;
+
+type Page = "sessions" | "accounts" | "usage" | "settings";
+const PAGES: [Page, string][] = [
+  ["sessions", "Sessions"],
+  ["accounts", "Accounts"],
+  ["usage", "Usage"],
+  ["settings", "Settings"],
+];
+
+/** The menu bar item: the fullest window of the account the next run would use, and one line per account. */
+function trayOf(st: Status, waiting: number): { title: string | null; lines: string[] } {
+  const fullest = (a: Status["accounts"][number]) => Math.max(0, ...a.windows.map((w) => w.used ?? 0));
+  const n = st.next;
+  const next = n.action === "no_accounts" ? null : st.accounts.find((a) => a.name === n.account);
+  const lines = st.accounts.map(
+    (a) =>
+      `${a.name}  ${a.windows.length ? a.windows.map((w) => `${windowName(w.window)} ${Math.round((w.used ?? 0) * 100)}%`).join(" · ") : "no quota read yet"}`,
+  );
+  const pct = next && next.windows.length ? `${Math.round(fullest(next) * 100)}%` : null;
+  const title = waiting > 0 ? `! ${waiting}${pct ? ` · ${pct}` : ""}` : pct;
+  return { title, lines };
+}
 
 /** Shown once on first launch; the header button opens it again. */
 function firstLaunch(): boolean {
@@ -147,6 +187,10 @@ export default function App() {
   const [info, setInfo] = useState<CliInfo | null>(null);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
+  const [page, setPage] = useState<Page>("sessions");
+  const [st, setSt] = useState<Status | null>(null);
+  const [list, setList] = useState<Account[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const runsRef = useRef<Run[]>([]);
   const lastNotice = useRef<{ run: number; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -209,6 +253,34 @@ export default function App() {
   // A request's run, or the newest run continuing it, carries the badge.
   if (runs) for (const q of requests) waiting.add(newest(runs, q.run_id));
 
+  const loadAccounts = useCallback(async (refresh = false) => {
+    try {
+      const [s, l] = await Promise.all([status(refresh), accounts()]);
+      setSt(s);
+      setList(l);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+  useEffect(() => {
+    if (!info?.ok) return;
+    loadAccounts();
+    const t = setInterval(() => loadAccounts(), STATUS_POLL_MS);
+    return () => clearInterval(t);
+  }, [info?.ok, loadAccounts]);
+  const refreshQuota = async () => {
+    setRefreshing(true);
+    await loadAccounts(true);
+    setRefreshing(false);
+  };
+
+  // Keep the menu bar item current.
+  useEffect(() => {
+    if (!st) return;
+    const { title, lines } = trayOf(st, requests.length);
+    updateTray(title, lines, requests.length).catch(() => {});
+  }, [st, requests.length]);
+
   const started = (run: number) => {
     setSelected(run);
     refresh();
@@ -220,13 +292,29 @@ export default function App() {
         <Logo />
         <h1>anchorleg</h1>
         {info?.ok && (
+          <nav className="tabs">
+            {PAGES.map(([p, label]) => (
+              <button key={p} className={page === p ? "tab active" : "tab"} onClick={() => setPage(p)}>
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
+        <span className="spacer" />
+        {info?.ok && (
           <span className="muted mono">
             CLI {info.version}
             {!info.bundled && " (installed)"}
           </span>
         )}
         {requests.length > 0 && (
-          <button className="waiting-count" onClick={() => setSelected(newest(runs ?? [], requests[0].run_id))}>
+          <button
+            className="waiting-count"
+            onClick={() => {
+              setPage("sessions");
+              setSelected(newest(runs ?? [], requests[0].run_id));
+            }}
+          >
             {requests.length} waiting for you
           </button>
         )}
@@ -245,6 +333,19 @@ export default function App() {
           <Setup info={info} />
         </main>
       ) : (
+        page === "accounts" ? (
+          <main>
+            <Accounts status={st} list={list} refreshing={refreshing} onRefresh={refreshQuota} onChanged={() => loadAccounts()} />
+          </main>
+        ) : page === "usage" ? (
+          <main>
+            <Usage />
+          </main>
+        ) : page === "settings" ? (
+          <main>
+            <Settings onChanged={() => loadAccounts()} />
+          </main>
+        ) : (
         <div className="body">
           <Sidebar runs={runs} waiting={waiting} error={error} selected={selected} onSelect={setSelected} />
           <div className="main">
@@ -269,6 +370,7 @@ export default function App() {
             )}
           </div>
         </div>
+        )
       )}
     </div>
   );

@@ -144,3 +144,106 @@ export interface Notice {
   title: string;
   message: string;
 }
+
+// ---- Accounts, quota, usage, settings (M3) ------------------------------------------------------
+
+export interface WindowStatus {
+  /** `five_hour`, `seven_day`, … */
+  window: string;
+  status: string | null;
+  /** 0–1; 0 once `resets_at` has passed. */
+  used: number | null;
+  resets_at: number | null;
+  source: string;
+  /** When it was read. */
+  updated_at: number;
+}
+
+export interface AccountStatus {
+  name: string;
+  vendor: string;
+  priority: number;
+  blocked_until: number | null;
+  windows: WindowStatus[];
+  credits: { state: "off" | "available" | "in_use" | "unlimited"; balance: number | null; reason: string | null; updated_at: number } | null;
+  credits_use: "never" | "last-resort" | "allow";
+}
+
+/** `anchorleg status --json`. */
+export interface Status {
+  now: number;
+  policy: string;
+  next: { action: "use"; account: string; reason: string } | { action: "wait"; until: number; account: string } | { action: "no_accounts" };
+  accounts: AccountStatus[];
+}
+
+/** One `accounts list --json` entry; fields left at their default are missing. */
+export interface Account {
+  name: string;
+  vendor: string;
+  priority: number;
+  enabled?: boolean;
+  bin?: string;
+  env?: Record<string, string>;
+  args?: string[];
+  token_from?: string;
+  shell?: string;
+  reserve_7d?: number;
+  stop_at?: number;
+  strict?: boolean;
+  pinned?: boolean;
+  credits?: string;
+}
+
+export interface Usage {
+  now: number;
+  since: number;
+  totals: {
+    account: string;
+    model: string | null;
+    launches: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    cost_usd: number | null;
+    credits_cost_usd: number | null;
+  }[];
+  /** `[day start, tokens, list-price cost]`. */
+  by_day: [number, number, number][];
+}
+
+export interface PolicyInfo {
+  policy: string;
+  policies: { name: string; describe: string }[];
+}
+
+export interface VendorSettings {
+  model: string | null;
+  effort: string | null;
+  args: string[];
+}
+
+export interface AccountChange {
+  name: string;
+  priority?: number;
+  reserve_7d?: number;
+  stop_at?: number;
+  strict?: boolean;
+  pinned?: boolean;
+  enabled?: boolean;
+  credits?: string;
+}
+
+export const status = (refresh = false) => invoke<Status>("status", { refresh });
+export const accounts = () => invoke<Account[]>("accounts");
+export const usage = (since: string) => invoke<Usage>("usage", { since });
+export const policy = (set?: string) => invoke<PolicyInfo>("policy", { set: set ?? null });
+export const cliSettings = (change?: { vendor: string; model?: string; effort?: string; args?: string }) =>
+  invoke<{ vendors: Record<string, VendorSettings> }>("settings", { change: change ?? null });
+export const setAccounts = (changes: AccountChange[]) => invoke<void>("set_accounts", { changes });
+export const addAccount = (name: string, command: string) => invoke<void>("add_account", { name, command });
+export const removeAccount = (name: string) => invoke<void>("remove_account", { name });
+export const importAliases = (yes: boolean) => invoke<{ add: Account[]; skip: string[]; saved: boolean }>("import_aliases", { yes });
+export const updateTray = (title: string | null, lines: string[], waiting: number) =>
+  invoke<void>("update_tray", { title, lines, waiting });
