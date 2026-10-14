@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { rename, session, stop, type Message, type Session } from "./api";
+import { rename, session, stop, type Message, type Request, type Session } from "./api";
 import Composer from "./Composer";
+import Requests from "./Requests";
 import { short, tilde } from "./sessions";
 
 const POLL_WORKING_MS = 1000;
@@ -9,10 +10,15 @@ const POLL_IDLE_MS = 4000;
 /** One session, live: `anchorleg sessions show <run> --since N --json`, polled. */
 export default function Conversation({
   run,
+  requests,
+  onAnswered,
   onStarted,
   onNew,
 }: {
   run: number;
+  /** Everything waiting for the person; this session's are shown. */
+  requests: Request[];
+  onAnswered: () => void;
   /** A run this view started (a reply or a fork): select it. */
   onStarted: (run: number) => void;
   /** `/clear`: a new session in this folder. */
@@ -62,6 +68,13 @@ export default function Conversation({
     if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   };
 
+  const mine = view ? requests.filter((q) => view.runs.includes(q.run_id)) : [];
+  // A new request scrolls into view.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && mine.length) el.scrollTop = el.scrollHeight;
+  }, [mine.length]);
+
   if (!view) return <div className="pane">{error ? <p className="error pad">{error}</p> : <p className="muted pad">Loading…</p>}</div>;
   const r = view.run;
   return (
@@ -71,7 +84,8 @@ export default function Conversation({
         {view.messages.map((m, i) => (
           <Line key={i} m={m} />
         ))}
-        {view.working && (
+        <Requests requests={mine} onAnswered={onAnswered} />
+        {view.working && mine.length === 0 && (
           <div className="working">
             <span className="spinner" /> {view.running ? <span className="mono">{view.running.what}</span> : "working…"}
             {view.running?.output && <pre className="tail">{view.running.output}</pre>}

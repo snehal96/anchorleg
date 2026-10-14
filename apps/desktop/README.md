@@ -21,6 +21,13 @@ npm run tauri dev                         # hot-reloading window
 (cd src-tauri && cargo test --lib && cargo clippy --all-targets -- -D warnings)
 ```
 
+## Notifications
+
+While the app is open it shows the CLI's notices itself (a run waiting for an answer, done,
+failed, switched, blocked), so you don't get them twice: it keeps its pid in
+`<store dir>/desktop.pid` and reads `<store dir>/desktop-notices.jsonl`. Coming back to the
+window right after a notice opens that session. When the app quits, runs notify on their own again.
+
 ## Build a .dmg (macOS)
 
 ```bash

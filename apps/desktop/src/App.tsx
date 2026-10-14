@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import { cliInfo, sessions, type CliInfo, type Run } from "./api";
+import { cliInfo, permissions, sessions, type CliInfo, type Notice, type Request, type Run } from "./api";
 import Composer from "./Composer";
 import Conversation from "./Conversation";
 import { ago, heads, isWorking, nameOf, newest, tilde } from "./sessions";
@@ -9,6 +11,8 @@ import TerminalCard from "./TerminalCard";
 const POLL_MS = 2000;
 const TERMINAL_SEEN = "terminal-card-seen";
 const LAST_FOLDER = "last-folder";
+/** Coming back to the window this soon after a notice opens its session (the notification was clicked). */
+const NOTICE_FOCUS_MS = 20_000;
 
 /** Shown once on first launch; the header button opens it again. */
 function firstLaunch(): boolean {
@@ -66,11 +70,14 @@ const MARK: Record<string, string> = { done: "✓", failed: "✗", stopped: "■
 
 function Sidebar({
   runs,
+  waiting,
   error,
   selected,
   onSelect,
 }: {
   runs: Run[] | null;
+  /** Runs with something waiting for the person. */
+  waiting: Set<number>;
   error: string | null;
   selected: number | "new";
   onSelect: (s: number | "new") => void;
@@ -94,7 +101,7 @@ function Sidebar({
               title={`${r.task}\n\n${r.cwd}`}
             >
               <span className={`mark state-${working ? "running" : r.state}`}>
-                {working ? <span className="spinner" /> : (MARK[r.state] ?? "●")}
+                {waiting.has(r.id) ? <span className="waiting-badge">!</span> : working ? <span className="spinner" /> : (MARK[r.state] ?? "●")}
               </span>
               <span className="item-text">
                 <span className="item-title">{nameOf(runs, r) ?? r.task.replace(/\s+/g, " ")}</span>
@@ -139,6 +146,9 @@ function NewSession({ folder, setFolder, onStarted }: { folder: string; setFolde
 export default function App() {
   const [info, setInfo] = useState<CliInfo | null>(null);
   const [runs, setRuns] = useState<Run[] | null>(null);
+  const [requests, setRequests] = useState<Request[]>([]);
+  const runsRef = useRef<Run[]>([]);
+  const lastNotice = useRef<{ run: number; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTerminal, setShowTerminal] = useState(firstLaunch);
   const [selected, setSelected] = useState<number | "new">("new");
@@ -157,8 +167,10 @@ export default function App() {
     setInfo(i);
     if (!i.ok) return;
     try {
-      const rs = await sessions();
+      const [rs, reqs] = await Promise.all([sessions(), permissions()]);
       setRuns(rs);
+      runsRef.current = rs;
+      setRequests(reqs);
       setError(null);
       // A reply sent from elsewhere continues the selected session: follow it.
       setSelected((s) => (s === "new" ? s : newest(rs, s)));
@@ -172,6 +184,30 @@ export default function App() {
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
   }, [refresh]);
+
+  // Notices from runs (D65): the Rust side shows the notification; here, refresh at once and
+  // remember the run, so coming back to the window (a click on the notification) opens it.
+  useEffect(() => {
+    const offNotice = listen<Notice>("notice", (e) => {
+      if (e.payload.run_id != null) lastNotice.current = { run: e.payload.run_id, at: Date.now() };
+      refresh();
+    });
+    const offFocus = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      const n = lastNotice.current;
+      if (focused && n && Date.now() - n.at < NOTICE_FOCUS_MS) {
+        lastNotice.current = null;
+        setSelected(newest(runsRef.current, n.run));
+      }
+    });
+    return () => {
+      offNotice.then((f) => f());
+      offFocus.then((f) => f());
+    };
+  }, [refresh]);
+
+  const waiting = new Set(requests.map((q) => q.run_id));
+  // A request's run, or the newest run continuing it, carries the badge.
+  if (runs) for (const q of requests) waiting.add(newest(runs, q.run_id));
 
   const started = (run: number) => {
     setSelected(run);
@@ -189,6 +225,11 @@ export default function App() {
             {!info.bundled && " (installed)"}
           </span>
         )}
+        {requests.length > 0 && (
+          <button className="waiting-count" onClick={() => setSelected(newest(runs ?? [], requests[0].run_id))}>
+            {requests.length} waiting for you
+          </button>
+        )}
         {info?.bundled && (
           <button className="link" onClick={() => setShowTerminal(true)}>
             Use in Terminal
@@ -205,7 +246,7 @@ export default function App() {
         </main>
       ) : (
         <div className="body">
-          <Sidebar runs={runs} error={error} selected={selected} onSelect={setSelected} />
+          <Sidebar runs={runs} waiting={waiting} error={error} selected={selected} onSelect={setSelected} />
           <div className="main">
             {showTerminal && info.bundled && (
               <div className="pad">
@@ -217,6 +258,8 @@ export default function App() {
             ) : (
               <Conversation
                 run={selected}
+                requests={requests}
+                onAnswered={refresh}
                 onStarted={started}
                 onNew={(cwd) => {
                   setFolder(cwd);

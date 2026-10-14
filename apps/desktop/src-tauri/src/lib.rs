@@ -2,6 +2,7 @@
 //! `anchorleg … --json` off the UI thread and hand the result to the React side.
 
 mod cli;
+mod notices;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -91,6 +92,47 @@ async fn rename(run: i64, name: String) -> Result<(), String> {
     blocking(move || cli::text(&["rename".to_owned(), run.to_string(), name]).map(drop)).await
 }
 
+/// Tool calls, questions and plans waiting for the person (`anchorleg permission list --json`).
+#[tauri::command]
+async fn permissions() -> Result<Value, String> {
+    blocking(|| cli::json(&["permission", "list", "--json"])).await
+}
+
+/// Answer a request: `yes`, `always`, `rule` or `no` for a tool call; one answer per question
+/// (an option label, several joined with commas, or the person's own words; `-` for a secret).
+/// `skip` answers no / skips the questions.
+#[tauri::command]
+async fn answer(id: i64, answers: Vec<String>, skip: bool) -> Result<(), String> {
+    let mut args: Vec<String> = vec!["permission".into(), "answer".into(), id.to_string()];
+    if skip {
+        args.push("--skip".into());
+    } else {
+        args.push("--".into());
+        args.extend(answers);
+    }
+    blocking(move || cli::text(&args).map(drop)).await
+}
+
+/// Approve a plan as the person edited it (`permission answer <id> --plan-file`).
+#[tauri::command]
+async fn approve_plan(id: i64, plan: String) -> Result<(), String> {
+    blocking(move || {
+        let file =
+            std::env::temp_dir().join(format!("anchorleg-plan-{}-{id}.md", std::process::id()));
+        std::fs::write(&file, plan).map_err(|e| e.to_string())?;
+        let out = cli::text(&[
+            "permission".as_ref(),
+            "answer".as_ref(),
+            id.to_string().as_ref(),
+            "--plan-file".as_ref(),
+            file.as_os_str(),
+        ]);
+        let _ = std::fs::remove_file(&file);
+        out.map(drop)
+    })
+    .await
+}
+
 /// The files of a session's folder, for `@` completions.
 #[tauri::command]
 async fn files(cwd: String) -> Result<Vec<String>, String> {
@@ -114,6 +156,11 @@ pub fn run() {
     cli::warm_up();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            notices::start(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             cli_info,
             sessions,
@@ -123,9 +170,17 @@ pub fn run() {
             stop,
             rename,
             files,
+            permissions,
+            answer,
+            approve_plan,
             terminal,
             link_terminal
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running the anchorleg app");
+        .build(tauri::generate_context!())
+        .expect("error while building the anchorleg app")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                notices::stop();
+            }
+        });
 }

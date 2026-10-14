@@ -102,3 +102,45 @@ export type Terminal = TerminalState & {
 
 export const terminal = () => invoke<Terminal>("terminal");
 export const linkTerminal = () => invoke<Terminal>("link_terminal");
+
+export interface Question {
+  id: string;
+  header?: string;
+  question: string;
+  options?: { label: string; description?: string }[];
+  multi_select?: boolean;
+  /** anchorleg never passes secrets: answered with `-`. */
+  secret?: boolean;
+}
+
+/** One entry of `anchorleg permission list --json` (docs/CLI.md). */
+export interface Request {
+  id: number;
+  run_id: number;
+  tool: string;
+  reason: string | null;
+  asked_at: number;
+  /** Unix seconds when it stops waiting; null: as long as the run lives. */
+  deadline: number | null;
+  cwd: string;
+  kind: "tool" | "question" | "plan";
+  summary?: string;
+  preview?: { mark: string; line: string }[];
+  /** What "Always" saves as a lasting rule. */
+  rule?: string;
+  questions?: Question[];
+  plan?: string | null;
+}
+
+export const permissions = () => invoke<Request[]>("permissions");
+/** A tool call: `yes`, `always` (this session), `rule` or `no`. Questions: one answer each. */
+export const answer = (id: number, answers: string[], skip = false) => invoke<void>("answer", { id, answers, skip });
+export const approvePlan = (id: number, plan: string) => invoke<void>("approve_plan", { id, plan });
+
+/** A run's notice (`desktop-notices.jsonl`), shown by the app while it's open (D65). */
+export interface Notice {
+  event: "waiting" | "done" | "failed" | "switched" | "blocked" | "test";
+  run_id: number | null;
+  title: string;
+  message: string;
+}
