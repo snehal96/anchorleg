@@ -13,17 +13,38 @@ pub struct Changes {
     pub clear: bool,
 }
 
-pub fn run(vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
+pub fn run(json: bool, vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
     let path = Config::default_path()?;
     let mut config = Config::load(&path)?;
     let changing = changes.args.is_some()
         || changes.model.is_some()
         || changes.effort.is_some()
         || changes.clear;
-    let Some(name) = vendor else {
-        if changing {
-            bail!("name the CLI, e.g. `anchorleg settings claude --model opus`");
+    if vendor.is_none() && changing {
+        bail!("name the CLI, e.g. `anchorleg settings claude --model opus`");
+    }
+    if json {
+        if let Some(name) = &vendor {
+            let v = parse_vendor(name).map_err(anyhow::Error::msg)?;
+            if changing {
+                apply(&mut config, v, changes)?;
+                config.save(&path)?;
+            }
         }
+        let vendors: serde_json::Map<String, serde_json::Value> = Vendor::ALL
+            .iter()
+            .map(|v| {
+                let s = config.vendors.get(v).cloned().unwrap_or_default();
+                (
+                    v.name().to_owned(),
+                    serde_json::json!({ "model": s.model, "effort": s.effort, "args": s.args }),
+                )
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "schema": 1, "vendors": vendors }));
+        return Ok(());
+    }
+    let Some(name) = vendor else {
         for v in Vendor::ALL {
             println!("{:<7} {}", v.name(), describe(&config, v));
         }
@@ -34,36 +55,149 @@ pub fn run(vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
         println!("{}", describe(&config, v));
         return Ok(());
     }
+    apply(&mut config, v, changes)?;
+    config.save(&path)?;
+    println!("{:<7} {}", v.name(), describe(&config, v));
+    Ok(())
+}
+
+fn apply(config: &mut Config, v: Vendor, changes: Changes) -> anyhow::Result<()> {
     if changes.clear {
         config.vendors.remove(&v);
     }
     if let Some(line) = changes.args {
         let words =
             VendorSettings::parse_args(&line).map_err(|e| anyhow::anyhow!("--args: {e}"))?;
-        update(&mut config, v, |s| s.args = words);
+        update(config, v, |s| s.args = words);
     }
     if let Some(m) = changes.model {
-        set_model(&mut config, v, &m);
+        set_model(config, v, &m);
     }
     if let Some(e) = changes.effort {
-        set_effort(&mut config, v, &e).map_err(anyhow::Error::msg)?;
+        set_effort(config, v, &e).map_err(anyhow::Error::msg)?;
     }
-    config.save(&path)?;
-    println!("{:<7} {}", v.name(), describe(&config, v));
     Ok(())
 }
 
 /// `anchorleg policy [name]`: show or set how runs pick among accounts with room.
-pub fn policy(new: Option<anchorleg_core::policy::Policy>) -> anyhow::Result<()> {
+pub fn policy(new: Option<anchorleg_core::policy::Policy>, json: bool) -> anyhow::Result<()> {
     let path = Config::default_path()?;
     let mut config = Config::load(&path)?;
     if let Some(p) = new {
         config.policy = p;
         config.save(&path)?;
     }
+    if json {
+        let all: Vec<_> = anchorleg_core::policy::Policy::ALL
+            .iter()
+            .map(|p| serde_json::json!({ "name": p.name(), "describe": p.describe() }))
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({ "schema": 1, "policy": config.policy.name(), "policies": all })
+        );
+        return Ok(());
+    }
     for p in anchorleg_core::policy::Policy::ALL {
         let mark = if p == config.policy { "*" } else { " " };
         println!("{mark} {:<12} {}", p.name(), p.describe());
+    }
+    Ok(())
+}
+
+/// `anchorleg rules`: list, add or remove lasting allow rules.
+pub fn rules(add: Vec<String>, rm: Vec<String>, json: bool) -> anyhow::Result<()> {
+    let path = Config::default_path()?;
+    let mut config = Config::load(&path)?;
+    if !add.is_empty() || !rm.is_empty() {
+        for r in &rm {
+            let before = config.allow.len();
+            config.allow.retain(|a| a != r);
+            if config.allow.len() == before {
+                anyhow::bail!("no rule `{r}`");
+            }
+        }
+        for r in add {
+            let r = r.trim().to_owned();
+            let ok = !r.is_empty() && !r.contains(',') && (!r.contains('(') || r.ends_with(')'));
+            if !ok {
+                anyhow::bail!(
+                    "`{r}`: a rule is `Tool` or `Tool(pattern)`, e.g. `Bash(cargo test *)`"
+                );
+            }
+            if !config.allow.contains(&r) {
+                config.allow.push(r);
+            }
+        }
+        config.save(&path)?;
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "schema": 1, "rules": config.allow })
+        );
+        return Ok(());
+    }
+    if config.allow.is_empty() {
+        println!("no rules: every tool call the CLI asks about comes to you");
+    }
+    for r in &config.allow {
+        println!("{r}");
+    }
+    Ok(())
+}
+
+/// `anchorleg notify`: change what's given, then show the settings.
+pub fn notify(
+    desktop: Option<bool>,
+    command: Option<String>,
+    no_command: bool,
+    test: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    use anchorleg_core::notify::{self, Kind, Notice};
+    let path = Config::default_path()?;
+    let mut config = Config::load(&path)?;
+    if desktop.is_some() || command.is_some() || no_command {
+        if let Some(d) = desktop {
+            config.notify.desktop = d;
+        }
+        if let Some(c) = command {
+            config.notify.command = Some(c).filter(|c| !c.trim().is_empty());
+        }
+        if no_command {
+            config.notify.command = None;
+        }
+        config.save(&path)?;
+    }
+    let n = &config.notify;
+    if json {
+        let db = anchorleg_core::store::Store::default_path()?;
+        let dir = db.parent().unwrap_or(std::path::Path::new("."));
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": 1,
+                "desktop": n.desktop,
+                "command": n.command,
+                "data_dir": dir,
+                "app_running": notify::app_notices(dir).is_some(),
+            })
+        );
+    } else {
+        println!("desktop  {}", if n.desktop { "on" } else { "off" });
+        println!("command  {}", n.command.as_deref().unwrap_or("(none)"));
+    }
+    if test {
+        notify::send(
+            n,
+            &Notice::new(Kind::Test, None, "anchorleg", "Notifications work."),
+        );
+        // The channels run on their own; give a command a moment before this process exits.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if !json {
+            println!("sent a test notice");
+        }
     }
     Ok(())
 }

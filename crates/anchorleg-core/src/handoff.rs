@@ -18,14 +18,15 @@ const NOTES: &str = "## Notes";
 const NOTES_HINT: &str = "Decisions made, approaches tried and dropped (and why). \
 Keep this section up to date as you work; anchorleg keeps it when it rewrites the file.";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepStatus {
     Pending,
     InProgress,
     Done,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Step {
     pub text: String,
     pub status: StepStatus,
@@ -45,15 +46,46 @@ pub struct Transcript {
     pub last_message: Option<String>,
     /// Tokens in the context at the last model request (input + cache read + cache write).
     pub context_tokens: Option<u64>,
+    /// The model's context window, when the CLI reported it.
+    pub context_window: Option<u64>,
 }
 
 /// Read a transcript. Lines that aren't JSON, and subagent (sidechain) lines, are skipped.
+/// Where agy keeps a conversation's own files (`~/.gemini/antigravity-cli/brain/<id>/`).
+const AGY_BRAIN: &str = "/antigravity-cli/brain/";
+
+/// A markdown checklist (`- [ ]`, `- [/]` in progress, `- [x]`) as steps.
+pub fn checklist(md: &str) -> Vec<Step> {
+    md.lines()
+        .filter_map(|l| {
+            let l = l
+                .trim_start()
+                .strip_prefix("- [")
+                .or_else(|| l.trim_start().strip_prefix("* ["))?;
+            let (mark, text) = l.split_once(']')?;
+            let status = match mark.trim() {
+                "x" | "X" => StepStatus::Done,
+                "/" | "-" | "~" => StepStatus::InProgress,
+                "" => StepStatus::Pending,
+                _ => return None,
+            };
+            let text = text.trim();
+            (!text.is_empty()).then(|| Step {
+                text: text.to_owned(),
+                status,
+            })
+        })
+        .collect()
+}
+
 pub fn extract(log: &str) -> Transcript {
     let mut t = Transcript::default();
     // TaskCreate: tool_use id → subject, then the result's "Task #N" → that subject.
     let mut pending_tasks: HashMap<String, String> = HashMap::new();
     let mut tasks: Vec<(String, Step)> = Vec::new();
     let mut todo_steps: Option<Vec<Step>> = None;
+    // agy keeps its task list as a checklist file in its own brain folder.
+    let mut agy_task_file: Option<String> = None;
 
     for line in log.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
@@ -77,6 +109,13 @@ pub fn extract(log: &str) -> Transcript {
                             }
                         }
                         "Bash" => t.commands.push(arg.trim().to_owned()),
+                        // agy's own notes (plans, task list), not the task's files.
+                        _ if arg.contains(AGY_BRAIN) => {
+                            let name = arg.rsplit('/').next().unwrap_or_default();
+                            if name.contains("task") && name.ends_with(".md") {
+                                agy_task_file = Some(arg);
+                            }
+                        }
                         op => {
                             if !t.files.iter().any(|(p, _)| *p == arg) {
                                 t.files
@@ -130,12 +169,31 @@ pub fn extract(log: &str) -> Transcript {
                 }
             }
             Some("item.completed" | "item.updated") => codex_item(&v, &mut t, &mut todo_steps),
+            Some("result") => {
+                // Claude: `modelUsage.<model>.contextWindow`; the main model has the largest.
+                if let Some(w) = v
+                    .get("modelUsage")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flat_map(|m| m.values())
+                    .filter_map(|u| u.get("contextWindow").and_then(Value::as_u64))
+                    .max()
+                {
+                    t.context_window = Some(w);
+                }
+            }
             Some("turn.completed") => {
                 // Codex counts cached input inside `input_tokens`.
                 if let Some(n) = v.pointer("/usage/input_tokens").and_then(Value::as_u64)
                     && n > 0
                 {
                     t.context_tokens = Some(n);
+                }
+                if let Some(w) = v
+                    .pointer("/usage/model_context_window")
+                    .and_then(Value::as_u64)
+                {
+                    t.context_window = Some(w);
                 }
             }
             Some("user") => {
@@ -159,6 +217,11 @@ pub fn extract(log: &str) -> Transcript {
     }
     // Whichever list the agent used last wins; TodoWrite replaces its whole list each time.
     t.steps = todo_steps.unwrap_or_else(|| tasks.into_iter().map(|(_, s)| s).collect());
+    if t.steps.is_empty()
+        && let Some(text) = agy_task_file.and_then(|f| std::fs::read_to_string(f).ok())
+    {
+        t.steps = checklist(&text);
+    }
     t
 }
 
@@ -355,6 +418,8 @@ pub struct Handoff<'a> {
     pub checkpoint: Option<&'a str>,
     /// The agents' own notes from the previous `TASK.md`.
     pub notes: Option<&'a str>,
+    /// The condition the session works toward (`anchorleg run --goal`).
+    pub done_when: Option<&'a str>,
 }
 
 const MAX_COMMANDS: usize = 15;
@@ -385,6 +450,15 @@ pub fn render(h: &Handoff) -> String {
                 }
             }
         }
+    }
+
+    if let Some(cond) = h.done_when {
+        s += &format!(
+            "\n## Done when\n\n{}\n\nKeep working until this holds, and prove it in the \
+             conversation. End each reply with `GOAL: MET — …`, `GOAL: NOT MET — …` or \
+             `GOAL: IMPOSSIBLE — …`.\n",
+            cond.trim()
+        );
     }
 
     let t = h.transcript;
@@ -511,9 +585,89 @@ fn one_line(s: &str, max: usize) -> String {
     }
 }
 
+/// The project instruction files each CLI reads by itself.
+fn reads(vendor: crate::registry::Vendor) -> &'static [&'static str] {
+    vendor.caps().instructions
+}
+
+/// Most of an instruction file carried into a prompt.
+const INSTRUCTIONS_MAX: usize = 8000;
+
+/// The project's instructions for another CLI that `vendor` wouldn't read by itself (a session
+/// moving from Claude Code to Codex loses CLAUDE.md), as a section for the handoff prompt.
+/// Imports of files it does read (`@AGENTS.md`) are dropped. `None`: nothing to add.
+pub fn instructions_for(cwd: &std::path::Path, vendor: crate::registry::Vendor) -> Option<String> {
+    let own = reads(vendor);
+    let mut out = String::new();
+    for file in ["CLAUDE.md", "AGENTS.md", "GEMINI.md"] {
+        if own.contains(&file) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(cwd.join(file)) else {
+            continue;
+        };
+        let kept: Vec<&str> = text
+            .lines()
+            .filter(|l| {
+                !l.trim()
+                    .strip_prefix('@')
+                    .is_some_and(|f| own.contains(&f.trim()))
+            })
+            .collect();
+        let body = kept.join("\n");
+        let body = body.trim();
+        if body.is_empty() {
+            continue;
+        }
+        let cut = body
+            .char_indices()
+            .nth(INSTRUCTIONS_MAX)
+            .map_or(body, |(i, _)| &body[..i]);
+        out += &format!(
+            "\n\nThe project's {file} (instructions written for another CLI; follow them):\n\n{cut}"
+        );
+        if cut.len() < body.len() {
+            out += &format!("\n\n[… cut; the rest is in {file}]");
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agy_task_list_comes_from_its_checklist_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let brain = dir.path().join(".gemini/antigravity-cli/brain/c1");
+        std::fs::create_dir_all(&brain).unwrap();
+        let file = brain.join("task_list.md");
+        std::fs::write(
+            &file,
+            "# Task List\n\n- [x] 1) Create `a.txt`\n- [/] 2) Create `b.txt`\n- [ ] 3) Test\n",
+        )
+        .unwrap();
+        let write = |path: &str| {
+            format!(
+                r#"{{"event":"step_update","step_update":{{"state":"DONE","step_type":"tool","tool_info":{{"name":"write_to_file","parameters":{{"TargetFile":"{path}"}}}}}}}}"#
+            )
+        };
+        let log = [write("/w/a.txt"), write(&file.display().to_string())].join("\n");
+        let t = extract(&log);
+        // The checklist isn't one of the task's files.
+        assert_eq!(t.files, [("/w/a.txt".to_owned(), "written")]);
+        let st: Vec<StepStatus> = t.steps.iter().map(|s| s.status).collect();
+        assert_eq!(
+            st,
+            [
+                StepStatus::Done,
+                StepStatus::InProgress,
+                StepStatus::Pending
+            ]
+        );
+        assert_eq!(t.steps[0].text, "1) Create `a.txt`");
+    }
 
     fn assistant(content: &str, usage: &str) -> String {
         format!(r#"{{"type":"assistant","message":{{"content":[{content}],"usage":{usage}}}}}"#)
@@ -568,7 +722,7 @@ mod tests {
     #[test]
     fn reads_the_real_mod_stop_capture() {
         let t = extract(include_str!(
-            "../../../fixtures/claude-2.1.294-mod-stop-20261008/run-sm-then-two.jsonl"
+            "../../../fixtures/claude-2.1.294-mod-stop-20261008/run-personal-then-two.jsonl"
         ));
         assert_eq!(t.last_message.as_deref(), Some("MANGO-17"));
         assert_eq!(t.read.len(), 1);
@@ -660,17 +814,19 @@ mod tests {
             }],
             last_message: Some("Halfway.".into()),
             context_tokens: None,
+            context_window: None,
         };
         let goals = ["fix the tests".to_owned(), "also run clippy".to_owned()];
         let md = render(&Handoff {
             goals: &goals,
             transcript: &t,
             cwd: Path::new("/repo"),
-            from: "claude-sm",
+            from: "claude-personal",
             reason: "limit reached",
             git_status: Some(" M src/a.rs\n"),
             checkpoint: Some("refs/anchorleg/run-3/1"),
             notes: None,
+            done_when: None,
         });
         insta::assert_snapshot!(md);
         assert_eq!(notes_of(&md), None);
@@ -696,6 +852,7 @@ mod tests {
                 git_status: None,
                 checkpoint: None,
                 notes,
+                done_when: None,
             })
         };
         let path = write(dir.path(), h).unwrap();
@@ -710,6 +867,31 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join(".handoff/.gitignore")).unwrap(),
             "*\n"
+        );
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn context_size_and_window() {
+        let claude = [
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":40000,"cache_creation_input_tokens":2000},"content":[]}}"#,
+            r#"{"type":"result","subtype":"success","modelUsage":{"claude-haiku-5-5":{"contextWindow":200000},"claude-opus-5-5":{"contextWindow":1000000}}}"#,
+        ]
+        .join("\n");
+        let t = extract(&claude);
+        assert_eq!(
+            (t.context_tokens, t.context_window),
+            (Some(42003), Some(1_000_000))
+        );
+        let codex = r#"{"type":"turn.completed","usage":{"input_tokens":9000,"model_context_window":258400}}"#;
+        let t = extract(codex);
+        assert_eq!(
+            (t.context_tokens, t.context_window),
+            (Some(9000), Some(258400))
         );
     }
 }

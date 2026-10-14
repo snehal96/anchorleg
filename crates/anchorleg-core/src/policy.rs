@@ -63,6 +63,55 @@ impl std::str::FromStr for Policy {
     }
 }
 
+/// Whether an account may keep working on paid usage credits (Claude "extra usage", Codex
+/// credits) once its plan's windows run out. Spending money is never the default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CreditsUse {
+    /// Stop as soon as the CLI starts paying from credits, and switch or wait instead.
+    #[default]
+    Never,
+    /// Only when every other account is out: better to pay than to wait for a reset.
+    LastResort,
+    /// Keep going on credits instead of switching mid-task.
+    Allow,
+}
+
+impl CreditsUse {
+    pub const ALL: [CreditsUse; 3] = [Self::Never, Self::LastResort, Self::Allow];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::LastResort => "last-resort",
+            Self::Allow => "allow",
+        }
+    }
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Never => "never spend credits; switch or wait instead",
+            Self::LastResort => "spend credits only when every other account is out",
+            Self::Allow => "keep going on credits instead of switching",
+        }
+    }
+}
+
+impl std::str::FromStr for CreditsUse {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "never" | "off" => Ok(Self::Never),
+            "last-resort" | "last_resort" => Ok(Self::LastResort),
+            "allow" | "on" => Ok(Self::Allow),
+            other => Err(format!(
+                "unknown credits setting {other:?} (never, last-resort or allow)"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PickOptions {
     /// Not eligible right now (e.g. the account that just hit its limit).
@@ -79,6 +128,9 @@ pub struct PickOptions {
     pub prefer: Option<String>,
     /// Only ever use this account (`--account`).
     pub only: Option<String>,
+    /// Accounts the CLI last reported as able to pay from usage credits. A blocked one among them
+    /// is used (if its `credits` setting allows) before waiting for a reset.
+    pub has_credits: Vec<String>,
 }
 
 impl Default for PickOptions {
@@ -91,6 +143,7 @@ impl Default for PickOptions {
             policy: Policy::Drain,
             prefer: None,
             only: None,
+            has_credits: Vec::new(),
         }
     }
 }
@@ -102,6 +155,8 @@ pub enum PickReason {
     Available,
     /// Every unblocked account is near its limit; this is the best of them.
     NearLimit,
+    /// Every account is out; this one can go on paying from usage credits.
+    Credits,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,15 +183,42 @@ pub fn blocked_until(rows: &[&QuotaRow], now: EpochSecs, opts: &PickOptions) -> 
         .max()
 }
 
-fn max_used(rows: &[&QuotaRow]) -> f64 {
-    rows.iter().filter_map(|r| r.used).fold(0.0, f64::max)
+/// Until when a `strict` account past its own `stop_at` is off limits: the latest reset of the
+/// windows at or over it. `None` when it isn't strict or has room.
+pub fn strict_until(
+    account: &Account,
+    rows: &[&QuotaRow],
+    now: EpochSecs,
+    opts: &PickOptions,
+) -> Option<EpochSecs> {
+    let limit = account.stop_at.filter(|_| account.strict)?;
+    rows.iter()
+        .filter(|r| r.used.is_some_and(|u| u >= limit))
+        .map(|r| {
+            r.resets_at
+                .unwrap_or(r.updated_at + opts.unknown_reset_wait)
+        })
+        .filter(|&until| until > now)
+        .max()
+}
+
+/// A window's use at `now`: 0 once its reset time has passed, whatever was last read.
+pub fn used_now(r: &QuotaRow, now: EpochSecs) -> Option<f64> {
+    let reset = r.resets_at.is_some_and(|t| t <= now);
+    r.used.map(|u| if reset { 0.0 } else { u })
+}
+
+fn max_used(rows: &[&QuotaRow], now: EpochSecs) -> f64 {
+    rows.iter()
+        .filter_map(|r| used_now(r, now))
+        .fold(0.0, f64::max)
 }
 
 /// The weekly (7-day) window's use; 0 when unknown.
-fn weekly_used(rows: &[&QuotaRow]) -> f64 {
+fn weekly_used(rows: &[&QuotaRow], now: EpochSecs) -> f64 {
     rows.iter()
         .filter(|r| r.window == "seven_day")
-        .filter_map(|r| r.used)
+        .filter_map(|r| used_now(r, now))
         .fold(0.0, f64::max)
 }
 
@@ -154,6 +236,8 @@ pub fn pick<'a>(
     }
 
     let mut near: Option<(&Account, f64)> = None;
+    // First blocked account (priority order) that may pay from credits.
+    let mut on_credits: Option<&Account> = None;
     let mut earliest: Option<(&Account, EpochSecs)> = None;
     // Healthy accounts, in priority order, with (max used, weekly used).
     let mut healthy: Vec<(&Account, f64, f64)> = Vec::new();
@@ -169,6 +253,19 @@ pub fn pick<'a>(
             .get(account.name.as_str())
             .map_or(&[][..], Vec::as_slice);
         if let Some(until) = blocked_until(account_rows, now, opts) {
+            if on_credits.is_none()
+                && account.credits != CreditsUse::Never
+                && opts.has_credits.contains(&account.name)
+            {
+                on_credits = Some(account);
+            }
+            if earliest.is_none_or(|(_, t)| until < t) {
+                earliest = Some((account, until));
+            }
+            continue;
+        }
+        // Past a strict limit it's as good as blocked, credits or not.
+        if let Some(until) = strict_until(account, account_rows, now, opts) {
             if earliest.is_none_or(|(_, t)| until < t) {
                 earliest = Some((account, until));
             }
@@ -177,13 +274,17 @@ pub fn pick<'a>(
         if opts.exclude.contains(&account.name) {
             continue;
         }
-        let used = max_used(account_rows);
-        let weekly = weekly_used(account_rows);
+        let used = max_used(account_rows, now);
+        let weekly = weekly_used(account_rows, now);
         // `reserve_7d = 0.2` keeps the last 20% of the weekly window for when nothing else is free.
         let into_reserve = account
             .reserve_7d
             .is_some_and(|reserve| weekly >= 1.0 - reserve);
-        if used < opts.near_limit && !into_reserve {
+        // Its own `stop_at` (e.g. 0.4) counts like the near-limit line, for this account only.
+        let limit = account
+            .stop_at
+            .map_or(opts.near_limit, |own| own.min(opts.near_limit));
+        if used < limit && !into_reserve {
             healthy.push((account, used, weekly));
             continue;
         }
@@ -210,13 +311,17 @@ pub fn pick<'a>(
         };
     }
 
-    match (near, earliest) {
-        (Some((account, _)), _) => Pick::Use {
+    match (near, on_credits, earliest) {
+        (Some((account, _)), ..) => Pick::Use {
             account,
             reason: PickReason::NearLimit,
         },
-        (None, Some((account, at))) => Pick::WaitUntil { at, account },
-        (None, None) => Pick::NoAccounts,
+        (None, Some(account), _) => Pick::Use {
+            account,
+            reason: PickReason::Credits,
+        },
+        (None, None, Some((account, at))) => Pick::WaitUntil { at, account },
+        (None, None, None) => Pick::NoAccounts,
     }
 }
 
@@ -253,6 +358,26 @@ mod tests {
             Pick::Use { account, reason } => format!("use {} ({reason:?})", account.name),
             Pick::WaitUntil { at, account } => format!("wait {} until {at}", account.name),
             Pick::NoAccounts => "none".into(),
+        }
+    }
+
+    #[test]
+    fn a_window_past_its_reset_counts_as_empty() {
+        let a = acct("a", Vendor::Claude);
+        let b = acct("b", Vendor::Claude);
+        // `a`'s last reading was near the limit, but that window has since reset.
+        let rows = vec![
+            row("a", "five_hour", None, Some(0.97), Some(NOW - 60)),
+            row("b", "five_hour", None, Some(0.5), Some(NOW + 600)),
+        ];
+        assert_eq!(used_now(&rows[0], NOW), Some(0.0));
+        let opts = PickOptions {
+            policy: Policy::Balance,
+            ..PickOptions::default()
+        };
+        match pick(&[&a, &b], &rows, NOW, &opts) {
+            Pick::Use { account, .. } => assert_eq!(account.name, "a"),
+            other => panic!("{other:?}"),
         }
     }
 
@@ -490,6 +615,46 @@ mod tests {
             "use b (Available)"
         );
         assert_eq!("save-weekly".parse::<Policy>(), Ok(Policy::SaveWeekly));
+
+        // An account past its own limit goes after the others, and is still used when nothing
+        // else is free.
+        let mut a = acct("a", Vendor::Claude);
+        a.stop_at = Some(0.4);
+        let b = acct("b", Vendor::Claude);
+        let quota = vec![
+            row("a", "five_hour", None, Some(0.45), None),
+            row("b", "five_hour", None, Some(0.7), None),
+        ];
+        let drain = PickOptions::default();
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &drain)),
+            "use b (Available)"
+        );
+        assert_eq!(name(&pick(&[&a], &quota, NOW, &drain)), "use a (NearLimit)");
+        assert_eq!(a.stop_at(0.9), 0.4);
+        assert_eq!(a.stop_at(0.3), 0.3);
+        assert_eq!(a.stop_at(0.0), 0.4);
+        assert_eq!(b.stop_at(0.9), 0.9);
+
+        // Strict: past its limit it's never used; the run waits for the window's reset.
+        a.strict = true;
+        let quota = vec![
+            row("a", "five_hour", None, Some(0.45), Some(NOW + 600)),
+            row(
+                "b",
+                "five_hour",
+                Some("rejected"),
+                Some(1.0),
+                Some(NOW + 900),
+            ),
+        ];
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &drain)),
+            name(&Pick::WaitUntil {
+                at: NOW + 600,
+                account: &a
+            })
+        );
         assert!("fastest".parse::<Policy>().is_err());
     }
 
@@ -511,6 +676,42 @@ mod tests {
         assert_eq!(
             pick(&[], &[], NOW, &PickOptions::default()),
             Pick::NoAccounts
+        );
+    }
+
+    #[test]
+    fn credits_are_a_fallback_before_waiting() {
+        let mut a = acct("a", Vendor::Claude);
+        let b = acct("b", Vendor::Claude);
+        let quota = vec![
+            row("a", "five_hour", Some("rejected"), None, Some(NOW + 50)),
+            row("b", "five_hour", Some("rejected"), None, Some(NOW + 20)),
+        ];
+        let opts = PickOptions {
+            has_credits: vec!["a".into()],
+            ..PickOptions::default()
+        };
+        // Default `never`: credits aren't touched, wait for b.
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &opts)),
+            format!("wait b until {}", NOW + 20)
+        );
+        a.credits = CreditsUse::LastResort;
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &opts)),
+            "use a (Credits)"
+        );
+        // An account with room still comes first.
+        let room = vec![quota[0].clone()];
+        assert_eq!(
+            name(&pick(&[&a, &b], &room, NOW, &opts)),
+            "use b (Available)"
+        );
+        // Credits the CLI hasn't reported as available don't count.
+        let none = PickOptions::default();
+        assert_eq!(
+            name(&pick(&[&a, &b], &quota, NOW, &none)),
+            format!("wait b until {}", NOW + 20)
         );
     }
 }

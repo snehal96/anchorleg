@@ -8,6 +8,12 @@
 # fail: it warns on stderr and starts a new conversation.
 set -uo pipefail
 
+# `mcp …` (anchorleg sync mcp): logged as "<account> mcp …" to $FAKE_DIR/mcp.log, nothing else.
+if [[ "${1:-}" == mcp ]]; then
+  printf '%s %s\n' "$(basename "$HOME")" "$*" >>"$FAKE_DIR/mcp.log"
+  exit 0
+fi
+
 account="$(basename "$HOME")"
 printf '%s %s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" >>"$FAKE_LOG"  # one line per launch
 n="$(grep -c "^$account " "$FAKE_LOG")"
@@ -30,6 +36,10 @@ if [[ -n "${FAKE_HOOK:-}" && " $* " == *" --dangerously-skip-permissions "* ]]; 
   hooks="$HOME/.gemini/config/hooks.json"
   command="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["anchorleg"]["PreToolUse"][0]["hooks"][0]["command"])' "$hooks")"
   request="{\"toolCall\":{\"name\":\"run_command\",\"args\":{\"CommandLine\":\"$FAKE_HOOK\",\"Cwd\":\"$PWD\"}},\"workspacePaths\":[\"$PWD\"],\"conversationId\":\"fake\"}"
+  # FAKE_HOOK=edit:<file>: the call is a write to that file of the workspace instead.
+  if [[ "$FAKE_HOOK" == edit:* ]]; then
+    request="{\"toolCall\":{\"name\":\"write_to_file\",\"args\":{\"TargetFile\":\"$PWD/${FAKE_HOOK#edit:}\"}},\"workspacePaths\":[\"$PWD\"],\"conversationId\":\"fake\"}"
+  fi
   answer="$(cd "$(dirname "$hooks")" && printf '%s' "$request" | sh -c "$command")"
   printf '%s\n' "$answer" >"$FAKE_DIR/hook.out"
   if [[ "$answer" == *'"deny"'* ]]; then
@@ -47,6 +57,14 @@ if [[ -n "$id" ]]; then
   echo db >>"$store/$id.db"
 fi
 
-cat "$script"
+# FAKE_SLEEP=N: the first launch prints its first line, then works for N seconds (short sleeps,
+# so a kill is quick).
+if [[ -n "${FAKE_SLEEP:-}" && "$n" == 1 ]]; then
+  head -1 "$script"
+  for _ in $(seq $((FAKE_SLEEP * 10))); do sleep 0.1; done
+  tail -n +2 "$script"
+else
+  cat "$script"
+fi
 grep -q '"status":"ERROR"' "$script" && exit 1
 exit 0

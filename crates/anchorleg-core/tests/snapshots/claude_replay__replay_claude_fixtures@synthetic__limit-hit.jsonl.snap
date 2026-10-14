@@ -66,6 +66,9 @@ input_file: fixtures/synthetic/limit-hit.jsonl
   {
     "event": {
       "event": "rate_limit",
+      "isUsingOverage": null,
+      "overageDisabledReason": null,
+      "overageStatus": null,
       "rateLimitType": "five_hour",
       "resetsAt": 1791460800,
       "status": "rejected",
@@ -94,11 +97,13 @@ input_file: fixtures/synthetic/limit-hit.jsonl
       "errors": [],
       "event": "result",
       "is_error": true,
+      "modelUsage": null,
       "num_turns": null,
       "result": "Claude AI usage limit reached|1791460800",
       "session_id": "11111111-aaaa-4bbb-8ccc-000000000003",
       "subtype": "success",
-      "total_cost_usd": null
+      "total_cost_usd": null,
+      "usage": null
     },
     "signals": [
       {

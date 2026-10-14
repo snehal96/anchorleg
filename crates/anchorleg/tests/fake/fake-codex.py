@@ -12,12 +12,18 @@ real app server (fixtures/codex-0.153.4-app-server-*).
   $CODEX_HOME/sessions/, and resuming a thread this login has no rollout for fails with
   "no rollout found". Each launch appends $FAKE_DIR/X.rollout.jsonl (quota lines) to the rollout.
 - `turn/start`: appends "<account> <args…> <thread request> model=… effort=… sandbox=…
-  approval=… -- <text>" to $FAKE_LOG (one line per turn), then prints the script's messages.
+  approval=… [instructions=…] [config=…] -- <text>" to $FAKE_LOG (one line per turn), then prints the script's messages.
   A request in the script (it has an "id") waits for anchorleg's answer, which is appended to
   $FAKE_DIR/answers.log; a "cancel" ends the turn as interrupted, like the real CLI. After an
   `account/rateLimits/updated` it waits a moment for a `turn/interrupt` (anchorleg's soft stop),
   which ends the turn as interrupted and is appended to $FAKE_DIR/interrupts.log. A later turn
-  in the same launch plays $FAKE_DIR/X.followup.jsonl.
+  in the same launch plays $FAKE_DIR/X.followup.jsonl. A script line {"fake":"wait_steer"} holds
+  the turn until anchorleg sends `turn/steer` (appended to $FAKE_DIR/steers.log; the turn goes
+  on) or `turn/interrupt` (the turn ends interrupted), 10 s at most.
+- `review/start`: played like `turn/start`, its instructions logged as "[review] …".
+- `thread/name/set`: appended to $FAKE_DIR/names.log as "<thread> <name>".
+- `thread/compact/start`: logged like a turn, answered with a `contextCompaction` item and a
+  completed turn.
 """
 
 import glob
@@ -29,7 +35,25 @@ import sys
 account = os.path.basename(os.environ["CODEX_HOME"].rstrip("/"))
 fake = os.environ["FAKE_DIR"]
 args = sys.argv[1:]
+# `mcp list --json`: $FAKE_DIR/X.mcp.json, or no servers. Other `mcp …` (anchorleg sync mcp):
+# logged as "<account> mcp …" to $FAKE_DIR/mcp.log.
+if args[:1] == ["mcp"]:
+    if args[1:2] == ["list"]:
+        path = f"{fake}/{account}.mcp.json"
+        print(open(path).read() if os.path.exists(path) else "[]")
+    else:
+        with open(f"{fake}/mcp.log", "a") as f:
+            f.write(f"{account} {' '.join(args)}\n")
+    sys.exit(0)
 pre_args = args[: args.index("app-server")] if "app-server" in args else args
+# Feature switches (`-c features.X=true`) go to their own log, so calls.log stays about turns.
+features = [pre_args[i + 1] for i, a in enumerate(pre_args[:-1]) if a == "-c" and pre_args[i + 1].startswith("features.")]
+for f in features:
+    i = pre_args.index(f)
+    pre_args = pre_args[: i - 1] + pre_args[i + 1 :]
+if features:
+    with open(f"{fake}/features.log", "a") as f:
+        f.write(f"{account} {' '.join(features)}\n")
 
 
 def send(msg):
@@ -48,6 +72,7 @@ def rollout(tid):
 
 
 thread = None  # (method, params, tid)
+experimental = False
 turns = 0
 script_lines = []
 while True:
@@ -57,6 +82,7 @@ while True:
     method = msg.get("method")
     params = msg.get("params") or {}
     if method == "initialize":
+        experimental = bool((params.get("capabilities") or {}).get("experimentalApi"))
         send({"id": msg["id"], "result": {"userAgent": "fake-codex"}})
     elif method == "account/rateLimits/read":
         with open(f"{fake}/probes.log", "a") as f:
@@ -68,7 +94,7 @@ while True:
         else:
             send({"id": msg["id"], "result": {"rateLimits": None}})
         sys.exit(0)
-    elif method in ("thread/start", "thread/resume"):
+    elif method in ("thread/start", "thread/resume", "thread/fork"):
         log = os.environ["FAKE_LOG"]
         n = 1 + sum(1 for l in open(log) if l.startswith(account + " ")) if os.path.exists(log) else 1
         script = f"{fake}/{account}.{n}.jsonl"
@@ -76,7 +102,13 @@ while True:
             script = f"{fake}/{account}.jsonl"
         script_lines = [l for l in open(script).read().splitlines() if l.strip()]
         tid = params.get("threadId")
-        if method == "thread/resume" and not rollout(tid):
+        if method == "thread/fork" and rollout(tid):
+            # A new thread with the old one's history.
+            old = rollout(tid)
+            tid = tid + "-fork"
+            with open(old) as src, open(old.replace(tid[:-5], tid), "w") as dst:
+                dst.write(src.read())
+        elif method in ("thread/resume", "thread/fork") and not rollout(tid):
             with open(log, "a") as f:
                 f.write(f"{account} {' '.join(pre_args)} thread/resume {tid} (not found)\n".replace("  ", " "))
             send({"id": msg["id"], "error": {"code": -32600, "message": f"no rollout found for thread id {tid}"}})
@@ -95,17 +127,47 @@ while True:
             f.write('{"type":"session_meta"}\n')
             if os.path.exists(f"{fake}/{account}.rollout.jsonl"):
                 f.write(open(f"{fake}/{account}.rollout.jsonl").read())
-        send({"id": msg["id"], "result": {"thread": {"id": tid, "path": path}}})
-    elif method == "turn/start":
+        send({"id": msg["id"], "result": {"thread": {"id": tid, "path": path}, "model": params.get("model") or "gpt-default"}})
+    elif method == "thread/name/set":
+        with open(f"{fake}/names.log", "a") as f:
+            f.write(f"{params.get('threadId')} {params.get('name')}\n")
+        send({"id": msg["id"], "result": {}})
+    elif method == "thread/compact/start":
+        # `/compact`: logged like a turn ("… thread/compact/start <thread>"), then a compaction.
         turns += 1
         how, tp, tid = thread
+        with open(os.environ["FAKE_LOG"], "a") as f:
+            f.write(f"{account} {' '.join(pre_args)} {how} {tid} thread/compact/start {params.get('threadId')}".replace("  ", " ") + "\n")
+        send({"id": msg["id"], "result": {}})
+        send({"method": "turn/started", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "inProgress"}}})
+        send({"method": "item/completed", "params": {"threadId": tid, "item": {"type": "contextCompaction", "id": "cc1"}}})
+        send({"method": "turn/completed", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "completed", "error": None}}})
+    elif method in ("turn/start", "review/start"):
+        turns += 1
+        how, tp, tid = thread
+        if method == "review/start":
+            # Codex's review mode: logged like a turn, with "[review]" before the instructions.
+            params = {"input": [{"type": "text", "text": "[review] " + params["target"]["instructions"]}]}
         text = " ".join(i.get("text", "") for i in params.get("input", [])).replace("\n", " ")
-        what = how + (f" {tid}" if how == "thread/resume" else "")
+        what = how + (f" {tid}" if how in ("thread/resume", "thread/fork") else "")
+        if tp.get("lastTurnId"):
+            what += f" at={tp['lastTurnId']}"
         line = (
             f"{account} {' '.join(pre_args)} {what} model={tp.get('model')} "
             f"effort={params.get('effort')} sandbox={tp.get('sandbox')} "
-            f"approval={tp.get('approvalPolicy')} -- {text}"
+            f"approval={tp.get('approvalPolicy')}"
+            + (f" reviewer={tp['approvalsReviewer']}" if tp.get("approvalsReviewer") else "")
+            + (" schema=" + json.dumps(params["outputSchema"], separators=(",", ":")) if params.get("outputSchema") else "")
+            + (" instructions=" + json.dumps(tp["developerInstructions"]) if tp.get("developerInstructions") else "")
+            + (" config=" + json.dumps(tp["config"], separators=(",", ":")) if tp.get("config") else "")
+            + f" -- {text}"
         ).replace("  ", " ")
+        images = [i["path"] for i in params.get("input", []) if i.get("type") == "localImage"]
+        if images:
+            line += " [images: " + ", ".join(os.path.basename(i) for i in images) + "]"
+        mode = params.get("collaborationMode")
+        if mode:
+            line += f" [mode: {mode['mode']} model={mode['settings'].get('model')} experimental={experimental}]"
         with open(os.environ["FAKE_LOG"], "a") as f:
             f.write(line + "\n")
         send({"id": msg["id"], "result": {"turn": {"id": f"u{turns}", "status": "inProgress"}}})
@@ -117,6 +179,21 @@ while True:
             if not l.strip():
                 continue
             out = json.loads(l)
+            if out.get("fake") == "wait_steer":
+                # Hold the turn open until anchorleg steers or interrupts it (10 s at most).
+                ready, _, _ = select.select([sys.stdin], [], [], 10.0)
+                incoming = read() if ready else None
+                if incoming and incoming.get("method") == "turn/steer":
+                    with open(f"{fake}/steers.log", "a") as f:
+                        f.write(json.dumps(incoming) + "\n")
+                    send({"id": incoming["id"], "result": {"turnId": f"u{turns}"}})
+                elif incoming and incoming.get("method") == "turn/interrupt":
+                    with open(f"{fake}/interrupts.log", "a") as f:
+                        f.write(json.dumps(incoming) + "\n")
+                    send({"id": incoming["id"], "result": {}})
+                    send({"method": "turn/completed", "params": {"threadId": tid, "turn": {"id": f"u{turns}", "status": "interrupted", "error": None}}})
+                    break
+                continue
             send(out)
             if out.get("method") == "account/rateLimits/updated":
                 ready, _, _ = select.select([sys.stdin], [], [], 2.0)

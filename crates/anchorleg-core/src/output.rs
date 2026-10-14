@@ -3,10 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::EpochSecs;
+use crate::adapters::{CreditState, EpochSecs};
 use crate::policy::{self, Pick, PickOptions, PickReason};
 use crate::registry::{Config, Vendor};
-use crate::store::{QuotaRow, RunId};
+use crate::store::{CreditsRow, QuotaRow, RunId, UsageTotal};
 
 pub const SCHEMA: u32 = 1;
 
@@ -16,6 +16,8 @@ pub mod exit {
     pub const OK: u8 = 0;
     /// The task ran and failed, or anchorleg hit an error.
     pub const FAILED: u8 = 1;
+    /// The task used up its `--budget` before it finished.
+    pub const OVER_BUDGET: u8 = 3;
     /// Bad arguments (clap's default).
     pub const USAGE: u8 = 2;
     /// Every account is blocked and `--no-wait` was given (EX_TEMPFAIL).
@@ -55,13 +57,37 @@ pub struct AccountStatus {
     pub blocked_until: Option<EpochSecs>,
     /// Latest reading per window.
     pub windows: Vec<WindowStatus>,
+    /// Paid usage credits past the plan's limits, when the CLI has reported them.
+    pub credits: Option<CreditsStatus>,
+    /// Whether anchorleg may spend them: `never`, `last-resort` or `allow`.
+    pub credits_use: policy::CreditsUse,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreditsStatus {
+    pub state: CreditState,
+    pub balance: Option<f64>,
+    pub reason: Option<String>,
+    pub updated_at: EpochSecs,
+}
+
+/// `anchorleg usage --json`: tokens and cost recorded from runs since `since`.
+#[derive(Debug, Clone, Serialize)]
+pub struct UsageReport {
+    pub schema: u32,
+    pub now: EpochSecs,
+    pub since: EpochSecs,
+    /// Per account and model, most expensive first.
+    pub totals: Vec<UsageTotal>,
+    /// Per UTC day: `[day start, tokens, list-price cost]`.
+    pub by_day: Vec<(EpochSecs, u64, f64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WindowStatus {
     pub window: String,
     pub status: Option<String>,
-    /// Fraction used, 0.0–1.0.
+    /// Fraction used, 0.0–1.0; 0 once `resets_at` has passed.
     pub used: Option<f64>,
     pub resets_at: Option<EpochSecs>,
     pub source: String,
@@ -71,9 +97,17 @@ pub struct WindowStatus {
 pub fn status(
     config: &Config,
     quota: &[QuotaRow],
+    credits: &[CreditsRow],
     now: EpochSecs,
     opts: &PickOptions,
 ) -> StatusReport {
+    let mut opts = opts.clone();
+    opts.has_credits = credits
+        .iter()
+        .filter(|c| c.state.spendable())
+        .map(|c| c.account.clone())
+        .collect();
+    let opts = &opts;
     let ordered = config.by_priority();
     let next = match policy::pick(&ordered, quota, now, opts) {
         Pick::Use { account, reason } => Next::Use {
@@ -100,12 +134,22 @@ pub fn status(
                     .map(|r| WindowStatus {
                         window: r.window.clone(),
                         status: r.status.clone(),
-                        used: r.used,
+                        used: policy::used_now(r, now),
                         resets_at: r.resets_at,
                         source: r.source.clone(),
                         updated_at: r.updated_at,
                     })
                     .collect(),
+                credits: credits
+                    .iter()
+                    .find(|c| c.account == a.name)
+                    .map(|c| CreditsStatus {
+                        state: c.state,
+                        balance: c.balance,
+                        reason: c.reason.clone(),
+                        updated_at: c.updated_at,
+                    }),
+                credits_use: a.credits,
             }
         })
         .collect();
@@ -132,6 +176,32 @@ pub struct RunReport {
     pub switches: Vec<Switch>,
     /// Set when `outcome` is `all_blocked`: the earliest time an account frees up.
     pub wait_until: Option<EpochSecs>,
+    /// The run's goal and how it ended (`anchorleg run --goal`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<GoalReport>,
+    /// The task's token budget and what it used (`anchorleg run --budget`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<BudgetReport>,
+    /// The answer as JSON, with `--json-schema`; `null` if the agent didn't give one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BudgetReport {
+    pub tokens: u64,
+    /// Input, output and cache-write tokens of every launch, and a tenth of its cache reads.
+    pub spent: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GoalReport {
+    pub condition: String,
+    pub status: crate::goal::Status,
+    /// Turns spent on it in this run.
+    pub turns: u32,
+    /// The agent's last word on it.
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -142,6 +212,8 @@ pub enum Outcome {
     AllBlocked,
     NoAccounts,
     Stopped,
+    /// The task used up its `--budget` before it finished.
+    OverBudget,
 }
 
 impl Outcome {
@@ -152,6 +224,7 @@ impl Outcome {
             Self::AllBlocked => exit::ALL_BLOCKED,
             Self::NoAccounts => exit::NO_ACCOUNTS,
             Self::Stopped => exit::STOPPED,
+            Self::OverBudget => exit::OVER_BUDGET,
         }
     }
 }

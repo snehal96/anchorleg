@@ -4,7 +4,7 @@ import type { On, SessionRateLimit } from 'claude-code'
 import { maxUsed, toReadings } from './register'
 
 const ENV = {
-  ANCHORLEG_ACCOUNT: 'claude-sm',
+  ANCHORLEG_ACCOUNT: 'claude-personal',
   ANCHORLEG_BIN: '/bin/anchorleg',
   ANCHORLEG_RUN_ID: '7',
   ANCHORLEG_STOP_AT: '0.9',
@@ -16,10 +16,14 @@ const limits = (fiveHour: number): SessionRateLimit[] => [
 ]
 
 /** Answers the engine beneath the plugin; records every `anchorleg` call the mod makes. */
-function engine(on: On, rateLimits: SessionRateLimit[], exitCode = 0) {
+function engine(on: On, rateLimits: SessionRateLimit[], exitCode = 0, interrupted = false, tokens = 0) {
   const calls: { argv: readonly string[]; stdin?: string }[] = []
   let requests = 0
   on('process.run', (_$, e) => {
+    if (e.argv[1] === 'interrupt-check') {
+      const code = interrupted ? 0 : 1
+      return { value: { exitCode: code, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     calls.push({ argv: e.argv, stdin: e.init?.stdin })
     return {
       value: { exitCode, stdout: '', stderr: exitCode ? 'boom' : '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -37,7 +41,15 @@ function engine(on: On, rateLimits: SessionRateLimit[], exitCode = 0) {
       answer: 'model answered',
       toolUses: [],
       stopReason: 'end_turn',
-      usage: null,
+      usage: tokens
+        ? {
+            model: 'claude-haiku-5-5',
+            input_tokens: tokens / 2,
+            output_tokens: tokens / 4,
+            cache_creation_input_tokens: tokens / 4,
+            cache_read_input_tokens: 10_000,
+          }
+        : null,
     }
   })
   return { calls, requests: () => requests }
@@ -72,7 +84,7 @@ test('session.measure reports quota to anchorleg', async ($, on) => {
   expect(calls.length).toBe(1)
   expect(calls[0].argv).toEqual(['/bin/anchorleg', 'report', '--json'])
   expect(JSON.parse(calls[0].stdin ?? '')).toEqual({
-    account: 'claude-sm',
+    account: 'claude-personal',
     readings: toReadings(limits(30)),
   })
 })
@@ -99,6 +111,19 @@ test('at the threshold it records a stop and ends the turn without a request', a
   // Only once per session: the next step goes through.
   await runStep($, 3)
   expect(requests()).toBe(1)
+})
+
+test('once the task has used its token budget the turn ends with a stop', async ($, on) => {
+  mock.env(on, { ...ENV, ANCHORLEG_BUDGET_LEFT: '2000' })
+  // Every request counts 1,200 tokens: 200, and a tenth of its 10,000 cache reads.
+  const { calls, requests } = engine(on, limits(10), 0, false, 200)
+  await runStep($, 0)
+  await runStep($, 1)
+  expect(requests()).toBe(2)
+  const result = await runStep($, 2)
+  expect(requests()).toBe(2)
+  expect(result.answer).toContain('token budget')
+  expect(JSON.parse(calls[0].stdin ?? '').stop_reason).toBe('token budget used up')
 })
 
 test('the first step and subagent steps are never stopped', async ($, on) => {
@@ -177,8 +202,128 @@ test('allowed calls, queries and runs outside anchorleg never ask', async ($, on
   expect(calls.length).toBe(0)
 })
 
+test("in auto mode Claude's classifier decides, not the person", async ($, on) => {
+  mock.env(on, { ...ENV, ANCHORLEG_PERMISSION_MODE: 'auto' })
+  const calls = asking(on, [])
+  expect((await $.tool.check(write)).decision).toBe('ask')
+  expect(calls.length).toBe(0)
+})
+
 test('if anchorleg cannot answer, the CLI verdict stands', async ($, on) => {
   mock.env(on, ENV)
   asking(on, ['oops'], 1)
   expect((await $.tool.check(write)).decision).toBe('ask')
+})
+
+const question = {
+  tool: 'AskUserQuestion' as const,
+  tool_use_id: 'tu9',
+  questions: [
+    {
+      question: 'Which test runner?',
+      header: 'Runner',
+      multiSelect: false,
+      options: [
+        { label: 'Vitest', description: 'fast, ESM' },
+        { label: 'Jest', description: 'what we have' },
+      ],
+    },
+  ],
+}
+
+/** Beneath the plugin: what the CLI itself would answer (the dialog nobody sees in `-p`). */
+function cliDialog(on: On) {
+  on('tool.call', { tool: 'AskUserQuestion' }, () => ({
+    result: { questions: question.questions, answers: { from: 'the CLI' } },
+  }))
+}
+
+test('a question goes to anchorleg and the answers come back as the tool result', async ($, on) => {
+  mock.env(on, ENV)
+  cliDialog(on)
+  const calls = asking(on, [
+    JSON.stringify({ decision: 'pending', id: 5, reason: 'still waiting' }),
+    JSON.stringify({ decision: 'allow', id: 5, reason: 'answered', answers: { 'Which test runner?': ['Vitest'] } }),
+  ])
+  expect((await $.tool.check({ tool: 'AskUserQuestion', input: question, tool_use_id: 'tu9' })).decision).toBe('allow')
+  const out = await $.tool.call(question)
+  expect(out.result?.answers).toEqual({ 'Which test runner?': 'Vitest' })
+  expect(calls.length).toBe(2)
+  expect(JSON.parse(calls[0].stdin ?? '')).toEqual({
+    run_id: 7,
+    tool: 'AskUserQuestion',
+    input: {
+      questions: [
+        {
+          id: 'Which test runner?',
+          header: 'Runner',
+          question: 'Which test runner?',
+          options: [
+            { label: 'Vitest', description: 'fast, ESM' },
+            { label: 'Jest', description: 'what we have' },
+          ],
+          multi_select: false,
+        },
+      ],
+    },
+    reason: null,
+  })
+  expect(JSON.parse(calls[1].stdin ?? '').id).toBe(5)
+})
+
+test('a skipped question is a refusal the model reads', async ($, on) => {
+  mock.env(on, ENV)
+  cliDialog(on)
+  asking(on, [JSON.stringify({ decision: 'deny', id: 6, reason: 'the user skipped it' })])
+  const out = await $.tool.call(question)
+  expect(out.deny).toContain('the user skipped it')
+})
+
+test('outside anchorleg, or when anchorleg cannot answer, the CLI handles the question', async ($, on) => {
+  mock.env(on, {})
+  cliDialog(on)
+  const calls = asking(on, [])
+  expect((await $.tool.call(question)).result?.answers).toEqual({ from: 'the CLI' })
+  expect(calls.length).toBe(0)
+})
+
+test('in an anchorleg run the mod adds ask_user, answered through anchorleg', async ($, on) => {
+  mock.env(on, ENV)
+  const registered: string[] = []
+  on('tool.register', (_$, e) => {
+    registered.push(e.name)
+    return { value: undefined }
+  })
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  const calls = asking(on, [
+    JSON.stringify({ decision: 'allow', id: 8, answers: { 'Which test runner?': ['Jest'] } }),
+  ])
+  await $.session.start({ cwd: '/r', surface: null, isInteractive: false })
+  expect(registered).toEqual(['ask_user'])
+  const out = await $.tool.call({ tool: 'mcp__anchorleg-mod__ask_user', tool_use_id: 'tu1', questions: question.questions })
+  expect(out.result).toBe('The user answered:\nWhich test runner? → Jest')
+  expect(JSON.parse(calls[0].stdin ?? '').tool).toBe('AskUserQuestion')
+})
+
+test('outside anchorleg no tool is added', async ($, on) => {
+  mock.env(on, {})
+  const registered: string[] = []
+  on('tool.register', (_$, e) => {
+    registered.push(e.name)
+    return { value: undefined }
+  })
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/r', surface: null, isInteractive: false })
+  expect(registered).toEqual([])
+})
+
+test('a message sent with interrupt ends the turn before the next request', async ($, on) => {
+  mock.env(on, ENV)
+  const { calls, requests } = engine(on, limits(10), 0, true)
+  expect((await runStep($, 0)).answer).toBe('model answered')
+  const stopped = await runStep($, 1)
+  expect(stopped.answer).toContain('the user sent a new message')
+  expect(stopped.toolUses).toEqual([])
+  expect(requests()).toBe(1)
+  expect(calls.length).toBe(0)
 })

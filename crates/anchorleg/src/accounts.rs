@@ -1,12 +1,15 @@
 //! `anchorleg accounts …`: manage `config.toml` and Keychain tokens.
 
 use std::io::{BufRead, IsTerminal};
+use std::os::fd::AsFd as _;
 use std::path::{Path, PathBuf};
 
+use anchorleg_core::policy::CreditsUse;
 use anchorleg_core::registry::{
     Account, Config, Keychain, Secret, SecretStore, TokenFrom, Vendor, accounts_from_aliases,
-    parse_command,
+    default_program, parse_command,
 };
+use anchorleg_core::vendors::SignIn;
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
 
@@ -21,11 +24,16 @@ pub enum AccountsCmd {
     Show { name: String },
     /// Add an account.
     Add(AddArgs),
+    /// Sign in a new account: give it its own folder (`~/.claude-NAME`, `~/.codex-NAME`,
+    /// `~/.agy-NAME`), run the CLI's own sign-in (`claude auth login`, `codex login`, or `agy`'s
+    /// sign-in screen, in a terminal) in your browser, then add it. The CLI keeps the login
+    /// itself; anchorleg never sees it.
+    Login(LoginArgs),
     /// Remove an account (and its Keychain token, if any).
     Rm { name: String },
     /// Change how an account is used.
     Set(SetArgs),
-    /// Turn shell aliases like `claude-sm='CLAUDE_CONFIG_DIR=… claude'` into accounts.
+    /// Turn shell aliases like `claude-personal='CLAUDE_CONFIG_DIR=… claude'` into accounts.
     ImportAliases {
         /// Write the accounts. Without it, only show what would be added.
         #[arg(long)]
@@ -33,7 +41,25 @@ pub enum AccountsCmd {
         /// Read `alias` output from this file instead of running `$SHELL -ic alias`.
         #[arg(long)]
         from_file: Option<PathBuf>,
+        /// Print what would be (or was) added and skipped as JSON.
+        #[arg(long)]
+        json: bool,
     },
+}
+
+#[derive(Args)]
+pub struct LoginArgs {
+    name: String,
+    /// claude, codex or antigravity (agy).
+    #[arg(long, value_parser = parse_vendor, default_value = "claude")]
+    cli: Vendor,
+    /// The CLI binary to sign in with and run the account with. Defaults to the one on PATH
+    /// (for Codex, the ChatGPT app's copy when there's none on PATH).
+    #[arg(long)]
+    bin: Option<String>,
+    /// Print `{"name", "cli", "dir"}` when it's added; the sign-in's own output goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -46,12 +72,35 @@ pub struct SetArgs {
     /// 0 turns it off.
     #[arg(long, value_parser = parse_reserve)]
     reserve_7d: Option<f64>,
+    /// This account's own limit, e.g. 0.4: a session on it stops once any quota window reaches
+    /// it and moves to another account; past it, the account is used only when no other has
+    /// room. 0 turns it off.
+    #[arg(long, value_parser = parse_limit)]
+    stop_at: Option<f64>,
+    /// With --stop-at: never go past it (wait for the window to reset instead of carrying on
+    /// when no other account has room).
+    #[arg(long)]
+    strict: Option<bool>,
     /// Use this account first whenever it has room, whatever the policy.
     #[arg(long)]
     pinned: Option<bool>,
     /// Use the account (`true`) or keep it configured but never pick it (`false`).
     #[arg(long)]
     enabled: Option<bool>,
+    /// Paid usage credits past the plan's limits: never (default), last-resort or allow.
+    #[arg(long, value_parser = parse_credits)]
+    credits: Option<CreditsUse>,
+}
+
+fn parse_credits(s: &str) -> Result<CreditsUse, String> {
+    s.parse()
+}
+
+fn parse_limit(s: &str) -> Result<f64, String> {
+    match s.parse::<f64>() {
+        Ok(f) if (0.0..=1.0).contains(&f) => Ok(f),
+        _ => Err("expected a fraction from 0 to 1, e.g. 0.4 (0 turns it off)".to_owned()),
+    }
 }
 
 fn parse_reserve(s: &str) -> Result<f64, String> {
@@ -71,7 +120,7 @@ pub struct AddArgs {
     #[arg(long)]
     priority: Option<u32>,
     /// The command you'd type to run this account, e.g.
-    /// "CLAUDE_CONFIG_DIR=~/.claude-sm ~/.local/bin/claude".
+    /// "CLAUDE_CONFIG_DIR=~/.claude-personal ~/.local/bin/claude".
     #[arg(long, conflicts_with = "shell")]
     cmd: Option<String>,
     /// Run this through your interactive shell instead (e.g. an alias name). Slower.
@@ -83,10 +132,7 @@ pub struct AddArgs {
 }
 
 pub(crate) fn parse_vendor(s: &str) -> Result<Vendor, String> {
-    let s = if s == "agy" { "antigravity" } else { s };
-    Vendor::ALL
-        .into_iter()
-        .find(|v| v.name() == s)
+    Vendor::parse(s)
         .ok_or_else(|| "expected claude, codex, antigravity (agy), kimi or cursor".to_owned())
 }
 
@@ -105,6 +151,7 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             config.save(&path)?;
             Ok(())
         }
+        AccountsCmd::Login(args) => login(&mut config, &path, args),
         AccountsCmd::Rm { name } => {
             let before = config.accounts.len();
             let had_token = config
@@ -133,20 +180,34 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             if let Some(r) = args.reserve_7d {
                 account.reserve_7d = (r > 0.0).then_some(r);
             }
+            if let Some(s) = args.stop_at {
+                account.stop_at = (s > 0.0).then_some(s);
+            }
+            if let Some(s) = args.strict {
+                account.strict = s;
+            }
+            if account.stop_at.is_none() {
+                account.strict = false;
+            }
             if let Some(p) = args.pinned {
                 account.pinned = p;
             }
             if let Some(e) = args.enabled {
                 account.enabled = e;
             }
+            if let Some(c) = args.credits {
+                account.credits = c;
+            }
             let line = describe_use(account);
             config.save(&path)?;
             println!("{}: {line}", args.name);
             Ok(())
         }
-        AccountsCmd::ImportAliases { yes, from_file } => {
-            import_aliases(&mut config, &path, yes, from_file.as_deref())
-        }
+        AccountsCmd::ImportAliases {
+            yes,
+            from_file,
+            json,
+        } => import_aliases(&mut config, &path, yes, from_file.as_deref(), json),
     }
 }
 
@@ -176,6 +237,14 @@ fn list(config: &Config, json: bool) -> anyhow::Result<()> {
             a.pinned.then(|| "pinned".to_owned()),
             a.reserve_7d
                 .map(|r| format!("weekly reserve {:.0}%", r * 100.0)),
+            a.stop_at.map(|s| {
+                format!(
+                    "stops at {:.0}%{}",
+                    s * 100.0,
+                    if a.strict { " (strict)" } else { "" }
+                )
+            }),
+            (a.credits != CreditsUse::Never).then(|| format!("credits: {}", a.credits.name())),
         ]
         .into_iter()
         .flatten()
@@ -207,6 +276,14 @@ fn describe_use(a: &anchorleg_core::registry::Account) -> String {
     if let Some(r) = a.reserve_7d {
         parts.push(format!("weekly reserve {:.0}%", r * 100.0));
     }
+    if let Some(s) = a.stop_at {
+        parts.push(format!(
+            "stops at {:.0}%{}",
+            s * 100.0,
+            if a.strict { " (strict)" } else { "" }
+        ));
+    }
+    parts.push(format!("credits {}", a.credits.name()));
     parts.join(", ")
 }
 
@@ -267,6 +344,104 @@ fn add(config: &mut Config, args: AddArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn login(config: &mut Config, path: &Path, args: LoginArgs) -> anyhow::Result<()> {
+    if config.get(&args.name).is_some() {
+        bail!("account `{}` already exists", args.name);
+    }
+    if args.name.is_empty()
+        || !args
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        bail!("an account name is letters, digits, `-` and `_`");
+    }
+    let caps = args.cli.caps();
+    let (Some((sign_in, check)), Some(var), Some(prefix)) =
+        (caps.sign_in.commands(), caps.folder_env, caps.folder_prefix)
+    else {
+        bail!(
+            "anchorleg can't sign in to {} for you yet: sign in with its own app, then `anchorleg accounts add`",
+            caps.label
+        );
+    };
+    let home = dirs_home()?;
+    let folder = format!("~/{prefix}{}", args.name);
+    let dir = home.join(format!("{prefix}{}", args.name));
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let program = args
+        .bin
+        .clone()
+        .unwrap_or_else(|| default_program(args.cli));
+
+    if matches!(caps.sign_in, SignIn::Terminal { .. }) {
+        if !std::io::stdin().is_terminal() {
+            bail!(
+                "{} signs in from its own screen: run `anchorleg accounts login {} --cli {}` in a terminal",
+                caps.label,
+                args.name,
+                args.cli.name()
+            );
+        }
+        eprintln!(
+            "{} opens next: sign in there (it opens your browser), then quit it to finish.",
+            caps.label
+        );
+    }
+    // With --json, stdout is for the result: the sign-in's own messages (its link, if the
+    // browser didn't open) go to stderr.
+    let out = if args.json {
+        std::process::Stdio::from(std::io::stderr().as_fd().try_clone_to_owned()?)
+    } else {
+        std::process::Stdio::inherit()
+    };
+    let status = std::process::Command::new(&program)
+        .args(sign_in)
+        .env(var, &dir)
+        .stdout(out)
+        .status()
+        .with_context(|| format!("running {program}"))?;
+    if !status.success() {
+        bail!("sign-in didn't finish ({status}); nothing was added");
+    }
+    let checked = std::process::Command::new(&program)
+        .args(check)
+        .env(var, &dir)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .with_context(|| format!("running {program}"))?;
+    if !signed_in(args.cli, &checked) {
+        bail!("{program} doesn't report a sign-in in {folder}; nothing was added");
+    }
+
+    let mut account = Account::new(args.name.clone(), args.cli);
+    account.env.insert(var.to_owned(), folder.clone());
+    account.bin = args.bin;
+    let mut candidate = config.clone();
+    candidate.accounts.push(account.clone());
+    candidate.validate()?;
+    config.accounts.push(account);
+    config.save(path)?;
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({ "name": args.name, "cli": args.cli.name(), "dir": folder })
+        );
+    } else {
+        println!("signed in; added {} ({folder})", args.name);
+    }
+    Ok(())
+}
+
+/// The check exits 0 once signed in; Claude's `auth status --json` also exits 0 signed out, so
+/// it has to say `"loggedIn": true`.
+fn signed_in(cli: Vendor, out: &std::process::Output) -> bool {
+    out.status.success()
+        && (cli != Vendor::Claude
+            || serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                .is_ok_and(|v| v["loggedIn"] == serde_json::Value::Bool(true)))
+}
+
 fn read_token() -> anyhow::Result<Secret> {
     let token = if std::io::stdin().is_terminal() {
         rpassword::prompt_password("token (input hidden): ")?
@@ -287,6 +462,7 @@ fn import_aliases(
     path: &Path,
     yes: bool,
     from_file: Option<&Path>,
+    json: bool,
 ) -> anyhow::Result<()> {
     let output = match from_file {
         Some(f) => {
@@ -299,6 +475,22 @@ fn import_aliases(
         .into_iter()
         .partition(|a| config.get(&a.name).is_none());
 
+    if json {
+        if yes && !new.is_empty() {
+            config.accounts.extend(new.iter().cloned());
+            config.save(path)?;
+        }
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": 1,
+                "add": new,
+                "skip": existing.iter().map(|a| &a.name).collect::<Vec<_>>(),
+                "saved": yes && !new.is_empty(),
+            })
+        );
+        return Ok(());
+    }
     for a in &existing {
         println!("skip  {} (already configured)", a.name);
     }

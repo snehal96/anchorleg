@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>anchorleg: keep coding agents working when an account hits its limit</title>
-<meta name="description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<meta name="description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when you hit your 5-hour or weekly limit, without paying for extra usage: it pauses at a clean step, hands off, and continues on your other subscription or account.">
 <link rel="canonical" href="https://snehal96.github.io/anchorleg/">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
@@ -14,7 +14,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="anchorleg">
 <meta property="og:title" content="anchorleg: keep coding agents working when an account hits its limit">
-<meta property="og:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<meta property="og:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when you hit your 5-hour or weekly limit, without paying for extra usage: it pauses at a clean step, hands off, and continues on your other subscription or account.">
 <meta property="og:url" content="https://snehal96.github.io/anchorleg/">
 <meta property="og:image" content="https://snehal96.github.io/anchorleg/og.png">
 <meta property="og:image:width" content="1200">
@@ -22,10 +22,10 @@
 <meta property="og:image:alt" content="anchorleg: a task line switching lanes from amber to green, with the tagline">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="anchorleg">
-<meta name="twitter:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.">
+<meta name="twitter:description" content="anchorleg keeps headless coding agents (Claude Code, Codex) running when you hit your 5-hour or weekly limit, without paying for extra usage: it pauses at a clean step, hands off, and continues on your other subscription or account.">
 <meta name="twitter:image" content="https://snehal96.github.io/anchorleg/og.png">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"anchorleg","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"anchorleg keeps headless coding agents (Claude Code, Codex) running when an account hits its 5-hour or weekly limit: it pauses at a clean step, hands off, and continues on another account.","url":"https://snehal96.github.io/anchorleg/","downloadUrl":"https://github.com/snehal96/anchorleg/releases/latest","softwareVersion":"0.2.0","license":"https://github.com/snehal96/anchorleg#license","codeRepository":"https://github.com/snehal96/anchorleg","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"anchorleg","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Linux","description":"anchorleg keeps headless coding agents (Claude Code, Codex) running when you hit your 5-hour or weekly limit, without paying for extra usage: it pauses at a clean step, hands off, and continues on your other subscription or account.","url":"https://snehal96.github.io/anchorleg/","downloadUrl":"https://github.com/snehal96/anchorleg/releases/latest","softwareVersion":"0.6.1","license":"https://github.com/snehal96/anchorleg#license","codeRepository":"https://github.com/snehal96/anchorleg","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
 </script>
 <!-- GoatCounter: cookieless page views and clicks (data-goatcounter-click). Dashboard: https://anchorleg.goatcounter.com -->
 <script data-goatcounter="https://anchorleg.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
@@ -101,6 +101,7 @@ p { margin: 0; max-width: 62ch; }
 .hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 3.5rem); align-items: center; padding-block: clamp(1.5rem, 5vw, 4rem); }
 .hero h1 { font-size: var(--step-3); font-weight: 800; letter-spacing: -0.025em; }
 .hero h1 em { font-style: normal; color: var(--signal); }
+video.demo { display: block; width: 100%; max-width: 960px; margin: 1.5rem auto 0; border-radius: 12px; border: 1px solid var(--rule); }
 .hero .lede { font-size: 1.15rem; color: var(--muted); margin-top: 1.1rem; }
 .install { margin-top: 1.75rem; display: flex; flex-direction: column; gap: 0.6rem; }
 .cmd { display: flex; align-items: stretch; background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; max-width: 34rem; min-width: 0; }
@@ -217,7 +218,8 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
     <h1>Your agent hit <em>92%</em>. The task kept going.</h1>
     <p class="lede">anchorleg runs your Claude Code and Codex tasks in the background and
       watches every account's 5-hour and weekly limits. When one runs low, it pauses at a clean step,
-      writes a handoff, and carries on with the same task on another of your accounts.</p>
+      writes a handoff, and carries on with the same task on another of your accounts, or on another CLI.
+      It never spends usage credits unless you allow it.</p>
     <div class="install">
       <div class="cmd">
         <pre id="install-cmd">curl -fsSL https://raw.githubusercontent.com/snehal96/anchorleg/main/install.sh | bash</pre>
@@ -234,21 +236,49 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
   <figure class="board" aria-label="Example anchorleg log during an account switch">
     <header><span>anchorleg · run #12 · ~/code/app</span><span>5-hour window</span></header>
     <div class="meters">
-      <div class="meter hot"><span>claude-work</span><div class="bar"><span style="width:92%"></span><i class="line" title="pause at 90%"></i></div><span class="pct">92%</span></div>
-      <div class="meter"><span>claude-home</span><div class="bar"><span style="width:31%"></span><i class="line"></i></div><span class="pct">31%</span></div>
-      <div class="meter"><span>claude-side</span><div class="bar"><span style="width:8%"></span><i class="line"></i></div><span class="pct">8%</span></div>
+      <div class="meter hot"><span>claude-pro</span><div class="bar"><span style="width:92%"></span><i class="line" title="pause at 90%"></i></div><span class="pct">92%</span></div>
+      <div class="meter"><span>codex-plus</span><div class="bar"><span style="width:12%"></span><i class="line"></i></div><span class="pct">12%</span></div>
     </div>
     <ol class="log">
       <li><time>14:02</time><span class="you">› fix the failing auth tests</span></li>
-      <li><time>14:02</time><span class="anchorleg">anchorleg: running on claude-work</span></li>
+      <li><time>14:02</time><span class="anchorleg">anchorleg: running on claude-pro</span></li>
       <li><time>14:31</time><span class="agent">⏺ Bash(cargo test auth) · 9 of 14 pass</span></li>
-      <li><time>14:33</time><span class="anchorleg">anchorleg: claude-work paused at a clean point (quota at 92%)</span></li>
+      <li><time>14:33</time><span class="anchorleg">anchorleg: claude-pro paused at a clean point (quota at 92%)</span></li>
       <li><time>14:33</time><span class="anchorleg">anchorleg: handoff written to .handoff/TASK.md, checkpoint refs/anchorleg/run-12/1</span></li>
-      <li><time>14:33</time><span class="anchorleg">anchorleg: switching claude-work → claude-home (resuming the session)</span></li>
+      <li><time>14:33</time><span class="anchorleg">anchorleg: switching claude-pro → codex-plus (fresh start from the handoff)</span></li>
       <li><time>14:41</time><span class="ok">⏺ All 14 auth tests pass.</span></li>
     </ol>
   </figure>
 </div>
+
+<section id="demo">
+  <div class="section-head">
+    <p class="eyebrow">See it run</p>
+    <h2>Claude runs low at 92%. Codex finishes the task.</h2>
+  </div>
+  <video class="demo" src="demo.mp4" autoplay muted loop playsinline preload="metadata"
+    aria-label="Terminal demo: a task pauses on a Claude account at 92%, writes a handoff and finishes on Codex; then the usage dashboard"></video>
+</section>
+
+<section id="who">
+  <div class="section-head">
+    <p class="eyebrow">Who it's for</p>
+    <h2>Hit your limit without paying for extra usage</h2>
+  </div>
+  <div class="features">
+    <div class="feature">
+      <h3>One Claude subscription, a big extra-usage bill</h3>
+      <p>Add a ChatGPT plan next to it. When Claude runs low, anchorleg continues the task on Codex
+        from a handoff instead of on metered credits, and it never spends credits unless you allow
+        it. <code>anchorleg usage</code> shows what each account costs you.</p>
+    </div>
+    <div class="feature">
+      <h3>Several accounts already</h3>
+      <p>Work and personal, Claude and ChatGPT: anchorleg watches every account's limits and moves
+        the task to whichever has room, with its context.</p>
+    </div>
+  </div>
+</section>
 
 <section id="how">
   <div class="section-head">
@@ -293,6 +323,15 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
 <span class="a">Allow Write(src/auth/session.rs)?</span>
 Claude requested permissions to write to src/auth/session.rs
  1 Yes    2 Yes, for this session    3 No</pre>
+    </div>
+    <div class="feature">
+      <h3>Plan, goal, review</h3>
+      <p><code>--plan</code>: approve a plan before anything changes. <code>--goal "cargo test
+        passes"</code>: keep going, turn after turn, until it holds, even across accounts.
+        <code>anchorleg review 12 --cli codex --fix</code>: another account or CLI reviews a
+        session's changes and sends the findings back.</p>
+      <p>Nobody watching? <code>--mode auto</code> lets the CLI's own reviewer approve instead of
+        you. <code>accounts set work --stop-at 0.4</code> moves off an account at 40%.</p>
     </div>
     <div class="feature">
       <h3>Same model and effort on every account</h3>

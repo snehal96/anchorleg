@@ -1,7 +1,7 @@
 //! Accounts: `~/.config/anchorleg/config.toml`, how to launch each one, and their secrets.
 //!
 //! An account is a user-defined launch command (D9): a binary plus env vars and args (the
-//! shape of the owner's `claude-sm` style aliases), an OAuth token kept in Keychain, or, as an
+//! shape of the owner's `claude-personal` style aliases), an OAuth token kept in Keychain, or, as an
 //! escape hatch, a command run through the user's interactive shell.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -139,7 +139,7 @@ impl Vendor {
     }
 
     /// Inherited env vars that would pick the wrong account. Always removed before an account's
-    /// own env is applied, so e.g. anchorleg started from inside a `claude-sm` session doesn't leak
+    /// own env is applied, so e.g. anchorleg started from inside a `claude-personal` session doesn't leak
     /// that session's `CLAUDE_CONFIG_DIR` into every launch.
     pub fn scrub_env(self) -> &'static [&'static str] {
         match self {
@@ -209,12 +209,28 @@ pub struct Account {
     /// Keep this fraction of the weekly window for when nothing else is free (e.g. 0.2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserve_7d: Option<f64>,
+    /// This account's own soft limit (e.g. 0.4): a session on it stops once any window reaches
+    /// it (or the run's `--stop-at`, if lower) and moves on; past it, the account is used only
+    /// when no other has room.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_at: Option<f64>,
+    /// With `stop_at`: never use the account past it. Instead of carrying on there when no other
+    /// account has room, the run waits for the window to reset.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub strict: bool,
     /// Task roles this account is for (later: role routing). Parsed, not used yet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
     /// Use this account first whenever it's healthy, whatever the policy.
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
+    /// Whether anchorleg may let this account run on paid usage credits past its plan limits.
+    #[serde(default, skip_serializing_if = "is_default_credits")]
+    pub credits: crate::policy::CreditsUse,
+}
+
+fn is_default_credits(c: &crate::policy::CreditsUse) -> bool {
+    *c == crate::policy::CreditsUse::default()
 }
 
 impl Account {
@@ -230,8 +246,11 @@ impl Account {
             token_from: None,
             shell: None,
             reserve_7d: None,
+            stop_at: None,
+            strict: false,
             roles: Vec::new(),
             pinned: false,
+            credits: crate::policy::CreditsUse::default(),
         }
     }
 
@@ -261,7 +280,25 @@ impl Account {
         {
             return invalid("reserve_7d must be between 0 and 1");
         }
+        if let Some(s) = self.stop_at
+            && !(s > 0.0 && s <= 1.0)
+        {
+            return invalid("stop_at must be above 0 and at most 1");
+        }
+        if self.strict && self.stop_at.is_none() {
+            return invalid("`strict` needs a `stop_at`");
+        }
         Ok(())
+    }
+
+    /// Where a session on this account stops softly: the lower of its own `stop_at` and the
+    /// run's (`run_stop_at`, 0 = off).
+    pub fn stop_at(&self, run_stop_at: f64) -> f64 {
+        match self.stop_at {
+            Some(own) if run_stop_at <= 0.0 => own,
+            Some(own) => own.min(run_stop_at),
+            None => run_stop_at,
+        }
     }
 
     /// Where this Claude account keeps its sessions, when anchorleg can tell: the account's
@@ -354,7 +391,7 @@ impl Account {
 
 /// The vendor's binary from `PATH`; for Codex, the copy inside the ChatGPT app when `codex`
 /// isn't on `PATH` (the desktop app doesn't install one there).
-fn default_program(vendor: Vendor) -> String {
+pub fn default_program(vendor: Vendor) -> String {
     let name = vendor.default_bin();
     if vendor == Vendor::Codex
         && !on_path(name)
@@ -512,6 +549,16 @@ pub struct Config {
     /// is launched.
     #[serde(default, rename = "vendor", skip_serializing_if = "BTreeMap::is_empty")]
     pub vendors: BTreeMap<Vendor, VendorSettings>,
+    /// Notifications when a run needs the person or ends (`anchorleg notify`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::notify::NotifySettings::is_default"
+    )]
+    pub notify: crate::notify::NotifySettings,
+    /// Tool calls every session may make without asking (`anchorleg rules`), in Claude Code's
+    /// rule syntax: `Bash(cargo test *)`, `Edit(src/**)`, `WebFetch(domain:docs.rs)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
 }
 
 fn is_default_policy(p: &crate::policy::Policy) -> bool {
@@ -693,7 +740,7 @@ pub struct ParsedCommand {
     pub args: Vec<String>,
 }
 
-/// Parse `CLAUDE_CONFIG_DIR=~/.claude-sm /path/to/claude --model x` into its parts.
+/// Parse `CLAUDE_CONFIG_DIR=~/.claude-personal /path/to/claude --model x` into its parts.
 pub fn parse_command(cmd: &str) -> Result<ParsedCommand> {
     let bad = || RegistryError::BadCommand(cmd.to_owned());
     let words = shlex::split(cmd).ok_or_else(bad)?;
@@ -780,9 +827,9 @@ mod tests {
     const ZSH_ALIASES: &str = "\
 Welcome back!
 claude='echo use specific commands'
-claude-three='CLAUDE_CONFIG_DIR=~/.claude-blilbi /Users/me/.local/bin/claude'
-claude-sm='CLAUDE_CONFIG_DIR=~/.claude-sm /Users/me/.local/bin/claude'
-cs='claude-sm --model haiku'
+claude-three='CLAUDE_CONFIG_DIR=~/.claude-three /Users/me/.local/bin/claude'
+claude-personal='CLAUDE_CONFIG_DIR=~/.claude-personal /Users/me/.local/bin/claude'
+cs='claude-personal --model haiku'
 ll='ls -la'
 ";
 
@@ -790,16 +837,16 @@ ll='ls -la'
     fn imports_owner_style_aliases() {
         let accounts = accounts_from_aliases(ZSH_ALIASES);
         let names: Vec<_> = accounts.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(names, ["claude-three", "claude-sm", "cs"]);
+        assert_eq!(names, ["claude-three", "claude-personal", "cs"]);
 
-        let sm = &accounts[1];
-        assert_eq!(sm.vendor, Vendor::Claude);
-        assert_eq!(sm.bin.as_deref(), Some("/Users/me/.local/bin/claude"));
-        assert_eq!(sm.env["CLAUDE_CONFIG_DIR"], "~/.claude-sm");
+        let personal = &accounts[1];
+        assert_eq!(personal.vendor, Vendor::Claude);
+        assert_eq!(personal.bin.as_deref(), Some("/Users/me/.local/bin/claude"));
+        assert_eq!(personal.env["CLAUDE_CONFIG_DIR"], "~/.claude-personal");
 
-        // `cs` calls the `claude-sm` alias with extra args.
+        // `cs` calls the `claude-personal` alias with extra args.
         let cs = &accounts[2];
-        assert_eq!(cs.env["CLAUDE_CONFIG_DIR"], "~/.claude-sm");
+        assert_eq!(cs.env["CLAUDE_CONFIG_DIR"], "~/.claude-personal");
         assert_eq!(cs.args, ["--model", "haiku"]);
     }
 
@@ -827,10 +874,10 @@ ll='ls -la'
 
     #[test]
     fn config_dir_account_launch() {
-        let mut a = Account::new("sm", Vendor::Claude);
+        let mut a = Account::new("personal", Vendor::Claude);
         a.bin = Some("~/.local/bin/claude".into());
         a.env
-            .insert("CLAUDE_CONFIG_DIR".into(), "~/.claude-sm".into());
+            .insert("CLAUDE_CONFIG_DIR".into(), "~/.claude-personal".into());
         let l = a
             .launch(&MemorySecrets::default(), Path::new(HOME))
             .unwrap();
@@ -839,7 +886,7 @@ ll='ls -la'
             l.env,
             [(
                 "CLAUDE_CONFIG_DIR".to_owned(),
-                "/Users/me/.claude-sm".to_owned()
+                "/Users/me/.claude-personal".to_owned()
             )]
         );
         assert!(l.env_remove.contains(&"ANTHROPIC_API_KEY".to_owned()));
@@ -930,11 +977,11 @@ ll='ls -la'
     #[test]
     fn shell_account_launch() {
         let mut a = Account::new("odd", Vendor::Claude);
-        a.shell = Some("claude-sm".into());
+        a.shell = Some("claude-personal".into());
         let l = a
             .launch(&MemorySecrets::default(), Path::new(HOME))
             .unwrap();
-        assert_eq!(l.args, ["-ic", "claude-sm \"$@\"", "anchorleg"]);
+        assert_eq!(l.args, ["-ic", "claude-personal \"$@\"", "anchorleg"]);
     }
 
     #[test]
@@ -947,11 +994,11 @@ priority = 2
 token_from = "keychain"
 
 [[account]]
-name = "sm"
+name = "personal"
 vendor = "claude"
 priority = 1
 bin = "~/.local/bin/claude"
-env = { CLAUDE_CONFIG_DIR = "~/.claude-sm" }
+env = { CLAUDE_CONFIG_DIR = "~/.claude-personal" }
 "#;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("anchorleg/config.toml");
@@ -960,7 +1007,7 @@ env = { CLAUDE_CONFIG_DIR = "~/.claude-sm" }
 
         let config = Config::load(&path).unwrap();
         let order: Vec<_> = config.by_priority().iter().map(|a| &a.name).collect();
-        assert_eq!(order, ["sm", "two"]);
+        assert_eq!(order, ["personal", "two"]);
 
         config.save(&path).unwrap();
         assert_eq!(Config::load(&path).unwrap(), config);

@@ -23,6 +23,9 @@ input_file: fixtures/synthetic/hello.jsonl
   {
     "event": {
       "event": "rate_limit",
+      "isUsingOverage": null,
+      "overageDisabledReason": null,
+      "overageStatus": null,
       "rateLimitType": "five_hour",
       "resetsAt": null,
       "status": "allowed",
@@ -61,11 +64,13 @@ input_file: fixtures/synthetic/hello.jsonl
       "errors": [],
       "event": "result",
       "is_error": false,
+      "modelUsage": null,
       "num_turns": 1,
       "result": "OK",
       "session_id": "11111111-aaaa-4bbb-8ccc-000000000001",
       "subtype": "success",
-      "total_cost_usd": 0.0004
+      "total_cost_usd": 0.0004,
+      "usage": null
     },
     "signals": [
       {

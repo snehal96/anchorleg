@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::adapters::{EpochSecs, QuotaReading};
+use crate::adapters::{CreditState, Credits, EpochSecs, QuotaReading, Usage};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -22,6 +22,11 @@ pub enum StoreError {
     },
     #[error("no home directory; set ANCHORLEG_HOME")]
     NoHome,
+    #[error(
+        "the database is from a newer anchorleg (schema {found}, this version knows {known}); \
+         update anchorleg, or use the one that upgraded it"
+    )]
+    Newer { found: i64, known: i64 },
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -33,7 +38,7 @@ pub enum Source {
     Stream,
     Mod,
     Manual,
-    /// Asked of the CLI between launches (Codex `app-server`).
+    /// Asked of the CLI between launches (`claude -p /usage`, Codex `app-server`).
     Probe,
 }
 
@@ -62,6 +67,45 @@ pub struct QuotaRow {
     pub resets_at: Option<EpochSecs>,
     pub source: String,
     pub updated_at: EpochSecs,
+}
+
+/// A message the person sent to a running session, waiting to reach the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QueuedMessage {
+    pub id: i64,
+    pub run_id: RunId,
+    pub text: String,
+    /// Stop the agent at its next clean point instead of waiting for its turn to end.
+    pub interrupt: bool,
+    pub created_at: EpochSecs,
+}
+
+/// The latest known usage-credit state for one account.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CreditsRow {
+    pub account: String,
+    pub state: CreditState,
+    pub balance: Option<f64>,
+    pub reason: Option<String>,
+    pub updated_at: EpochSecs,
+}
+
+/// Tokens and cost added up over a span of time, for one account and model.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct UsageTotal {
+    pub account: String,
+    /// `None` when the CLI didn't name it.
+    pub model: Option<String>,
+    /// Launches that reported usage.
+    pub launches: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// List-price cost, summed over launches that reported one; `None` when none did.
+    pub cost_usd: Option<f64>,
+    /// The part of `cost_usd` that ran while the account was paying from credits.
+    pub credits_cost_usd: Option<f64>,
 }
 
 /// A tool call waiting for the person, and how they answered.
@@ -111,9 +155,20 @@ pub struct Permission {
     pub state: PermissionState,
     pub asked_at: EpochSecs,
     pub answered_at: Option<EpochSecs>,
+    /// For a question ([`crate::questions::TOOL`]): the person's answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answers: Option<crate::questions::Answers>,
 }
 
-const PERMISSION_COLUMNS: &str = "id, run_id, tool, input, reason, state, asked_at, answered_at";
+impl Permission {
+    /// A question from the agent rather than a tool call to approve.
+    pub fn is_question(&self) -> bool {
+        self.tool == crate::questions::TOOL
+    }
+}
+
+const PERMISSION_COLUMNS: &str =
+    "id, run_id, tool, input, reason, state, asked_at, answered_at, answer";
 
 fn permission_from_row(r: &rusqlite::Row) -> rusqlite::Result<Permission> {
     let input: String = r.get(3)?;
@@ -127,6 +182,9 @@ fn permission_from_row(r: &rusqlite::Row) -> rusqlite::Result<Permission> {
         state: PermissionState::parse(&state),
         asked_at: r.get(6)?,
         answered_at: r.get(7)?,
+        answers: r
+            .get::<_, Option<String>>(8)?
+            .and_then(|a| serde_json::from_str(&a).ok()),
     })
 }
 
@@ -182,10 +240,35 @@ pub struct Run {
     pub parent_id: Option<RunId>,
     /// The `anchorleg run` process working on it, while it runs.
     pub pid: Option<i64>,
+    /// The session's permission mode (`ask`, `edits`), if one was picked (D41).
+    pub mode: Option<String>,
+    /// How long a question or approval waits for the person (seconds) before the agent goes on
+    /// without an answer; `None`: anchorleg's default.
+    pub answer_wait: Option<i64>,
+    /// The condition the session works toward (`anchorleg run --goal`, D48), and how it stands:
+    /// `active`, `met`, `impossible` or `unmet`.
+    pub goal: Option<String>,
+    pub goal_status: Option<String>,
+    /// The session this run reviews (`anchorleg review`, D49).
+    pub review_of: Option<RunId>,
+    /// A name for the session, given on this run (`--name`, `anchorleg rename`); its follow-ups
+    /// share it (see [`Store::session_name`]).
+    pub name: Option<String>,
+    /// What the task adds to every launch (`--add-dir`, `--instructions`, Claude Code's
+    /// options), as [`crate::task_options::TaskOptions`] JSON; serialized as the object.
+    #[serde(serialize_with = "options_object")]
+    pub options: Option<String>,
 }
 
-const RUN_COLUMNS: &str =
-    "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid";
+fn options_object<S: serde::Serializer>(
+    o: &Option<String>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    use serde::Serialize as _;
+    crate::task_options::TaskOptions::from_json(o.as_deref()).serialize(s)
+}
+
+const RUN_COLUMNS: &str = "id, task, cwd, account, session_id, state, started_at, ended_at, parent_id, pid, mode, answer_wait, goal, goal_status, review_of, name, options";
 
 fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -199,6 +282,13 @@ fn run_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Run> {
         ended_at: r.get(7)?,
         parent_id: r.get(8)?,
         pid: r.get(9)?,
+        mode: r.get(10)?,
+        answer_wait: r.get(11)?,
+        goal: r.get(12)?,
+        goal_status: r.get(13)?,
+        review_of: r.get(14)?,
+        name: r.get(15)?,
+        options: r.get(16)?,
     })
 }
 
@@ -268,6 +358,63 @@ CREATE TABLE permissions (
     answered_at INTEGER
 );
 CREATE INDEX permissions_run ON permissions(run_id);
+"#,
+    r#"
+CREATE TABLE credits (
+    account    TEXT PRIMARY KEY,
+    state      TEXT NOT NULL,
+    balance    REAL,
+    reason     TEXT,
+    source     TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE usage (
+    id                 INTEGER PRIMARY KEY,
+    run_id             INTEGER REFERENCES runs(id),
+    account            TEXT NOT NULL,
+    model              TEXT,
+    at                 INTEGER NOT NULL,
+    input_tokens       INTEGER NOT NULL,
+    output_tokens      INTEGER NOT NULL,
+    cache_read_tokens  INTEGER NOT NULL,
+    cache_write_tokens INTEGER NOT NULL,
+    cost_usd           REAL,
+    on_credits         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX usage_at ON usage(at);
+"#,
+    r#"
+ALTER TABLE permissions ADD COLUMN answer TEXT;
+"#,
+    r#"
+CREATE TABLE messages (
+    id         INTEGER PRIMARY KEY,
+    run_id     INTEGER NOT NULL REFERENCES runs(id),
+    text       TEXT NOT NULL,
+    interrupt  INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    taken_at   INTEGER
+);
+CREATE INDEX messages_run ON messages(run_id);
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN mode TEXT;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN answer_wait INTEGER;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN goal TEXT;
+ALTER TABLE runs ADD COLUMN goal_status TEXT;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN review_of INTEGER;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN name TEXT;
+"#,
+    r#"
+ALTER TABLE runs ADD COLUMN options TEXT;
 "#,
 ];
 
@@ -340,6 +487,15 @@ impl Store {
         // is read inside it, so two processes never run the same migration.
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        // An older binary (say a CLI next to the desktop app's newer one) must not write rows
+        // a newer schema doesn't expect.
+        let known = MIGRATIONS.len() as i64;
+        if version > known {
+            return Err(StoreError::Newer {
+                found: version,
+                known,
+            });
+        }
         let mut next = version;
         for sql in MIGRATIONS
             .get(usize::try_from(version).unwrap_or(0)..)
@@ -429,6 +585,136 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Replace what's known about an account's usage credits.
+    pub fn record_credits(
+        &self,
+        account: &str,
+        credits: &Credits,
+        source: Source,
+        now: EpochSecs,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO credits (account, state, balance, reason, source, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                account,
+                credits.state.name(),
+                credits.balance,
+                credits.reason,
+                source.as_str(),
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Usage-credit state, for every account when `account` is `None`.
+    pub fn credits(&self, account: Option<&str>) -> Result<Vec<CreditsRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account, state, balance, reason, updated_at FROM credits
+             WHERE ?1 IS NULL OR account = ?1 ORDER BY account",
+        )?;
+        let rows = stmt.query_map(params![account], |r| {
+            Ok(CreditsRow {
+                account: r.get(0)?,
+                state: CreditState::from_name(&r.get::<_, String>(1)?),
+                balance: r.get(2)?,
+                reason: r.get(3)?,
+                updated_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Add one launch's tokens and cost.
+    pub fn record_usage(
+        &self,
+        run_id: Option<RunId>,
+        account: &str,
+        usage: &Usage,
+        on_credits: bool,
+        now: EpochSecs,
+    ) -> Result<()> {
+        let n = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
+        self.conn.execute(
+            "INSERT INTO usage (run_id, account, model, at, input_tokens, output_tokens,
+               cache_read_tokens, cache_write_tokens, cost_usd, on_credits)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                run_id,
+                account,
+                usage.model,
+                now,
+                n(usage.input_tokens),
+                n(usage.output_tokens),
+                n(usage.cache_read_tokens),
+                n(usage.cache_write_tokens),
+                usage.cost_usd,
+                on_credits
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The tokens a run has used so far that count toward its budget: input, output and cache
+    /// writes, plus a tenth of cache reads (billed at about a tenth of input).
+    pub fn run_tokens(&self, run_id: RunId) -> Result<u64> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens + cache_write_tokens
+                                 + cache_read_tokens / 10), 0)
+             FROM usage WHERE run_id = ?1",
+            params![run_id],
+            |r| r.get(0),
+        )?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    }
+
+    /// Usage since `since`, per account and model, most expensive (then most tokens) first.
+    pub fn usage_totals(&self, since: EpochSecs) -> Result<Vec<UsageTotal>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT account, model, COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                    SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(cost_usd),
+                    SUM(CASE WHEN on_credits THEN cost_usd END)
+             FROM usage WHERE at >= ?1 GROUP BY account, model
+             ORDER BY COALESCE(SUM(cost_usd), 0) DESC,
+                      SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) DESC,
+                      account",
+        )?;
+        let n = |v: i64| u64::try_from(v).unwrap_or(0);
+        let rows = stmt.query_map(params![since], |r| {
+            Ok(UsageTotal {
+                account: r.get(0)?,
+                model: r.get(1)?,
+                launches: n(r.get(2)?),
+                input_tokens: n(r.get(3)?),
+                output_tokens: n(r.get(4)?),
+                cache_read_tokens: n(r.get(5)?),
+                cache_write_tokens: n(r.get(6)?),
+                cost_usd: r.get(7)?,
+                credits_cost_usd: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Tokens per day since `since` (UTC days, as epoch seconds of the day's start), for a chart.
+    pub fn usage_by_day(&self, since: EpochSecs) -> Result<Vec<(EpochSecs, u64, f64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT (at / 86400) * 86400 AS day,
+                    SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens),
+                    COALESCE(SUM(cost_usd), 0)
+             FROM usage WHERE at >= ?1 GROUP BY day ORDER BY day",
+        )?;
+        let rows = stmt.query_map(params![since], |r| {
+            Ok((
+                r.get(0)?,
+                u64::try_from(r.get::<_, i64>(1)?).unwrap_or(0),
+                r.get(2)?,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn start_run(
         &self,
         task: &str,
@@ -444,6 +730,60 @@ impl Store {
     }
 
     /// Record the process working on a run; `None` once it's gone.
+    pub fn set_run_mode(&self, id: RunId, mode: Option<&str>) -> Result<()> {
+        self.conn
+            .execute("UPDATE runs SET mode = ?2 WHERE id = ?1", params![id, mode])?;
+        Ok(())
+    }
+
+    pub fn set_run_options(&self, id: RunId, options: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET options = ?2 WHERE id = ?1",
+            params![id, options],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_run_answer_wait(&self, id: RunId, secs: Option<i64>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET answer_wait = ?2 WHERE id = ?1",
+            params![id, secs],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_run_goal(&self, id: RunId, goal: Option<&str>, status: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET goal = ?2, goal_status = ?3 WHERE id = ?1",
+            params![id, goal, status],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_run_name(&self, id: RunId, name: Option<&str>) -> Result<()> {
+        self.conn
+            .execute("UPDATE runs SET name = ?2 WHERE id = ?1", params![id, name])?;
+        Ok(())
+    }
+
+    /// The session's name: the latest one given on this run or a run it follows up.
+    pub fn session_name(&self, id: RunId) -> Result<Option<String>> {
+        for run in self.session_runs(id)? {
+            if let Some(name) = self.run(run)?.and_then(|r| r.name) {
+                return Ok(Some(name));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn set_run_review_of(&self, id: RunId, of: Option<RunId>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE runs SET review_of = ?2 WHERE id = ?1",
+            params![id, of],
+        )?;
+        Ok(())
+    }
+
     pub fn set_run_pid(&self, id: RunId, pid: Option<i64>) -> Result<()> {
         self.conn
             .execute("UPDATE runs SET pid = ?2 WHERE id = ?1", params![id, pid])?;
@@ -567,6 +907,77 @@ impl Store {
         Ok(n == 1)
     }
 
+    /// Answer a pending question. `false` if it was already answered (or doesn't exist).
+    pub fn answer_question(
+        &self,
+        id: i64,
+        answers: &crate::questions::Answers,
+        now: EpochSecs,
+    ) -> Result<bool> {
+        let text = serde_json::to_string(answers).unwrap_or_else(|_| "{}".to_owned());
+        let n = self.conn.execute(
+            "UPDATE permissions SET state = 'allowed', answer = ?2, answered_at = ?3
+             WHERE id = ?1 AND state = 'pending'",
+            params![id, text, now],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Queue a message for a running session.
+    pub fn queue_message(
+        &self,
+        run_id: RunId,
+        text: &str,
+        interrupt: bool,
+        now: EpochSecs,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO messages (run_id, text, interrupt, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![run_id, text, interrupt, now],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Messages for this run that haven't reached the agent yet, oldest first.
+    pub fn queued_messages(&self, run_id: RunId) -> Result<Vec<QueuedMessage>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, run_id, text, interrupt, created_at FROM messages
+             WHERE run_id = ?1 AND taken_at IS NULL ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![run_id], |r| {
+            Ok(QueuedMessage {
+                id: r.get(0)?,
+                run_id: r.get(1)?,
+                text: r.get(2)?,
+                interrupt: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Mark a message delivered. `false` if it already was.
+    pub fn take_message(&self, id: i64, now: EpochSecs) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE messages SET taken_at = ?2 WHERE id = ?1 AND taken_at IS NULL",
+            params![id, now],
+        )?;
+        Ok(n == 1)
+    }
+
+    /// Whether the person asked this run to stop at its next clean point for a new message.
+    pub fn interrupt_requested(&self, run_id: RunId) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT 1 FROM messages WHERE run_id = ?1 AND taken_at IS NULL AND interrupt = 1",
+                params![run_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     /// Whether the person said "always" to `tool` in any of these runs (one session's runs).
     pub fn always_allowed(&self, runs: &[RunId], tool: &str) -> Result<bool> {
         for run in runs {
@@ -674,12 +1085,13 @@ mod tests {
             Some(0.91),
             Some(1000),
         );
-        s.record_quota("sm", &full, Source::Mod, 10).unwrap();
+        s.record_quota("personal", &full, Source::Mod, 10).unwrap();
         // Claude's usual "allowed" event: status only.
         let partial = reading(Window::FiveHour, Some(QuotaStatus::Allowed), None, None);
-        s.record_quota("sm", &partial, Source::Stream, 20).unwrap();
+        s.record_quota("personal", &partial, Source::Stream, 20)
+            .unwrap();
 
-        let row = &s.quota(Some("sm")).unwrap()[0];
+        let row = &s.quota(Some("personal")).unwrap()[0];
         assert_eq!(row.status.as_deref(), Some("allowed"));
         assert_eq!(row.used, Some(0.91));
         assert_eq!(row.resets_at, Some(1000));
@@ -691,16 +1103,17 @@ mod tests {
     fn new_reset_time_drops_stale_usage() {
         let s = Store::open_in_memory().unwrap();
         let old = reading(Window::FiveHour, None, Some(0.97), Some(1000));
-        s.record_quota("sm", &old, Source::Mod, 10).unwrap();
+        s.record_quota("personal", &old, Source::Mod, 10).unwrap();
         let rolled = reading(
             Window::FiveHour,
             Some(QuotaStatus::Allowed),
             None,
             Some(19000),
         );
-        s.record_quota("sm", &rolled, Source::Stream, 1100).unwrap();
+        s.record_quota("personal", &rolled, Source::Stream, 1100)
+            .unwrap();
 
-        let row = &s.quota(Some("sm")).unwrap()[0];
+        let row = &s.quota(Some("personal")).unwrap()[0];
         assert_eq!(row.used, None);
         assert_eq!(row.resets_at, Some(19000));
     }
@@ -714,8 +1127,9 @@ mod tests {
             None,
             Some(1000),
         );
-        s.record_quota("sm", &hit, Source::Stream, 10).unwrap();
-        let row = &s.quota(Some("sm")).unwrap()[0];
+        s.record_quota("personal", &hit, Source::Stream, 10)
+            .unwrap();
+        let row = &s.quota(Some("personal")).unwrap()[0];
         assert_eq!(row.status.as_deref(), Some("rejected"));
         assert_eq!(row.resets_at, Some(1000));
     }
@@ -744,11 +1158,11 @@ mod tests {
         let child = s.start_run("now add docs", "/repo", Some(id), 300).unwrap();
         assert_eq!(s.run(child).unwrap().unwrap().parent_id, Some(id));
         s.set_run_pid(id, None).unwrap();
-        s.set_run_account(id, "sm", Some("sess-1")).unwrap();
+        s.set_run_account(id, "personal", Some("sess-1")).unwrap();
         s.record_decision(&Decision {
             run_id: Some(id),
             at: 150,
-            from_account: Some("sm".into()),
+            from_account: Some("personal".into()),
             to_account: Some("two".into()),
             rule: "rejected".into(),
             detail: serde_json::json!({ "resets_at": 1000 }),
@@ -782,7 +1196,7 @@ mod tests {
         {
             let s = Store::open(&path).unwrap();
             let r = reading(Window::SevenDay, None, Some(0.4), None);
-            s.record_quota("sm", &r, Source::Mod, 1).unwrap();
+            s.record_quota("personal", &r, Source::Mod, 1).unwrap();
         }
         let s = Store::open(&path).unwrap();
         assert_eq!(s.quota(None).unwrap().len(), 1);
@@ -791,6 +1205,23 @@ mod tests {
             .pragma_query_value(None, "journal_mode", |r| r.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn a_newer_schema_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("anchorleg.db");
+        drop(Store::open(&path).unwrap());
+        let newer = MIGRATIONS.len() as i64 + 1;
+        Connection::open(&path)
+            .unwrap()
+            .pragma_update(None, "user_version", newer)
+            .unwrap();
+        let err = Store::open(&path).err().expect("refused");
+        assert!(
+            matches!(err, StoreError::Newer { found, .. } if found == newer),
+            "{err}"
+        );
     }
 
     #[test]
@@ -851,5 +1282,53 @@ mod tests {
             !s.always_allowed(&s.session_runs(other).unwrap(), "Write")
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn credits_and_usage_are_kept() {
+        let s = Store::open_in_memory().unwrap();
+        let c = Credits {
+            state: CreditState::Available,
+            balance: Some(12.5),
+            reason: None,
+        };
+        s.record_credits("a", &c, Source::Probe, 10).unwrap();
+        let off = Credits {
+            state: CreditState::Off,
+            balance: None,
+            reason: Some("out_of_credits".into()),
+        };
+        s.record_credits("a", &off, Source::Stream, 20).unwrap();
+        let rows = s.credits(None).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, CreditState::Off);
+        assert_eq!(rows[0].reason.as_deref(), Some("out_of_credits"));
+
+        let run = s.start_run("t", "/w", None, 100).unwrap();
+        let u = |model: &str, cost: Option<f64>| Usage {
+            model: Some(model.into()),
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 100,
+            cache_write_tokens: 1,
+            cost_usd: cost,
+        };
+        s.record_usage(Some(run), "a", &u("haiku", Some(0.5)), false, 100)
+            .unwrap();
+        s.record_usage(Some(run), "a", &u("haiku", Some(0.25)), true, 200)
+            .unwrap();
+        s.record_usage(Some(run), "b", &u("gpt", None), false, 300)
+            .unwrap();
+        s.record_usage(Some(run), "a", &u("haiku", Some(9.0)), false, 10)
+            .unwrap(); // too old
+
+        let t = s.usage_totals(50).unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].account.as_str(), t[0].launches), ("a", 2));
+        assert_eq!(t[0].input_tokens, 20);
+        assert_eq!(t[0].cost_usd, Some(0.75));
+        assert_eq!(t[0].credits_cost_usd, Some(0.25));
+        assert_eq!((t[1].account.as_str(), t[1].cost_usd), ("b", None));
+        assert_eq!(s.usage_by_day(0).unwrap(), [(0, 4 * 116, 9.75)]);
     }
 }

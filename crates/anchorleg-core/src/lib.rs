@@ -5,14 +5,22 @@
 
 pub mod adapters;
 pub mod anchorleg_mod;
+pub mod attachments;
 pub mod checkpoint;
 pub mod conversation;
+pub mod goal;
 pub mod handoff;
+pub mod mcp_sync;
+pub mod notify;
 pub mod output;
 pub mod policy;
+pub mod questions;
 pub mod registry;
+pub mod rules;
 pub mod store;
 pub mod supervisor;
+pub mod task_options;
+pub mod vendors;
 
 /// Version of the anchorleg crates, reported by `anchorleg --version` and in `--json` output.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

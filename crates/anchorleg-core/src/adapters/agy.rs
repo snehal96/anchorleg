@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::AgentSignal;
+use super::{AgentSignal, Usage};
 
 /// Where agy keeps its state, relative to `HOME`.
 pub const DATA_DIR: &str = ".gemini/antigravity-cli";
@@ -86,6 +86,50 @@ pub fn install_hook(home: &Path, bin: &Path) -> std::io::Result<()> {
     std::fs::rename(&tmp, &path)
 }
 
+/// agy's MCP servers file, relative to `HOME` (written by `agy mcp add`, 1.3.3).
+pub const MCP_FILE: &str = ".gemini/config/mcp_config.json";
+
+/// Put anchorleg's question server (`anchorleg permission mcp-ask`, tool `ask_user`) into this
+/// `HOME`'s MCP servers, keeping the others. Like the hook: only an account's own `HOME`.
+pub fn install_mcp(home: &Path, bin: &Path) -> std::io::Result<()> {
+    let path = home.join(MCP_FILE);
+    let mut config = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(Value::Object(m)) => m,
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "{} isn't a JSON object; not touching it",
+                    path.display()
+                )));
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(e) => return Err(e),
+    };
+    let entry = serde_json::json!({
+        "command": bin.display().to_string(),
+        "args": ["permission", "mcp-ask"],
+        "disabled": false,
+    });
+    let servers = config
+        .entry("mcpServers")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(servers) = servers.as_object_mut() else {
+        return Err(std::io::Error::other(format!(
+            "{}: mcpServers isn't an object; not touching it",
+            path.display()
+        )));
+    };
+    if servers.get(HOOK_NAME) == Some(&entry) {
+        return Ok(());
+    }
+    servers.insert(HOOK_NAME.to_owned(), entry);
+    std::fs::create_dir_all(path.parent().expect("has a parent"))?;
+    let tmp = path.with_extension("json.anchorleg-tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Object(config))?)?;
+    std::fs::rename(&tmp, &path)
+}
+
 /// What anchorleg's hook does with one agy tool call.
 #[derive(Debug, PartialEq)]
 pub enum HookVerdict {
@@ -94,7 +138,54 @@ pub enum HookVerdict {
     /// Ask the person, showing the call as `tool` with `input` (Claude's tool names where one
     /// fits, so `anchorleg ui` shows it the same way).
     Ask { tool: String, input: Value },
+    /// Refuse it, telling the agent why (it reads the reason and carries on).
+    Deny(String),
 }
+
+/// The run's mode, as the hook sees it (`MODE_ENV`, set by anchorleg at launch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookMode {
+    /// Like `--mode accept-edits`: edits inside the task's folders go ahead.
+    Edits,
+    /// Edits to the task's files are asked about too (`anchorleg run --mode ask`).
+    Ask,
+    /// Planning (`anchorleg run --plan`, before the plan is approved): the task's files are
+    /// left alone; agy's own artifact folder (where it writes plans) stays writable.
+    Plan,
+    /// Reviewing (`anchorleg review`): the same, with a reviewer's reason.
+    Review,
+}
+
+/// The env var anchorleg sets on a hook-gated agy launch: `edits`, `ask` or `plan`.
+pub const MODE_ENV: &str = "ANCHORLEG_AGY_MODE";
+
+impl HookMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            HookMode::Edits => "edits",
+            HookMode::Ask => "ask",
+            HookMode::Plan => "plan",
+            HookMode::Review => "review",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "ask" => HookMode::Ask,
+            "plan" => HookMode::Plan,
+            "review" => HookMode::Review,
+            _ => HookMode::Edits,
+        }
+    }
+}
+
+/// What a review tells agy when it tries to change a file.
+pub const REVIEW_DENY: &str =
+    "Review only: don't change any files. Report the findings in your reply instead.";
+
+/// What the plan stage tells agy when it tries to change a file.
+pub const PLAN_DENY: &str = "Planning only: don't change the task's files yet. Investigate, \
+     then write the plan in your reply; the person approves it first.";
 
 /// agy tools that only read.
 const READ_TOOLS: &[&str] = &["view_file", "list_dir", "find_by_name", "grep_search"];
@@ -122,6 +213,11 @@ const QUIET_TOOLS: &[&str] = &[
 /// inside the workspace (and agy's own artifact folder) go ahead; shell commands, the browser,
 /// the web, MCP tools and anything outside those folders are asked about.
 pub fn hook_verdict(req: &Value) -> HookVerdict {
+    hook_verdict_in(req, HookMode::Edits)
+}
+
+/// `hook_verdict` for a run in `mode`.
+pub fn hook_verdict_in(req: &Value, mode: HookMode) -> HookVerdict {
     let name = req
         .pointer("/toolCall/name")
         .and_then(Value::as_str)
@@ -133,6 +229,15 @@ pub fn hook_verdict(req: &Value) -> HookVerdict {
     if QUIET_TOOLS.contains(&name) {
         return HookVerdict::Allow;
     }
+    // anchorleg's own question tool (`install_mcp`): asking the person needs no approval. agy
+    // calls MCP tools through `call_mcp_tool`; its argument names aren't verified, so any
+    // mention of the server and tool counts.
+    if name == "call_mcp_tool" {
+        let text = args.to_string();
+        if text.contains(HOOK_NAME) && text.contains("ask_user") {
+            return HookVerdict::Allow;
+        }
+    }
     let mut roots: Vec<PathBuf> = req
         .get("workspacePaths")
         .and_then(Value::as_array)
@@ -141,11 +246,39 @@ pub fn hook_verdict(req: &Value) -> HookVerdict {
         .filter_map(Value::as_str)
         .map(PathBuf::from)
         .collect();
-    if let Some(dir) = req.get("artifactDirectoryPath").and_then(Value::as_str) {
-        roots.push(PathBuf::from(dir));
+    let artifacts = req
+        .get("artifactDirectoryPath")
+        .and_then(Value::as_str)
+        .map(PathBuf::from);
+    if let Some(dir) = &artifacts {
+        roots.push(dir.clone());
     }
     let paths = absolute_paths(&args);
     let inside = |p: &Path| roots.iter().any(|r| within(p, r));
+    // agy's own notes (plans, walkthroughs) aren't the task's files.
+    let notes_only = !paths.is_empty()
+        && artifacts
+            .as_ref()
+            .is_some_and(|a| paths.iter().all(|p| within(p, a)));
+    if EDIT_TOOLS.contains(&name) && !notes_only {
+        match mode {
+            HookMode::Plan => return HookVerdict::Deny(PLAN_DENY.to_owned()),
+            HookMode::Review => return HookVerdict::Deny(REVIEW_DENY.to_owned()),
+            HookMode::Ask => {
+                let path = paths.first().map(|p| p.display().to_string());
+                return HookVerdict::Ask {
+                    tool: if name == "write_to_file" {
+                        "Write"
+                    } else {
+                        "Edit"
+                    }
+                    .to_owned(),
+                    input: serde_json::json!({ "file_path": path }),
+                };
+            }
+            HookMode::Edits => {}
+        }
+    }
     let kind = if READ_TOOLS.contains(&name) {
         Some("Read")
     } else if EDIT_TOOLS.contains(&name) {
@@ -263,45 +396,78 @@ pub fn signals(line: &str) -> Vec<AgentSignal> {
             None => Vec::new(),
         },
         Some("result") => {
-            let session_id = text("/result/conversation_id");
-            if v.pointer("/result/status").and_then(Value::as_str) == Some("SUCCESS") {
-                let response = text("/result/response")
-                    .map(|t| t.trim().to_owned())
-                    .filter(|t| !t.is_empty());
-                return vec![match denied(&v) {
-                    // Headless mode refused a tool and the agent stopped without an answer.
-                    Some(note) if response.is_none() => AgentSignal::Finished {
-                        ok: false,
-                        session_id,
-                        text: Some(note),
-                    },
-                    Some(note) => AgentSignal::Finished {
-                        ok: true,
-                        session_id,
-                        text: response.map(|r| format!("{r}\n\n({note})")),
-                    },
-                    None => AgentSignal::Finished {
-                        ok: true,
-                        session_id,
-                        text: response,
-                    },
-                }];
-            }
-            let error = text("/result/error").unwrap_or_else(|| "the turn failed".to_owned());
-            if is_limit(&error) {
-                vec![AgentSignal::LimitHit {
-                    window: None,
-                    resets_at: None,
-                }]
-            } else {
-                vec![AgentSignal::Finished {
-                    ok: false,
-                    session_id,
-                    text: Some(error),
-                }]
-            }
+            let mut out = usage(&v)
+                .map(AgentSignal::Usage)
+                .into_iter()
+                .collect::<Vec<_>>();
+            // With `--json-schema`: the answer as JSON (its `response` text carries extra fields).
+            out.extend(
+                v.pointer("/result/structured_output")
+                    .filter(|s| !s.is_null())
+                    .cloned()
+                    .map(AgentSignal::Structured),
+            );
+            out.extend(result_signals(&v, &text));
+            out
         }
         _ => Vec::new(),
+    }
+}
+
+/// The run's tokens from `result.usage`. agy counts cache reads inside `input_tokens`.
+fn usage(v: &Value) -> Option<Usage> {
+    let u = v.pointer("/result/usage")?;
+    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cached = n("cache_read_tokens");
+    Some(Usage {
+        model: None,
+        input_tokens: n("input_tokens").saturating_sub(cached),
+        output_tokens: n("output_tokens").saturating_add(n("thinking_tokens")),
+        cache_read_tokens: cached,
+        cache_write_tokens: 0,
+        cost_usd: None,
+    })
+    .filter(|u| !u.is_empty())
+}
+
+/// `Finished` or `LimitHit` from a `result` event.
+fn result_signals(v: &Value, text: &dyn Fn(&str) -> Option<String>) -> Vec<AgentSignal> {
+    let session_id = text("/result/conversation_id");
+    if v.pointer("/result/status").and_then(Value::as_str) == Some("SUCCESS") {
+        let response = text("/result/response")
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty());
+        return vec![match denied(v) {
+            // Headless mode refused a tool and the agent stopped without an answer.
+            Some(note) if response.is_none() => AgentSignal::Finished {
+                ok: false,
+                session_id,
+                text: Some(note),
+            },
+            Some(note) => AgentSignal::Finished {
+                ok: true,
+                session_id,
+                text: response.map(|r| format!("{r}\n\n({note})")),
+            },
+            None => AgentSignal::Finished {
+                ok: true,
+                session_id,
+                text: response,
+            },
+        }];
+    }
+    let error = text("/result/error").unwrap_or_else(|| "the turn failed".to_owned());
+    if is_limit(&error) {
+        vec![AgentSignal::LimitHit {
+            window: None,
+            resets_at: None,
+        }]
+    } else {
+        vec![AgentSignal::Finished {
+            ok: false,
+            session_id,
+            text: Some(error),
+        }]
     }
 }
 
@@ -408,7 +574,12 @@ pub fn tool_step(v: &Value) -> Option<(&'static str, String)> {
         return None;
     }
     let name = step.pointer("/tool_info/name").and_then(Value::as_str)?;
-    let params = step.pointer("/tool_info/parameters")?;
+    tool_call(name, step.pointer("/tool_info/parameters")?)
+}
+
+/// An agy tool call as Claude's tool and its main argument: `("Bash", "ls")`. `None` for tools
+/// anchorleg doesn't show.
+pub fn tool_call(name: &str, params: &Value) -> Option<(&'static str, String)> {
     let param = |keys: &[&str]| {
         keys.iter()
             .find_map(|k| params.get(*k).and_then(Value::as_str))
@@ -430,7 +601,7 @@ pub fn tool_step(v: &Value) -> Option<(&'static str, String)> {
 pub fn context_tokens(v: &Value) -> Option<u64> {
     let u = v.pointer("/step_update/usage")?;
     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-    Some(n("input_tokens") + n("cache_read_tokens")).filter(|t| *t > 0)
+    Some(n("input_tokens").saturating_add(n("cache_read_tokens"))).filter(|t| *t > 0)
 }
 
 #[cfg(test)]
@@ -535,6 +706,39 @@ mod tests {
     }
 
     #[test]
+    fn the_hook_asks_about_edits_in_ask_mode_and_refuses_them_while_planning() {
+        use serde_json::json;
+        let edit = hook_req(
+            "replace_file_content",
+            json!({ "TargetFile": "/w/repo/a.rs" }),
+        );
+        let read = hook_req("view_file", json!({ "AbsolutePath": "/w/repo/a.rs" }));
+        let plan = hook_req(
+            "write_to_file",
+            json!({ "TargetFile": "/h/.gemini/antigravity-cli/brain/c1/plan.md" }),
+        );
+        assert_eq!(
+            hook_verdict_in(&edit, HookMode::Ask),
+            HookVerdict::Ask {
+                tool: "Edit".into(),
+                input: json!({ "file_path": "/w/repo/a.rs" })
+            }
+        );
+        assert_eq!(
+            hook_verdict_in(&edit, HookMode::Plan),
+            HookVerdict::Deny(PLAN_DENY.into())
+        );
+        for mode in [HookMode::Ask, HookMode::Plan] {
+            assert_eq!(hook_verdict_in(&read, mode), HookVerdict::Allow);
+            // agy's own plan file isn't the task's.
+            assert_eq!(hook_verdict_in(&plan, mode), HookVerdict::Allow);
+        }
+        assert_eq!(hook_verdict_in(&edit, HookMode::Edits), HookVerdict::Allow);
+        assert_eq!(HookMode::parse("plan"), HookMode::Plan);
+        assert_eq!(HookMode::parse("whatever"), HookMode::Edits);
+    }
+
+    #[test]
     fn the_hook_lets_reads_and_edits_in_the_workspace_through_and_asks_about_the_rest() {
         use serde_json::json;
         let allow = |name, args| hook_verdict(&hook_req(name, args)) == HookVerdict::Allow;
@@ -634,5 +838,47 @@ mod tests {
         assert!(has_conversation(&b, "c1"));
         assert!(b.join(DATA_DIR).join("brain/c1/sub/plan.md").is_file());
         assert!(!sync_session(&a, &b, "nope").unwrap());
+    }
+
+    #[test]
+    fn a_json_schema_answer_comes_from_structured_output() {
+        let capture = include_str!(
+            "../../../../fixtures/agy-1.3.3-structured-output-20261012/structured.jsonl"
+        );
+        let sig: Vec<AgentSignal> = capture.lines().flat_map(signals).collect();
+        assert!(
+            sig.contains(&AgentSignal::Structured(
+                serde_json::json!({ "answer": 42, "word": "Joyful" })
+            )),
+            "{sig:?}"
+        );
+    }
+
+    #[test]
+    fn the_question_server_is_added_beside_other_servers_and_allowed() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(MCP_FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"mcpServers":{"fs":{"command":"npx"}}}"#).unwrap();
+        install_mcp(home.path(), Path::new("/bin/anchorleg")).unwrap();
+        install_mcp(home.path(), Path::new("/bin/anchorleg")).unwrap();
+        let config: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(config["mcpServers"]["fs"]["command"], "npx");
+        assert_eq!(
+            config["mcpServers"]["anchorleg"]["args"],
+            serde_json::json!(["permission", "mcp-ask"])
+        );
+        let call = |server: &str| {
+            serde_json::json!({ "toolCall": { "name": "call_mcp_tool", "args": {
+                "ServerName": server, "ToolName": "ask_user", "Arguments": "{}" } } })
+        };
+        assert_eq!(
+            hook_verdict_in(&call("anchorleg"), HookMode::Ask),
+            HookVerdict::Allow
+        );
+        assert_ne!(
+            hook_verdict_in(&call("other"), HookMode::Ask),
+            HookVerdict::Allow
+        );
     }
 }

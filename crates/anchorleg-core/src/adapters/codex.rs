@@ -10,10 +10,16 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{AgentSignal, EpochSecs, QuotaReading, QuotaStatus, Window};
+use super::{
+    AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus, Usage, Window,
+};
 
 /// Where the ChatGPT desktop app keeps its copy of the official CLI.
 pub const BUNDLED_BIN: &str = "/Applications/ChatGPT.app/Contents/Resources/codex";
+
+/// Codex feature that offers `request_user_input` outside plan mode (off by default in 0.153.4,
+/// "under development"). anchorleg turns it on when it can forward the questions (D36).
+pub const ASK_FEATURE: &str = "default_mode_request_user_input";
 
 /// `-c` value that lets `codex exec` edit the working folder (its default is read-only).
 pub const WORKSPACE_WRITE: &str = "sandbox_mode=\"workspace-write\"";
@@ -63,12 +69,52 @@ impl Stream {
                 }
                 Vec::new()
             }
-            Some("turn.completed") => vec![AgentSignal::Finished {
-                ok: true,
-                session_id: self.thread_id.clone(),
-                text: self.last_text.clone(),
-            }],
+            Some("turn.completed") => {
+                let mut out: Vec<AgentSignal> = v
+                    .get("turn_usage")
+                    .or_else(|| v.get("usage"))
+                    .map(turn_usage)
+                    .filter(|u| !u.is_empty())
+                    .map(AgentSignal::Usage)
+                    .into_iter()
+                    .collect();
+                out.extend(
+                    v.get("background")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(|c| AgentSignal::Background(c.to_owned())),
+                );
+                out.push(AgentSignal::Finished {
+                    ok: true,
+                    session_id: self.thread_id.clone(),
+                    text: self.last_text.clone(),
+                });
+                out
+            }
+            Some("model.rerouted") => text("/to")
+                .map(|to| AgentSignal::Rerouted {
+                    from: text("/from"),
+                    to,
+                    reason: text("/reason"),
+                })
+                .into_iter()
+                .collect(),
+            // anchorleg stopped the turn (quota or budget): count what it used.
+            Some("turn.stopped") => v
+                .get("turn_usage")
+                .map(turn_usage)
+                .filter(|u| !u.is_empty())
+                .map(AgentSignal::Usage)
+                .into_iter()
+                .collect(),
             Some("turn.failed") => {
+                let usage = v
+                    .get("turn_usage")
+                    .map(turn_usage)
+                    .filter(|u| !u.is_empty())
+                    .map(AgentSignal::Usage);
                 let message = text("/error/message").unwrap_or_default();
                 // Turns run through `codex app-server` carry Codex's own error code (D27).
                 let code = text("/error/codex_error_info");
@@ -77,17 +123,18 @@ impl Stream {
                     Some(_) => None,
                     None => limit_reset(&message),
                 };
-                match limit {
-                    Some(resets_at) => vec![AgentSignal::LimitHit {
+                let end = match limit {
+                    Some(resets_at) => AgentSignal::LimitHit {
                         window: None,
                         resets_at,
-                    }],
-                    None => vec![AgentSignal::Finished {
+                    },
+                    None => AgentSignal::Finished {
                         ok: false,
                         session_id: self.thread_id.clone(),
                         text: Some(message),
-                    }],
-                }
+                    },
+                };
+                usage.into_iter().chain([end]).collect()
             }
             Some("error") => {
                 let message = text("/message").unwrap_or_default();
@@ -158,6 +205,57 @@ fn find(dir: &Path, suffix: &str, depth: usize) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// A turn's tokens. Codex counts cached input inside `input_tokens`; anchorleg keeps them apart,
+/// as Claude does.
+fn turn_usage(u: &Value) -> Usage {
+    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cached = n("cached_input_tokens");
+    Usage {
+        model: None,
+        input_tokens: n("input_tokens").saturating_sub(cached),
+        output_tokens: n("output_tokens"),
+        cache_read_tokens: cached,
+        cache_write_tokens: n("cache_write_input_tokens"),
+        cost_usd: None,
+    }
+}
+
+/// Credits from a rate-limits object (live `credits.hasCredits` or the rollout's `has_credits`).
+pub fn credits(limits: &Value) -> Option<Credits> {
+    let c = limits.get("credits").filter(|c| c.is_object())?;
+    let flag = |a: &str, b: &str| {
+        c.get(a)
+            .or_else(|| c.get(b))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let state = if flag("unlimited", "unlimited") {
+        CreditState::Unlimited
+    } else if flag("hasCredits", "has_credits") {
+        CreditState::Available
+    } else {
+        CreditState::Off
+    };
+    Some(Credits {
+        state,
+        balance: c.get("balance").and_then(|b| {
+            b.as_f64()
+                .or_else(|| b.as_str().and_then(|s| s.parse().ok()))
+        }),
+        reason: None,
+    })
+}
+
+/// Credits from a rollout file's last rate-limits entry.
+pub fn rollout_credits(rollout: &str) -> Option<Credits> {
+    rollout
+        .lines()
+        .rev()
+        .filter(|l| l.contains("\"credits\""))
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find_map(|v| v.pointer("/payload/rate_limits").and_then(credits))
 }
 
 /// Quota from a rollout file's last `token_count` with rate limits.
@@ -252,7 +350,7 @@ fn window(minutes: i64) -> Window {
 pub async fn read_live_quota(
     mut cmd: tokio::process::Command,
     timeout: std::time::Duration,
-) -> Result<Vec<QuotaReading>, String> {
+) -> Result<(Vec<QuotaReading>, Option<Credits>), String> {
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
     cmd.arg("app-server")
         .stdin(std::process::Stdio::piped())
@@ -291,7 +389,9 @@ pub async fn read_live_quota(
             if let Some(err) = v.pointer("/error/message").and_then(Value::as_str) {
                 return Err(err.to_owned());
             }
-            return Ok(live_quota(v.get("result").unwrap_or(&Value::Null)));
+            let result = v.get("result").unwrap_or(&Value::Null);
+            let credits = result.get("rateLimits").and_then(credits);
+            return Ok((live_quota(result), credits));
         }
         Err("codex app-server closed without an answer".to_owned())
     };
@@ -398,6 +498,42 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, AgentSignal::LimitHit { .. }))
         );
+    }
+
+    #[test]
+    fn a_reroute_is_a_signal() {
+        let line = r#"{"type":"model.rerouted","from":"gpt-5.6","to":"gpt-5.6-mini","reason":"highRiskCyberActivity"}"#;
+        assert_eq!(
+            run(line),
+            vec![AgentSignal::Rerouted {
+                from: Some("gpt-5.6".into()),
+                to: "gpt-5.6-mini".into(),
+                reason: Some("highRiskCyberActivity".into())
+            }]
+        );
+    }
+
+    #[test]
+    fn stopped_and_failed_turns_still_count_their_tokens() {
+        let usage = AgentSignal::Usage(Usage {
+            model: None,
+            input_tokens: 50,
+            output_tokens: 5,
+            cache_read_tokens: 50,
+            cache_write_tokens: 0,
+            cost_usd: None,
+        });
+        let tokens =
+            r#""turn_usage":{"input_tokens":100,"cached_input_tokens":50,"output_tokens":5}"#;
+        assert_eq!(
+            run(&format!(r#"{{"type":"turn.stopped",{tokens}}}"#)),
+            vec![usage.clone()]
+        );
+        let failed = run(&format!(
+            r#"{{"type":"turn.failed","error":{{"message":"boom"}},{tokens}}}"#
+        ));
+        assert_eq!(failed[0], usage);
+        assert!(matches!(failed[1], AgentSignal::Finished { ok: false, .. }));
     }
 
     #[test]

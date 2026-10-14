@@ -8,8 +8,41 @@
 # $FAKE_NO_SESSION_FILE is set, which makes every resume fail).
 set -uo pipefail
 
+# `mcp …` (anchorleg sync mcp): logged as "<account> mcp …" to $FAKE_DIR/mcp.log, nothing else.
+if [[ "${1:-}" == mcp ]]; then
+  printf '%s %s\n' "$(basename "$CLAUDE_CONFIG_DIR")" "$*" >>"$FAKE_DIR/mcp.log"
+  exit 0
+fi
+
+# `auth login` / `auth status --json` (anchorleg accounts login): signs in by writing a marker in
+# $CLAUDE_CONFIG_DIR, unless $FAKE_LOGIN_FAILS is set.
+if [[ "${1:-}" == auth ]]; then
+  case "${2:-}" in
+    login)
+      [[ -n "${FAKE_LOGIN_FAILS:-}" ]] && { echo "login cancelled" >&2; exit 1; }
+      echo "Opening the browser to sign in…"
+      touch "$CLAUDE_CONFIG_DIR/.fake-signed-in"
+      exit 0 ;;
+    status)
+      if [[ -f "$CLAUDE_CONFIG_DIR/.fake-signed-in" ]]; then echo '{"loggedIn": true}'; else echo '{"loggedIn": false}'; fi
+      exit 0 ;;
+  esac
+fi
+
 account="$(basename "$CLAUDE_CONFIG_DIR")"
-printf '%s %s [stop_at=%s]\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" >>"$FAKE_LOG"  # one line per launch
+
+# `-p … /usage` (anchorleg reading quota): prints $FAKE_DIR/X.usage.json, or fails like a CLI
+# that can't tell. Logged to $FAKE_DIR/usage.log, not $FAKE_LOG: it isn't a launch.
+if [[ "${*: -1}" == /usage ]]; then
+  echo "$account" >>"$FAKE_DIR/usage.log"
+  [[ -f "$FAKE_DIR/$account.usage.json" ]] || exit 1
+  cat "$FAKE_DIR/$account.usage.json"
+  exit 0
+fi
+
+printf '%s %s [stop_at=%s]%s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" \
+  "${ANCHORLEG_PERMISSION_MODE:+ [permission_mode=$ANCHORLEG_PERMISSION_MODE]}${ANCHORLEG_BUDGET_LEFT:+ [budget_left=$ANCHORLEG_BUDGET_LEFT]}" \
+  >>"$FAKE_LOG"  # one line per launch
 n="$(grep -c "^$account " "$FAKE_LOG")"
 
 resume=""

@@ -4,7 +4,7 @@ use std::io::Read;
 
 use anchorleg_core::adapters::{QuotaReading, QuotaStatus, Window};
 use anchorleg_core::output::{self, Next, Report, StatusReport};
-use anchorleg_core::policy::PickOptions;
+use anchorleg_core::policy::{CreditsUse, PickOptions};
 use anchorleg_core::registry::Config;
 use anchorleg_core::store::{Source, Store};
 use anyhow::Context;
@@ -22,13 +22,14 @@ pub fn status(json: bool, refresh: bool) -> anyhow::Result<()> {
         let failed = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(anchorleg_core::supervisor::refresh_codex_quota(
+            .block_on(anchorleg_core::supervisor::refresh_quota(
                 &config,
                 &store,
                 &anchorleg_core::registry::Keychain,
                 &home,
                 &accounts,
                 now(),
+                0,
             ))?;
         for (name, e) in failed {
             eprintln!("{name}: couldn't read quota ({e})");
@@ -38,7 +39,13 @@ pub fn status(json: bool, refresh: bool) -> anyhow::Result<()> {
         policy: config.policy,
         ..PickOptions::default()
     };
-    let report = output::status(&config, &store.quota(None)?, now(), &opts);
+    let report = output::status(
+        &config,
+        &store.quota(None)?,
+        &store.credits(None)?,
+        now(),
+        &opts,
+    );
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -79,6 +86,12 @@ fn print_status(r: &StatusReport) {
                 window_cell(w.used, w.resets_at, r.now)
             ));
         }
+        if let Some(c) = &a.credits {
+            state.push_str(&format!("  credits {}", credits_cell(c, a.credits_use)));
+        }
+        if let Some(note) = stale_note(a.windows.iter().map(|w| w.updated_at), r.now) {
+            state.push_str(&format!("  {note}"));
+        }
         println!(
             "{:>4}  {:<16} {:<14} {:<14} {state}",
             a.priority,
@@ -97,6 +110,27 @@ fn print_status(r: &StatusReport) {
     println!("\nnext run: {next}  (policy {})", r.policy.name());
 }
 
+/// `available (last-resort)`, `off: out_of_credits`, `in use, $12.50 left`.
+pub fn credits_cell(c: &output::CreditsStatus, setting: CreditsUse) -> String {
+    use anchorleg_core::adapters::CreditState;
+    let mut s = match c.state {
+        CreditState::Off => match &c.reason {
+            Some(r) => format!("off: {r}"),
+            None => "off".to_owned(),
+        },
+        CreditState::Available => "available".to_owned(),
+        CreditState::InUse => "IN USE".to_owned(),
+        CreditState::Unlimited => "unlimited".to_owned(),
+    };
+    if let Some(b) = c.balance {
+        s.push_str(&format!(", {b} left"));
+    }
+    if c.state.spendable() {
+        s.push_str(&format!(" (use: {})", setting.name()));
+    }
+    s
+}
+
 fn window_cell(used: Option<f64>, resets_at: Option<i64>, now: i64) -> String {
     let pct = used.map_or_else(|| "?".to_owned(), |u| format!("{:.0}%", u * 100.0));
     match resets_at {
@@ -105,8 +139,18 @@ fn window_cell(used: Option<f64>, resets_at: Option<i64>, now: i64) -> String {
     }
 }
 
+/// How old the account's quota reading is, when it's old enough to be wrong: anchorleg only sees
+/// Claude's quota during its own runs, so use elsewhere (an interactive session) doesn't show.
+pub fn stale_note(updated: impl Iterator<Item = i64>, now: i64) -> Option<String> {
+    let newest = updated.max()?;
+    (now - newest >= STALE_AFTER).then(|| format!("read {} ago", ago(now - newest)))
+}
+
+/// A quota reading older than this gets its age shown.
+const STALE_AFTER: i64 = 3600;
+
 /// `3h05m`, `12m`, `40s`.
-fn ago(secs: i64) -> String {
+pub fn ago(secs: i64) -> String {
     let secs = secs.max(0);
     let (d, h, m) = (secs / 86_400, secs % 86_400 / 3600, secs % 3600 / 60);
     match (d, h, m) {
@@ -151,12 +195,95 @@ pub fn report() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Version of `anchorleg sessions show --json`'s object; bumped when a field changes meaning.
+const SESSION_SCHEMA: u32 = 1;
+
+/// The `anchorleg run` process is still there.
+fn pid_alive(pid: i64) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// `anchorleg sessions show RUN`: the session up to RUN, as `anchorleg ui` shows it.
+pub fn show_session(id: i64, since: usize, json: bool) -> anyhow::Result<()> {
+    use anchorleg_core::conversation::{self, Role};
+    use anchorleg_core::store::RunState;
+
+    let db = Store::default_path()?;
+    let store = Store::open(&db)?;
+    let log_dir = db.parent().map(|d| d.join("runs")).unwrap_or_default();
+    let Some(run) = store.run(id)? else {
+        anyhow::bail!("no run #{id}; `anchorleg sessions` lists them");
+    };
+    let mut runs = Vec::new();
+    for rid in store.session_runs(id)?.into_iter().rev() {
+        runs.extend(store.run(rid)?);
+    }
+    let refs: Vec<_> = runs.iter().collect();
+    let view = conversation::session_view(&refs, &log_dir);
+    let working = matches!(run.state, RunState::Running | RunState::Waiting)
+        && run.pid.is_some_and(pid_alive);
+    let next = view.messages.len();
+    let since = since.min(next);
+    if json {
+        let slash = std::fs::read_to_string(log_dir.join(format!("run-{id}.jsonl")))
+            .ok()
+            .and_then(|log| conversation::slash_commands(&log));
+        let out = serde_json::json!({
+            "schema": SESSION_SCHEMA,
+            "run": run,
+            "runs": runs.iter().map(|r| r.id).collect::<Vec<_>>(),
+            "name": store.session_name(id)?,
+            "working": working,
+            "since": since,
+            "next": next,
+            "messages": &view.messages[since..],
+            "running": view.running,
+            "subagents": view.subagents,
+            "steps": view.steps,
+            "context": { "tokens": view.context_tokens, "window": view.context_window },
+            "slash_commands": slash,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    for m in &view.messages[since..] {
+        let who = match m.role {
+            Role::User => "you",
+            Role::Agent => "agent",
+            Role::Tool => "tool",
+            Role::ToolError => "tool error",
+            Role::Output => "output",
+            Role::Thinking => "thinking",
+            Role::Anchorleg => "anchorleg",
+            Role::Error => "error",
+        };
+        println!("[{who}] {}", m.text);
+    }
+    if let Some(r) = view.running.filter(|_| working) {
+        println!("[working] {}", r.what);
+    }
+    Ok(())
+}
+
 /// `anchorleg sessions`.
 pub fn sessions(json: bool, limit: usize) -> anyhow::Result<()> {
     let store = Store::open(&Store::default_path()?)?;
     let runs = store.recent_runs(limit)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&runs)?);
+        // `side`: a side question's run (`btw`), not the session going on.
+        let out: Vec<serde_json::Value> = runs
+            .iter()
+            .map(|r| {
+                let mut v = serde_json::to_value(r)?;
+                v["side"] = crate::run::is_side(&r.task).into();
+                Ok(v)
+            })
+            .collect::<anyhow::Result<_>>()?;
+        println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());
     }
     if runs.is_empty() {
@@ -166,8 +293,11 @@ pub fn sessions(json: bool, limit: usize) -> anyhow::Result<()> {
     for r in runs {
         let state = format!("{:?}", r.state).to_lowercase();
         let follow = r.parent_id.map(|p| format!(" ↳#{p}")).unwrap_or_default();
+        let name = store
+            .session_name(r.id)?
+            .map_or(String::new(), |n| format!("[{n}] "));
         println!(
-            "#{:<4} {:<9} {:<16} {:>8} ago  {}{follow}",
+            "#{:<4} {:<9} {:<16} {:>8} ago  {name}{}{follow}",
             r.id,
             state,
             r.account.unwrap_or_default(),
