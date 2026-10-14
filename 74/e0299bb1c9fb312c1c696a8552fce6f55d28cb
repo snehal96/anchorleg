@@ -1,0 +1,90 @@
+crates/anchorleg/src/run.rs
+  s_24d456e49210ef::t_13a3330b163566 15-17,89,122-220,350,361-379,403-415,417-421,423-426,824,845-857,870-875,891-944
+crates/anchorleg-core/src/task_options.rs
+  s_24d456e49210ef::t_13a3330b163566 1-310
+crates/anchorleg/tests/fake/fake-codex.py
+  s_24d456e49210ef::t_13a3330b163566 15,161-162
+crates/anchorleg-core/src/lib.rs
+  s_24d456e49210ef::t_13a3330b163566 22-23
+crates/anchorleg/tests/run.rs
+  s_24d456e49210ef::t_13a3330b163566 832-834,863-877,908-920,1908-1912,2036-2037,2596-2604,2753-2770,2797-3055
+crates/anchorleg-core/src/registry.rs
+  s_24d456e49210ef::t_13a3330b163566 394
+crates/anchorleg/tests/fake/fake-claude.sh
+  s_24d456e49210ef::t_13a3330b163566 17-31
+crates/anchorleg-core/src/store.rs
+  s_24d456e49210ef::t_13a3330b163566 257-260,263-271,291,415-417,739-743
+  s_24d456e49210ef::t_78d23f6ee5f9bb 744-746
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_13a3330b163566 9,26-40,105-110,133-135,142-144,160-162,180-182,200-202,212-213,215-216,265-267,287-291,390-403,409-454,532,542,544,571-577,579-584,590-600,708-710
+  s_24d456e49210ef::t_caa5160ae391eb 711-716
+crates/anchorleg/src/permission.rs
+  s_24d456e49210ef::t_13a3330b163566 141-145,256-293
+  s_24d456e49210ef::t_69d9c6782d3152 294-295
+crates/anchorleg-core/src/supervisor.rs
+  s_24d456e49210ef::t_13a3330b163566 21-23,29,118-119,239,294,497-499,530,1345-1355,1357-1367,1391-1394,1431-1435,1438,1489-1493,1530-1531,1624,1716-1727
+crates/anchorleg-core/src/notify.rs
+  s_24d456e49210ef::t_13a3330b163566 10-13,17,124-129,131,135,155-188,239-251
+  s_24d456e49210ef::t_6fe3894cd573ae 252
+docs/CLI.md
+  s_24d456e49210ef::t_13a3330b163566 22-25,27,29,33-34,36,42,94-96,130-135,313-318,484-509,625-633,781-835
+  s_24d456e49210ef::t_1477e48e0ec214 836
+crates/anchorleg-core/src/handoff.rs
+  s_24d456e49210ef::t_13a3330b163566 21-22,29,590
+crates/anchorleg/src/sync.rs
+  s_24d456e49210ef::t_13a3330b163566 40,59-61,115-160
+  s_24d456e49210ef::t_be8168fae2e673 161-162
+crates/anchorleg-core/src/conversation.rs
+  s_24d456e49210ef::t_13a3330b163566 372,481,494,942-991,995-1037
+  s_24d456e49210ef::t_3e2e5c61c2c823 1038
+crates/anchorleg/src/status.rs
+  s_24d456e49210ef::t_13a3330b163566 198-271,277-286
+crates/anchorleg/src/ui.rs
+  s_24d456e49210ef::t_13a3330b163566 560-568,573-574,2191-2202,2294
+crates/anchorleg/src/vendors.rs
+  s_24d456e49210ef::t_13a3330b163566 1-73
+crates/anchorleg/src/settings.rs
+  s_24d456e49210ef::t_13a3330b163566 16,23-32,34-47,58-64,71,74,77,83,90-100,109,134-140,156,174-190,198-200
+crates/anchorleg/src/accounts.rs
+  s_24d456e49210ef::t_13a3330b163566 4,10,12,27-31,44-46,50-64,135,154,206-210,347-444,465,478-493
+CONTRIBUTING.md
+  s_24d456e49210ef::t_13a3330b163566 58-70
+crates/anchorleg-core/src/adapters/agy.rs
+  s_24d456e49210ef::t_13a3330b163566 425,604
+README.md
+  s_24d456e49210ef::t_13a3330b163566 93-95,219-221,367
+crates/anchorleg-core/src/adapters/mod.rs
+  s_24d456e49210ef::t_13a3330b163566 9-10,15-44
+  s_24d456e49210ef::t_4d4041c08aa0ea 45
+crates/anchorleg/tests/cli.rs
+  s_24d456e49210ef::t_13a3330b163566 230-391
+CHANGELOG.md
+  s_24d456e49210ef::t_13a3330b163566 10-28
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_24d456e49210ef::t_13a3330b163566 70-73,160-165,289-293,460-461,525-526,1281,1399,1653-1654
+crates/anchorleg-core/src/adapters/conformance.rs
+  s_24d456e49210ef::t_13a3330b163566 1-339
+crates/anchorleg-core/src/vendors.rs
+  s_24d456e49210ef::t_13a3330b163566 1-251
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74e0299bb1c9fb312c1c696a8552fce6f55d28cb",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
