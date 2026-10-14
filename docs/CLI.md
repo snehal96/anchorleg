@@ -20,6 +20,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | Command | Status |
 |---|---|
 | `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `login <name> [--cli claude\|codex\|agy] [--bin B] [--json]` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F] [--json]` | works |
+| `anchorleg vendors [--json]` | works |
 | `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
@@ -796,6 +797,11 @@ For the desktop app and scripts; each changes what its options say first, then p
 - `anchorleg sync mcp [--with-env] [--yes] --json` → `{"schema": 1, "accounts": [{"name",
   "servers": [names]}], "plan": [{"server", "account", "skip"}], "results": [{"server",
   "account", "ok", "error"}] | null}`; `results` only with `--yes`. Server settings aren't printed.
+- `anchorleg vendors --json` → `{"schema": 1, "vendors": [{"vendor", "label", "driven", "quota"
+  ("live" | "runs" | "none"), "resume", "fork", "side", "rewind", "plan", "approvals", "questions",
+  "json_schema", "instructions": [file…], "folder_env", "folder_prefix", "sign_in": {"kind":
+  "browser" | "terminal" | "manual"}, "bin", "installed", "efforts"}]}`: what each CLI can do with
+  anchorleg. The desktop app offers only what an account's CLI supports.
 - `anchorleg accounts login NAME [--cli claude|codex|agy] --json` → `{"name", "cli", "dir"}` once the
   CLI reports a sign-in (`claude auth status` / `codex login status` / `agy models`); the sign-in's own output goes
   to stderr. A sign-in that doesn't finish adds nothing (exit 1). The login stays with the CLI.

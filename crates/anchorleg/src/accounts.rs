@@ -9,6 +9,7 @@ use anchorleg_core::registry::{
     Account, Config, Keychain, Secret, SecretStore, TokenFrom, Vendor, accounts_from_aliases,
     default_program, parse_command,
 };
+use anchorleg_core::vendors::SignIn;
 use anyhow::{Context, bail};
 use clap::{Args, Subcommand};
 
@@ -131,10 +132,7 @@ pub struct AddArgs {
 }
 
 pub(crate) fn parse_vendor(s: &str) -> Result<Vendor, String> {
-    let s = if s == "agy" { "antigravity" } else { s };
-    Vendor::ALL
-        .into_iter()
-        .find(|v| v.name() == s)
+    Vendor::parse(s)
         .ok_or_else(|| "expected claude, codex, antigravity (agy), kimi or cursor".to_owned())
 }
 
@@ -346,21 +344,6 @@ fn add(config: &mut Config, args: AddArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The env var that points a CLI at an account's folder, and the folder's name prefix.
-fn login_dir(cli: Vendor) -> anyhow::Result<(&'static str, &'static str)> {
-    match cli {
-        Vendor::Claude => Ok(("CLAUDE_CONFIG_DIR", ".claude-")),
-        Vendor::Codex => Ok(("CODEX_HOME", ".codex-")),
-        // agy has no narrower setting than HOME; in a HOME of its own it can't reach the
-        // Keychain and keeps the login as a file there.
-        Vendor::Antigravity => Ok(("HOME", ".agy-")),
-        other => bail!(
-            "anchorleg can't sign in to {} for you yet: sign in with its own app, then `anchorleg accounts add`",
-            other.name()
-        ),
-    }
-}
-
 fn login(config: &mut Config, path: &Path, args: LoginArgs) -> anyhow::Result<()> {
     if config.get(&args.name).is_some() {
         bail!("account `{}` already exists", args.name);
@@ -373,7 +356,15 @@ fn login(config: &mut Config, path: &Path, args: LoginArgs) -> anyhow::Result<()
     {
         bail!("an account name is letters, digits, `-` and `_`");
     }
-    let (var, prefix) = login_dir(args.cli)?;
+    let caps = args.cli.caps();
+    let (Some((sign_in, check)), Some(var), Some(prefix)) =
+        (caps.sign_in.commands(), caps.folder_env, caps.folder_prefix)
+    else {
+        bail!(
+            "anchorleg can't sign in to {} for you yet: sign in with its own app, then `anchorleg accounts add`",
+            caps.label
+        );
+    };
     let home = dirs_home()?;
     let folder = format!("~/{prefix}{}", args.name);
     let dir = home.join(format!("{prefix}{}", args.name));
@@ -383,21 +374,18 @@ fn login(config: &mut Config, path: &Path, args: LoginArgs) -> anyhow::Result<()
         .clone()
         .unwrap_or_else(|| default_program(args.cli));
 
-    let (sign_in, check): (&[&str], &[&str]) = match args.cli {
-        Vendor::Codex => (&["login"], &["login", "status"]),
-        // agy signs in from its own screen, started with no arguments.
-        Vendor::Antigravity => (&[], &["models"]),
-        _ => (&["auth", "login"], &["auth", "status", "--json"]),
-    };
-    if args.cli == Vendor::Antigravity {
+    if matches!(caps.sign_in, SignIn::Terminal { .. }) {
         if !std::io::stdin().is_terminal() {
             bail!(
-                "Antigravity signs in from its own screen: run `anchorleg accounts login {} --cli agy` in a terminal",
-                args.name
+                "{} signs in from its own screen: run `anchorleg accounts login {} --cli {}` in a terminal",
+                caps.label,
+                args.name,
+                args.cli.name()
             );
         }
         eprintln!(
-            "agy opens next: sign in there (it opens your browser), then quit agy to finish."
+            "{} opens next: sign in there (it opens your browser), then quit it to finish.",
+            caps.label
         );
     }
     // With --json, stdout is for the result: the sign-in's own messages (its link, if the
@@ -445,14 +433,13 @@ fn login(config: &mut Config, path: &Path, args: LoginArgs) -> anyhow::Result<()
     Ok(())
 }
 
-/// `claude auth status --json` says `"loggedIn": true`; `codex login status` and `agy models`
-/// exit 0 (signed out: exit 1).
+/// The check exits 0 once signed in; Claude's `auth status --json` also exits 0 signed out, so
+/// it has to say `"loggedIn": true`.
 fn signed_in(cli: Vendor, out: &std::process::Output) -> bool {
-    match cli {
-        Vendor::Codex | Vendor::Antigravity => out.status.success(),
-        _ => serde_json::from_slice::<serde_json::Value>(&out.stdout)
-            .is_ok_and(|v| v["loggedIn"] == serde_json::Value::Bool(true)),
-    }
+    out.status.success()
+        && (cli != Vendor::Claude
+            || serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                .is_ok_and(|v| v["loggedIn"] == serde_json::Value::Bool(true)))
 }
 
 fn read_token() -> anyhow::Result<Secret> {

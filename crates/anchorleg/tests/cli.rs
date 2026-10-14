@@ -356,3 +356,36 @@ fn login_to_antigravity_needs_a_terminal() {
         .failure()
         .stderr(predicates::str::contains("in a terminal"));
 }
+
+#[test]
+fn vendors_json_says_what_each_cli_can_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let v = json(
+        &anchorleg(&config)
+            .args(["vendors", "--json"])
+            .assert()
+            .success(),
+    );
+    assert_eq!(v["schema"], 1);
+    let row = |name: &str| {
+        v["vendors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["vendor"] == name)
+            .cloned()
+            .unwrap()
+    };
+    let claude = row("claude");
+    assert_eq!(claude["label"], "Claude Code");
+    assert_eq!(claude["driven"], true);
+    assert_eq!(claude["fork"], true);
+    assert_eq!(claude["quota"], "live");
+    assert_eq!(claude["sign_in"]["kind"], "browser");
+    assert_eq!(claude["bin"], "claude");
+    let agy = row("antigravity");
+    assert_eq!(agy["side"], false);
+    assert_eq!(agy["sign_in"]["kind"], "terminal");
+    assert_eq!(row("cursor")["driven"], false);
+}

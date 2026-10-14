@@ -6,6 +6,7 @@ mod status;
 mod sync;
 mod ui;
 mod usage;
+mod vendors;
 
 use anchorleg_core::policy::Policy;
 use std::path::PathBuf;
@@ -101,6 +102,12 @@ enum Command {
     /// Add, list or remove accounts.
     #[command(subcommand)]
     Accounts(accounts::AccountsCmd),
+    /// What each CLI can do with anchorleg (resume, fork, side questions, rewind, plan,
+    /// approvals, quota, sign-in) and whether it's installed.
+    Vendors {
+        #[arg(long)]
+        json: bool,
+    },
     /// Session manager: start tasks, watch and reply to sessions, manage accounts.
     Ui,
     /// Tool calls waiting for your approval (asked by anchorleg-mod while a run works).
@@ -462,6 +469,7 @@ fn main() -> ExitCode {
 
     let result = match Cli::parse().command {
         Command::Accounts(cmd) => accounts::run(cmd),
+        Command::Vendors { json } => vendors::run(json),
         Command::Status { json, refresh } => status::status(json, refresh),
         Command::Ui => ui::run(),
         Command::Permission(cmd) => permission::run(cmd),

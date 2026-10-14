@@ -587,13 +587,7 @@ fn one_line(s: &str, max: usize) -> String {
 
 /// The project instruction files each CLI reads by itself.
 fn reads(vendor: crate::registry::Vendor) -> &'static [&'static str] {
-    use crate::registry::Vendor;
-    match vendor {
-        Vendor::Claude => &["CLAUDE.md"],
-        Vendor::Codex => &["AGENTS.md"],
-        Vendor::Antigravity => &["GEMINI.md", "AGENTS.md"],
-        _ => &[],
-    }
+    vendor.caps().instructions
 }
 
 /// Most of an instruction file carried into a prompt.

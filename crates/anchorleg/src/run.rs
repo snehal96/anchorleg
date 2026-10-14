@@ -345,11 +345,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     };
     let mut opts = RunOptions::new(attachments::with_note(&task, &staged), &cwd);
     opts.goal = goal;
-    opts.vendor = args.cli.as_deref().map(|c| match c {
-        "codex" => Vendor::Codex,
-        "antigravity" => Vendor::Antigravity,
-        _ => Vendor::Claude,
-    });
+    opts.vendor = args.cli.as_deref().and_then(Vendor::parse);
     if let Some((r, _)) = &reviewed {
         opts.review = true;
         opts.review_of = Some(r.id);
@@ -383,14 +379,30 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
             );
         };
         let fork = args.fork.is_some() || args.btw.is_some() || rewound.is_some();
-        if fork
-            && config
-                .get(&account)
-                .is_some_and(|a| a.vendor == anchorleg_core::registry::Vendor::Antigravity)
+        type Can = fn(&anchorleg_core::vendors::Caps) -> bool;
+        let want: Option<(&str, Can)> = if args.btw.is_some() {
+            Some(("a side question", |c| c.side))
+        } else if rewound.is_some() {
+            Some(("going back", |c| c.rewind))
+        } else if args.fork.is_some() {
+            Some(("forking", |c| c.fork))
+        } else {
+            None
+        };
+        if let Some((what, can)) = want
+            && let Some(a) = config.get(&account)
+            && !can(a.vendor.caps())
         {
+            let able: Vec<&str> = Vendor::ALL
+                .into_iter()
+                .filter(|v| can(v.caps()))
+                .map(|v| v.caps().label)
+                .collect();
             anyhow::bail!(
-                "forking or a side question needs a Claude or Codex session; #{} ran on {account}",
-                p.id
+                "{what} needs a {} session; #{} ran on {account} ({})",
+                able.join(" or "),
+                p.id,
+                a.vendor.caps().label
             );
         }
         opts.follow_up = Some(FollowUp {

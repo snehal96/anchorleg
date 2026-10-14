@@ -43,14 +43,6 @@ use crate::status::stale_note;
 
 const TICK: Duration = Duration::from_millis(700);
 
-/// Agent CLIs anchorleg knows about, shown in the Agents pane when not configured as accounts.
-const KNOWN_CLIS: &[(&str, &str)] = &[
-    ("codex", "Codex"),
-    ("agy", "Antigravity"),
-    ("cursor-agent", "Cursor"),
-    ("kimi", "Kimi"),
-];
-
 /// Starts and stops `anchorleg run` processes. A trait so tests can see what would run.
 pub trait Launcher {
     /// Start `anchorleg <args>` in the background; returns its pid.
@@ -2196,16 +2188,19 @@ impl App {
     }
 
     fn detected_clis(&self) -> Vec<(&'static str, &'static str, bool)> {
-        KNOWN_CLIS
-            .iter()
-            .filter(|(bin, _)| {
-                !self
-                    .config
-                    .accounts
-                    .iter()
-                    .any(|a| a.vendor.default_bin() == *bin)
+        // Claude is the default CLI and has its own place; the others are offered here.
+        Vendor::ALL
+            .into_iter()
+            .filter(|v| {
+                *v != Vendor::Claude && !self.config.accounts.iter().any(|a| a.vendor == *v)
             })
-            .map(|(bin, label)| (*bin, *label, self.launcher.find_cli(bin).is_some()))
+            .map(|v| {
+                (
+                    v.default_bin(),
+                    v.caps().label,
+                    self.launcher.find_cli(v.default_bin()).is_some(),
+                )
+            })
             .collect()
     }
 
@@ -2296,8 +2291,7 @@ impl App {
             )));
         }
         for (bin, label, installed) in self.detected_clis() {
-            let driven = Vendor::from_bin(bin)
-                .is_some_and(|v| anchorleg_core::supervisor::DRIVEN.contains(&v));
+            let driven = Vendor::from_bin(bin).is_some_and(|v| v.caps().driven);
             let note = match (installed, driven) {
                 (true, true) => "installed, add an account",
                 (true, false) => "installed, unsupported",

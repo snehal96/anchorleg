@@ -276,10 +276,11 @@ impl Translator {
     pub fn turn_tokens(&self) -> u64 {
         let n = |k: &str| self.turn_usage.get(k).copied().unwrap_or(0);
         let cached = n("cached_input_tokens");
-        n("input_tokens").saturating_sub(cached)
-            + n("output_tokens")
-            + n("cache_write_input_tokens")
-            + cached / 10
+        n("input_tokens")
+            .saturating_sub(cached)
+            .saturating_add(n("output_tokens"))
+            .saturating_add(n("cache_write_input_tokens"))
+            .saturating_add(cached / 10)
     }
 
     /// The `thread/start` or `thread/resume` answer.
@@ -446,7 +447,8 @@ impl Translator {
                         .and_then(|u| u.get(from))
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    *self.turn_usage.entry(to).or_default() += n;
+                    let total = self.turn_usage.entry(to).or_default();
+                    *total = total.saturating_add(n);
                 }
                 Vec::new()
             }
@@ -510,7 +512,8 @@ impl Translator {
                         .and_then(|u| u.get(from))
                         .and_then(Value::as_u64)
                         .unwrap_or(0);
-                    *self.turn_usage.entry(to).or_default() += n;
+                    let total = self.turn_usage.entry(to).or_default();
+                    *total = total.saturating_add(n);
                 }
                 Vec::new()
             }
@@ -1265,7 +1268,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::adapters::codex::Stream;
     use crate::adapters::{AgentSignal, QuotaStatus};
@@ -1383,7 +1386,7 @@ mod tests {
     }
 
     /// Translate a capture the way `drive` does, without the approvals.
-    fn translate(capture: &str) -> Vec<Value> {
+    pub(crate) fn translate(capture: &str) -> Vec<Value> {
         let mut t = Translator::default();
         let mut out = Vec::new();
         for m in incoming(capture) {

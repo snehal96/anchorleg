@@ -18,7 +18,9 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::adapters::claude::{self, sync_context};
 use crate::adapters::codex_server::{self, Asker, Event, Steer};
-use crate::adapters::{AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus};
+use crate::adapters::{
+    AgentSignal, CreditState, Credits, Decoder, EpochSecs, QuotaReading, QuotaStatus,
+};
 use crate::adapters::{agy, claude_usage, codex};
 use crate::output::{GoalReport, Outcome, RunReport, SCHEMA, Switch};
 use crate::policy::{self, Pick, PickOptions};
@@ -285,7 +287,7 @@ pub async fn refresh_quota(
     let mut probes = tokio::task::JoinSet::new();
     for a in accounts.iter().filter(|a| {
         a.enabled
-            && matches!(a.vendor, Vendor::Claude | Vendor::Codex)
+            && a.vendor.caps().quota == crate::vendors::QuotaSource::Live
             && a.shell.is_none()
             && !fresh(&a.name)
     }) {
@@ -392,9 +394,6 @@ struct Written {
 pub trait Progress {
     fn event(&self, message: &str);
 }
-
-/// The CLIs the supervisor can drive; accounts of other vendors are skipped.
-pub const DRIVEN: [Vendor; 3] = [Vendor::Claude, Vendor::Codex, Vendor::Antigravity];
 
 /// Prints nothing.
 pub struct Quiet;
@@ -521,7 +520,7 @@ impl Supervisor<'_> {
             }),
         };
         let mut ordered = self.config.by_priority();
-        ordered.retain(|a| DRIVEN.contains(&a.vendor));
+        ordered.retain(|a| a.vendor.caps().driven);
         let mut pick_opts = PickOptions {
             policy: opts.policy,
             // A follow-up or fork stays on the session's account while it has room: the session
@@ -1583,7 +1582,7 @@ impl Supervisor<'_> {
             ..Attempt::default()
         };
         let mut deadline: Option<tokio::time::Instant> = None;
-        let mut codex_stream = codex::Stream::default();
+        let mut decoder = Decoder::new(account.vendor);
         let mut tick = tokio::time::interval(Duration::from_millis(500));
         // Queued messages already handed to the Codex driver.
         let mut forwarded: Vec<i64> = Vec::new();
@@ -1675,24 +1674,18 @@ impl Supervisor<'_> {
             if line.trim().is_empty() {
                 continue;
             }
-            let signals = match account.vendor {
-                Vendor::Codex => codex_stream.feed(&line),
-                Vendor::Antigravity => agy::signals(&line),
-                _ => {
-                    let mut s = claude::signals(&claude::parse_line(&line));
-                    // Claude says nothing when it answers with another model; compare.
-                    if let Some(model) = claude::reply_model(&line)
-                        && attempt.model.as_ref().is_some_and(|m| *m != model)
-                    {
-                        s.push(AgentSignal::Rerouted {
-                            from: attempt.model.clone(),
-                            to: model,
-                            reason: None,
-                        });
-                    }
-                    s
-                }
-            };
+            let mut signals = decoder.feed(&line);
+            // Claude says nothing when it answers with another model; compare.
+            if matches!(decoder, Decoder::Claude)
+                && let Some(model) = claude::reply_model(&line)
+                && attempt.model.as_ref().is_some_and(|m| *m != model)
+            {
+                signals.push(AgentSignal::Rerouted {
+                    from: attempt.model.clone(),
+                    to: model,
+                    reason: None,
+                });
+            }
             for signal in signals {
                 self.on_signal(run_id, account, signal, &mut attempt, opts)?;
             }
