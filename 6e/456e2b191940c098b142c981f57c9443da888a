@@ -1,0 +1,28 @@
+README.md
+  s_3c59a91d489536::t_ec6a3262f25c3e 4,6,20-30,419-423
+  s_3c59a91d489536::t_32e74b155a8cf6 424
+site/index.html
+  s_3c59a91d489536::t_c9cbc4697113cd 7,17,25,28,221-222,239-240,244,246,248,263-280
+  s_3c59a91d489536::t_339d6aefedae74 281-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e456e2b191940c098b142c981f57c9443da888a",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
