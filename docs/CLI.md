@@ -19,8 +19,8 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 
 | Command | Status |
 |---|---|
-| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F]` | works |
-| `anchorleg policy [drain\|balance\|save-weekly]` | works |
+| `anchorleg accounts list [--json]` · `show <name>` · `add <name> …` · `rm <name>` · `set <name> [--priority N] [--reserve-7d F] [--stop-at F [--strict true\|false]] [--pinned true\|false] [--enabled true\|false] [--credits never\|last-resort\|allow]` · `import-aliases [--yes] [--from-file F] [--json]` | works |
+| `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
 | `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
@@ -30,7 +30,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg btw <run> [--model M] [--json] -- <question…>` | works (Claude, Codex) |
 | `anchorleg rewind <run> [--keep-files] [--model M] [--json] -- <message…>` | works (Claude, Codex; files in git folders) |
 | `anchorleg sync mcp [--with-env] [--yes]` | works (Claude, Codex, Antigravity) |
-| `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear]` | works |
+| `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear] [--json]` | works |
 | `anchorleg stop <run>` | works |
 | `anchorleg diff <run> [--stat]` · `anchorleg undo <run> [--yes \| --redo]` | works (git folders) |
 | `anchorleg send <run> [--interrupt] [--attach FILE]… -- <message…>` | works (Claude, Codex, Antigravity) |
@@ -776,6 +776,17 @@ or `done`. `context.window` and `slash_commands` are `null` when the CLI didn't 
 To poll, pass the last `next` as `--since`, and replace your copy from index `since` onward
 (the last message can still grow while the agent works). `schema` changes only when a field
 changes meaning.
+
+## Settings in JSON
+
+For the desktop app and scripts; each changes what its options say first, then prints:
+
+- `anchorleg settings [<cli> …] --json` → `{"schema": 1, "vendors": {"claude": {"model", "effort",
+  "args"}, …}}`, every CLI (`null` / `[]`: the CLI's own default).
+- `anchorleg policy [name] --json` → `{"schema": 1, "policy": "drain", "policies": [{"name",
+  "describe"}]}`.
+- `anchorleg accounts import-aliases [--yes] --json` → `{"schema": 1, "add": [account…], "skip":
+  [name…], "saved": bool}`; accounts as in `accounts list --json`.
 
 ## `anchorleg report --json` (stdin)
 

@@ -13,17 +13,38 @@ pub struct Changes {
     pub clear: bool,
 }
 
-pub fn run(vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
+pub fn run(json: bool, vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
     let path = Config::default_path()?;
     let mut config = Config::load(&path)?;
     let changing = changes.args.is_some()
         || changes.model.is_some()
         || changes.effort.is_some()
         || changes.clear;
-    let Some(name) = vendor else {
-        if changing {
-            bail!("name the CLI, e.g. `anchorleg settings claude --model opus`");
+    if vendor.is_none() && changing {
+        bail!("name the CLI, e.g. `anchorleg settings claude --model opus`");
+    }
+    if json {
+        if let Some(name) = &vendor {
+            let v = parse_vendor(name).map_err(anyhow::Error::msg)?;
+            if changing {
+                apply(&mut config, v, changes)?;
+                config.save(&path)?;
+            }
         }
+        let vendors: serde_json::Map<String, serde_json::Value> = Vendor::ALL
+            .iter()
+            .map(|v| {
+                let s = config.vendors.get(v).cloned().unwrap_or_default();
+                (
+                    v.name().to_owned(),
+                    serde_json::json!({ "model": s.model, "effort": s.effort, "args": s.args }),
+                )
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "schema": 1, "vendors": vendors }));
+        return Ok(());
+    }
+    let Some(name) = vendor else {
         for v in Vendor::ALL {
             println!("{:<7} {}", v.name(), describe(&config, v));
         }
@@ -34,32 +55,48 @@ pub fn run(vendor: Option<String>, changes: Changes) -> anyhow::Result<()> {
         println!("{}", describe(&config, v));
         return Ok(());
     }
+    apply(&mut config, v, changes)?;
+    config.save(&path)?;
+    println!("{:<7} {}", v.name(), describe(&config, v));
+    Ok(())
+}
+
+fn apply(config: &mut Config, v: Vendor, changes: Changes) -> anyhow::Result<()> {
     if changes.clear {
         config.vendors.remove(&v);
     }
     if let Some(line) = changes.args {
         let words =
             VendorSettings::parse_args(&line).map_err(|e| anyhow::anyhow!("--args: {e}"))?;
-        update(&mut config, v, |s| s.args = words);
+        update(config, v, |s| s.args = words);
     }
     if let Some(m) = changes.model {
-        set_model(&mut config, v, &m);
+        set_model(config, v, &m);
     }
     if let Some(e) = changes.effort {
-        set_effort(&mut config, v, &e).map_err(anyhow::Error::msg)?;
+        set_effort(config, v, &e).map_err(anyhow::Error::msg)?;
     }
-    config.save(&path)?;
-    println!("{:<7} {}", v.name(), describe(&config, v));
     Ok(())
 }
 
 /// `anchorleg policy [name]`: show or set how runs pick among accounts with room.
-pub fn policy(new: Option<anchorleg_core::policy::Policy>) -> anyhow::Result<()> {
+pub fn policy(new: Option<anchorleg_core::policy::Policy>, json: bool) -> anyhow::Result<()> {
     let path = Config::default_path()?;
     let mut config = Config::load(&path)?;
     if let Some(p) = new {
         config.policy = p;
         config.save(&path)?;
+    }
+    if json {
+        let all: Vec<_> = anchorleg_core::policy::Policy::ALL
+            .iter()
+            .map(|p| serde_json::json!({ "name": p.name(), "describe": p.describe() }))
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({ "schema": 1, "policy": config.policy.name(), "policies": all })
+        );
+        return Ok(());
     }
     for p in anchorleg_core::policy::Policy::ALL {
         let mark = if p == config.policy { "*" } else { " " };

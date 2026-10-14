@@ -34,6 +34,9 @@ pub enum AccountsCmd {
         /// Read `alias` output from this file instead of running `$SHELL -ic alias`.
         #[arg(long)]
         from_file: Option<PathBuf>,
+        /// Print what would be (or was) added and skipped as JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -180,9 +183,11 @@ pub fn run(cmd: AccountsCmd) -> anyhow::Result<()> {
             println!("{}: {line}", args.name);
             Ok(())
         }
-        AccountsCmd::ImportAliases { yes, from_file } => {
-            import_aliases(&mut config, &path, yes, from_file.as_deref())
-        }
+        AccountsCmd::ImportAliases {
+            yes,
+            from_file,
+            json,
+        } => import_aliases(&mut config, &path, yes, from_file.as_deref(), json),
     }
 }
 
@@ -339,6 +344,7 @@ fn import_aliases(
     path: &Path,
     yes: bool,
     from_file: Option<&Path>,
+    json: bool,
 ) -> anyhow::Result<()> {
     let output = match from_file {
         Some(f) => {
@@ -351,6 +357,22 @@ fn import_aliases(
         .into_iter()
         .partition(|a| config.get(&a.name).is_none());
 
+    if json {
+        if yes && !new.is_empty() {
+            config.accounts.extend(new.iter().cloned());
+            config.save(path)?;
+        }
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": 1,
+                "add": new,
+                "skip": existing.iter().map(|a| &a.name).collect::<Vec<_>>(),
+                "saved": yes && !new.is_empty(),
+            })
+        );
+        return Ok(());
+    }
     for a in &existing {
         println!("skip  {} (already configured)", a.name);
     }

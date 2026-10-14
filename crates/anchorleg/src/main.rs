@@ -123,12 +123,18 @@ enum Command {
         /// Remove this CLI's settings (applied before the others).
         #[arg(long)]
         clear: bool,
+        /// Print every CLI's settings as JSON (after any change).
+        #[arg(long)]
+        json: bool,
     },
     /// How `anchorleg run` picks among accounts with room: drain, balance or save-weekly.
     /// No name: show the current one.
     Policy {
         #[arg(value_parser = parse_policy)]
         policy: Option<Policy>,
+        /// Print the current policy and the choices as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Bring every account's setup in line, whatever its CLI.
     #[command(subcommand)]
@@ -456,7 +462,9 @@ fn main() -> ExitCode {
             effort,
             args,
             clear,
+            json,
         } => settings::run(
+            json,
             vendor,
             settings::Changes {
                 args,
@@ -483,7 +491,7 @@ fn main() -> ExitCode {
                 }
             };
         }
-        Command::Policy { policy } => settings::policy(policy),
+        Command::Policy { policy, json } => settings::policy(policy, json),
         Command::Rules { add, rm } => settings::rules(add, rm),
         Command::Sync(SyncCmd::Mcp { with_env, yes }) => sync::mcp(with_env, yes),
         Command::Diff { run, stat } => run::diff(run, stat),

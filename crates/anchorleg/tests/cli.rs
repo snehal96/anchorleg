@@ -227,3 +227,55 @@ fn notify_settings() {
     // Back to the defaults: nothing left in the file.
     assert!(!std::fs::read_to_string(&config).unwrap().contains("notify"));
 }
+
+#[test]
+fn settings_policy_and_aliases_in_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config.toml");
+    let json = |args: &[&str]| -> serde_json::Value {
+        let out = anchorleg(&config).args(args).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+
+    let s = json(&["settings", "claude", "--model", "opus", "--json"]);
+    assert_eq!(s["vendors"]["claude"]["model"], "opus", "{s}");
+    assert_eq!(
+        s["vendors"]["codex"]["model"],
+        serde_json::Value::Null,
+        "{s}"
+    );
+    let s = json(&["settings", "--json"]);
+    assert_eq!(s["vendors"]["claude"]["model"], "opus", "{s}");
+
+    let p = json(&["policy", "balance", "--json"]);
+    assert_eq!(p["policy"], "balance", "{p}");
+    assert_eq!(p["policies"].as_array().unwrap().len(), 3, "{p}");
+
+    let aliases = dir.path().join("aliases.txt");
+    std::fs::write(
+        &aliases,
+        "claude-work='CLAUDE_CONFIG_DIR=~/.claude-work /Users/me/.local/bin/claude'\n",
+    )
+    .unwrap();
+    let from = aliases.to_str().unwrap();
+    let a = json(&["accounts", "import-aliases", "--json", "--from-file", from]);
+    assert_eq!(a["add"][0]["name"], "claude-work", "{a}");
+    assert_eq!(a["saved"], false, "{a}");
+    let a = json(&[
+        "accounts",
+        "import-aliases",
+        "--yes",
+        "--json",
+        "--from-file",
+        from,
+    ]);
+    assert_eq!(a["saved"], true, "{a}");
+    let a = json(&["accounts", "import-aliases", "--json", "--from-file", from]);
+    assert_eq!(a["skip"][0], "claude-work", "{a}");
+    assert_eq!(a["add"], serde_json::json!([]), "{a}");
+}
