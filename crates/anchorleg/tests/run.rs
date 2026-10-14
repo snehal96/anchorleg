@@ -461,7 +461,9 @@ fn agys_question_tool_puts_questions_to_the_person() {
             c
         };
         std::thread::spawn(move || {
-            for _ in 0..100 {
+            // By the clock, not a count of tries: on a busy machine each try takes longer.
+            let start = std::time::Instant::now();
+            while start.elapsed() < std::time::Duration::from_secs(60) {
                 let out = cmd()
                     .args(["permission", "list", "--json"])
                     .output()
@@ -1159,7 +1161,8 @@ fn a_review_reads_the_sessions_changes_on_another_account_and_can_send_fixes() {
         .args(["review", "1", "--fix", "--json"])
         .output()
         .unwrap();
-    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stderr)));
     assert_eq!(r["outcome"], "done", "{r}");
     assert_eq!(r["accounts_used"], serde_json::json!(["c"]));
     let launches = env.launches();
@@ -1276,11 +1279,9 @@ fn live_claude_quota_sees_use_from_outside_anchorleg() {
     assert_eq!(code, 0, "{r}");
     assert_eq!(r["accounts_used"], serde_json::json!(["a"]), "{r}");
     let asked = std::fs::read_to_string(env.path("fake/usage.log")).unwrap();
-    assert_eq!(
-        asked.lines().collect::<Vec<_>>(),
-        ["a", "b", "a"],
-        "{asked}"
-    );
+    // Accounts are asked in parallel, in no set order.
+    let count = |name: &str| asked.lines().filter(|l| *l == name).count();
+    assert_eq!((count("a"), count("b")), (2, 1), "{asked}");
 }
 
 #[test]
