@@ -146,10 +146,10 @@ export function Switch({ checked, onChange, label, hint, disabled }: { checked: 
 
 /** A labelled form field. A group, not a <label>: a label passes every click inside it to its
  *  first control, so a click anywhere in a field with buttons would press the first one. */
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Field({ label, hint, wide, children }: { label: string; hint?: string; wide?: boolean; children: ReactNode }) {
   const id = useId();
   return (
-    <div className="field" role="group" aria-labelledby={id}>
+    <div className={wide ? "field wide" : "field"} role="group" aria-labelledby={id}>
       <span className="field-label" id={id}>
         {label}
       </span>

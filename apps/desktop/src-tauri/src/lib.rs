@@ -77,6 +77,17 @@ struct Start {
     goal_turns: Option<u32>,
     /// How long a question waits for the person, e.g. `10m` (`--answer-wait`).
     answer_wait: Option<String>,
+    /// More folders the agent may use (`--add-dir`), the task's own instructions, effort.
+    add_dir: Vec<String>,
+    instructions: Option<String>,
+    effort: Option<String>,
+    /// Claude Code's own options (other CLIs leave them out).
+    agent: Option<String>,
+    allowed_tools: Vec<String>,
+    disallowed_tools: Vec<String>,
+    mcp_config: Vec<String>,
+    strict_mcp_config: bool,
+    fallback_model: Option<String>,
 }
 
 impl Start {
@@ -104,6 +115,23 @@ impl Start {
         opt("--budget", self.budget);
         opt("--goal-turns", self.goal_turns.map(|n| n.to_string()));
         opt("--answer-wait", self.answer_wait);
+        opt("--instructions", self.instructions);
+        opt("--effort", self.effort);
+        opt("--agent", self.agent);
+        opt("--fallback-model", self.fallback_model);
+        for (flag, values) in [
+            ("--add-dir", self.add_dir),
+            ("--allowed-tools", self.allowed_tools),
+            ("--disallowed-tools", self.disallowed_tools),
+            ("--mcp-config", self.mcp_config),
+        ] {
+            for v in values.into_iter().filter(|v| !v.trim().is_empty()) {
+                args.extend([flag.to_owned(), v]);
+            }
+        }
+        if self.strict_mcp_config {
+            args.push("--strict-mcp-config".into());
+        }
         for f in self.attach {
             args.extend(["--attach".into(), f]);
         }
@@ -342,6 +370,37 @@ mod tests {
                 "5",
                 "--answer-wait",
                 "10m",
+                "--",
+                "t"
+            ]
+        );
+    }
+
+    #[test]
+    fn start_args_task_options() {
+        let s: Start = serde_json::from_str(
+            r#"{"text":"t","add_dir":["/a","/b"],"instructions":"be brief","effort":"high","agent":"rev","allowed_tools":["Bash(git *)",""],"strict_mcp_config":true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            s.args(),
+            [
+                "run",
+                "--detach",
+                "--json",
+                "--instructions",
+                "be brief",
+                "--effort",
+                "high",
+                "--agent",
+                "rev",
+                "--add-dir",
+                "/a",
+                "--add-dir",
+                "/b",
+                "--allowed-tools",
+                "Bash(git *)",
+                "--strict-mcp-config",
                 "--",
                 "t"
             ]

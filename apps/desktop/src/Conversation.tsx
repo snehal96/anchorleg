@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { session, type Message, type Request, type Run, type Session } from "./api";
+import { describeOptions, session, type Message, type Request, type Run, type Session } from "./api";
 import Composer from "./Composer";
 import Requests from "./Requests";
 import SessionActions, { ForkDialog, RewindDialog } from "./SessionActions";
@@ -119,6 +119,11 @@ export default function Conversation({
                   <Icon name="gauge" size={15} />
                 </span>
               ) : null}
+              {describeOptions(r.options, tilde).length > 0 && (
+                <span className="meta-icon" role="img" tabIndex={0} aria-label={describeOptions(r.options, tilde).join(". ")} data-tip={describeOptions(r.options, tilde).join("\n")}>
+                  <Icon name="sliders" size={15} />
+                </span>
+              )}
               {r.goal && (
                 <span
                   className={`meta-icon ${r.goal_status === "met" ? "ok" : ""}`}

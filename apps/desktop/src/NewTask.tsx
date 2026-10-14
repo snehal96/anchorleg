@@ -28,7 +28,7 @@ export default function NewTask({
   status: Status | null;
   onStarted: (run: number) => void;
 }) {
-  const { driven, label: vendorLabel } = useVendors();
+  const { driven, label: vendorLabel, caps } = useVendors();
   const [task, setTask] = useState("");
   const [attach, setAttach] = useState<string[]>([]);
   const [more, setMore] = useState(false);
@@ -45,6 +45,15 @@ export default function NewTask({
   const [budget, setBudget] = useState("");
   const [goalTurns, setGoalTurns] = useState("");
   const [answerWait, setAnswerWait] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [effort, setEffort] = useState("");
+  const [dirs, setDirs] = useState<string[]>([]);
+  const [agent, setAgent] = useState("");
+  const [allowed, setAllowed] = useState("");
+  const [refused, setRefused] = useState("");
+  const [mcp, setMcp] = useState<string[]>([]);
+  const [onlyMcp, setOnlyMcp] = useState(false);
+  const [fallback, setFallback] = useState("");
   const [models, setModels] = useState<Record<string, string | null>>({});
   useEffect(() => {
     cliSettings()
@@ -73,6 +82,17 @@ export default function NewTask({
     const picked = await open({ multiple: true, defaultPath: folder || undefined });
     if (picked) setAttach((a) => [...a, ...[picked].flat().filter((p) => !a.includes(p))]);
   };
+  const addDir = async () => {
+    const picked = await open({ directory: true, defaultPath: folder || undefined });
+    if (typeof picked === "string") setDirs((d) => (d.includes(picked) ? d : [...d, picked]));
+  };
+  const addMcp = async () => {
+    const picked = await open({ filters: [{ name: "MCP servers (JSON)", extensions: ["json"] }], defaultPath: folder || undefined });
+    if (typeof picked === "string") setMcp((m) => (m.includes(picked) ? m : [...m, picked]));
+  };
+  // Claude Code's options matter only when the task can run on it.
+  const claude = driven.some((v) => v.vendor === "claude") && (cli === "" || cli === "claude");
+  const efforts = (cli ? caps(cli)?.efforts : null) ?? ["low", "medium", "high", "xhigh", "max"];
   const ready = folder.trim() !== "" && (task.trim() !== "" || goal.trim() !== "");
   const go = async () => {
     setBusy(true);
@@ -95,6 +115,17 @@ export default function NewTask({
         budget: budget.trim() || undefined,
         goal_turns: goal.trim() && Number(goalTurns) > 0 ? Number(goalTurns) : undefined,
         answer_wait: answerWait || undefined,
+        add_dir: dirs,
+        instructions: instructions.trim() || undefined,
+        effort: effort || undefined,
+        ...(claude && {
+          agent: agent.trim() || undefined,
+          allowed_tools: rules(allowed),
+          disallowed_tools: rules(refused),
+          mcp_config: mcp,
+          strict_mcp_config: onlyMcp && mcp.length > 0,
+          fallback_model: fallback.trim() || undefined,
+        }),
       });
       setTask("");
       setAttach([]);
@@ -106,7 +137,8 @@ export default function NewTask({
     }
   };
 
-  const options = [mode, plan, goal.trim(), account, worktree, name.trim(), model.trim(), cli, policy, budget.trim(), answerWait].filter(Boolean).length;
+  const claudeSet = claude ? [agent.trim(), allowed.trim(), refused.trim(), mcp.length, fallback.trim()] : [];
+  const options = [mode, plan, goal.trim(), account, worktree, name.trim(), model.trim(), cli, policy, budget.trim(), answerWait, instructions.trim(), effort, dirs.length, ...claudeSet].filter(Boolean).length;
   // Where it would start: the account picked here, else the one the next run would use.
   const starts = account ? status?.accounts.find((a) => a.name === account) ?? null : nextAccount(status);
   const startModel = model.trim() || (starts ? models[starts.vendor] : null);
@@ -252,14 +284,77 @@ export default function NewTask({
               <option value="2h">2 hours</option>
             </select>
           </Field>
+          <Field label="Effort" hint="How hard the agent thinks; more is slower and uses more.">
+            <select value={effort} onChange={(e) => setEffort(e.target.value)}>
+              <option value="">My usual setting</option>
+              {efforts.map((e) => (
+                <option key={e} value={e}>
+                  {e[0].toUpperCase() + e.slice(1)}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Other folders it may use" hint="Besides the project folder. It can read and change files there.">
+            <div className="folders">
+              {dirs.map((d) => (
+                <span key={d} className="chip" title={d}>
+                  <Icon name="folder" size={12} /> {tilde(d)}
+                  <button className="link" onClick={() => setDirs(dirs.filter((x) => x !== d))} aria-label="Remove">
+                    ×
+                  </button>
+                </span>
+              ))}
+              <button className="secondary small" onClick={addDir}>
+                <Icon name="plus" size={12} /> Add folder…
+              </button>
+            </div>
+          </Field>
+          <Field label="Instructions for the whole task" hint="Kept on every account and agent it moves to, and in replies." wide>
+            <textarea rows={3} value={instructions} placeholder="e.g. Don't touch the public API. Write tests for every fix." onChange={(e) => setInstructions(e.target.value)} />
+          </Field>
           {goal.trim() && (
             <Field label="Turns toward the goal">
               <input type="number" min={1} value={goalTurns} placeholder="10" onChange={(e) => setGoalTurns(e.target.value)} />
             </Field>
           )}
+          {claude && (
+            <>
+              <div className="group-title">
+                Claude Code <span className="muted">Codex and Antigravity leave these out.</span>
+              </div>
+              <Field label="Run as agent" hint="One of your Claude Code agents.">
+                <input value={agent} placeholder="e.g. reviewer" onChange={(e) => setAgent(e.target.value)} />
+              </Field>
+              <Field label="Fall back to" hint="When the model is overloaded.">
+                <input value={fallback} placeholder="e.g. sonnet" onChange={(e) => setFallback(e.target.value)} />
+              </Field>
+              <Field label="Always allow" hint="Comma-separated tool rules, on top of your lasting rules.">
+                <input value={allowed} placeholder="e.g. Bash(npm test), Edit" onChange={(e) => setAllowed(e.target.value)} />
+              </Field>
+              <Field label="Never allow">
+                <input value={refused} placeholder="e.g. WebFetch, Bash(git push *)" onChange={(e) => setRefused(e.target.value)} />
+              </Field>
+              <Field label="MCP servers" hint="Extra servers from a JSON file." wide>
+                <div className="folders">
+                  {mcp.map((f) => (
+                    <span key={f} className="chip" title={f}>
+                      <Icon name="clip" size={12} /> {f.split("/").pop()}
+                      <button className="link" onClick={() => setMcp(mcp.filter((x) => x !== f))} aria-label="Remove">
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <button className="secondary small" onClick={addMcp}>
+                    <Icon name="plus" size={12} /> Add file…
+                  </button>
+                </div>
+              </Field>
+            </>
+          )}
           <div className="switches">
             <Switch checked={plan} onChange={setPlan} label="Show me a plan first" hint="Nothing changes until you approve it." />
             <Switch checked={worktree} onChange={setWorktree} label="Work on a separate copy" hint="Its own git branch, so it can't get in your way." />
+            {claude && mcp.length > 0 && <Switch checked={onlyMcp} onChange={setOnlyMcp} label="Only these MCP servers" hint="Leave out Claude Code's other servers." />}
             {account && <Switch checked={onlyThat} onChange={setOnlyThat} label={`Only use ${account}`} hint="Never move to another account." />}
           </div>
         </div>
@@ -267,4 +362,22 @@ export default function NewTask({
       {error && <p className="error">{error}</p>}
     </div>
   );
+}
+
+/** "Bash(git add, commit), Edit" → ["Bash(git add, commit)", "Edit"]: commas inside a rule's
+ * parentheses stay with it. */
+export function rules(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const c of text) {
+    if (c === "(") depth++;
+    if (c === ")") depth = Math.max(0, depth - 1);
+    if (c === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += c;
+  }
+  out.push(cur);
+  return out.map((r) => r.trim()).filter(Boolean);
 }

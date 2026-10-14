@@ -35,6 +35,32 @@ export interface Run {
   name: string | null;
   /** A side question's run (`btw`): it continues nothing. */
   side?: boolean;
+  /** What the task adds to every launch (`run --add-dir`, `--instructions`, …); fields left
+   * out when unset. Older CLIs don't send it. */
+  options?: TaskOptions;
+}
+
+export interface TaskOptions {
+  add_dirs?: string[];
+  instructions?: string;
+  effort?: string;
+  claude?: { agent?: string; allowed_tools?: string[]; disallowed_tools?: string[]; mcp_config?: string[]; fallback_model?: string; [k: string]: unknown };
+}
+
+/** The task's options in a few words each, for a tooltip; empty when there are none. */
+export function describeOptions(o: TaskOptions | undefined, tilde: (p: string) => string): string[] {
+  if (!o) return [];
+  const c = o.claude ?? {};
+  return [
+    o.instructions && `Instructions: ${o.instructions.length > 140 ? o.instructions.slice(0, 140) + "…" : o.instructions}`,
+    o.add_dirs?.length && `Also uses ${o.add_dirs.map(tilde).join(", ")}`,
+    o.effort && `Effort: ${o.effort}`,
+    c.agent && `Claude Code agent: ${c.agent}`,
+    c.allowed_tools?.length && `Always allow: ${c.allowed_tools.join(", ")}`,
+    c.disallowed_tools?.length && `Never allow: ${c.disallowed_tools.join(", ")}`,
+    c.mcp_config?.length && `MCP servers from ${c.mcp_config.map((f) => f.split("/").pop()).join(", ")}`,
+    c.fallback_model && `Falls back to ${c.fallback_model}`,
+  ].filter((x): x is string => typeof x === "string");
 }
 
 export const cliInfo = () => invoke<CliInfo>("cli_info");
@@ -101,6 +127,17 @@ export interface Start {
   goal_turns?: number;
   /** How long a question waits for you, e.g. `10m`. */
   answer_wait?: string;
+  /** More folders the agent may use; instructions for the whole task; effort. Every CLI. */
+  add_dir?: string[];
+  instructions?: string;
+  effort?: string;
+  /** Claude Code only; other CLIs leave them out. */
+  agent?: string;
+  allowed_tools?: string[];
+  disallowed_tools?: string[];
+  mcp_config?: string[];
+  strict_mcp_config?: boolean;
+  fallback_model?: string;
 }
 /** `anchorleg run --detach --json`: returns once the run has an id. */
 export const start = (req: Start) => invoke<{ run_id: number; pid: number }>("start", { req });
