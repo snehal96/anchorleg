@@ -7,6 +7,11 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Homebrew tap (in progress).
+
+## [0.7.0] — 2026-10-14
+
+### Added
 - `anchorleg run --add-dir DIR`, `--instructions TEXT|FILE` and `--effort LEVEL`, on Claude Code,
   Codex and Antigravity, kept by follow-ups and across switches; Claude Code's `--agent`,
   `--agents`, `--allowed-tools`, `--disallowed-tools`, `--tools`, `--mcp-config`,
@@ -26,7 +31,17 @@ All notable changes are listed here. The format follows
   shows the notices; runs then skip their own desktop notification (`--command` still runs).
 - `--json` for `anchorleg settings`, `anchorleg policy`, `anchorleg accounts import-aliases`,
   `anchorleg rules`, `anchorleg undo` (a preview without `--yes`) and `anchorleg sync mcp`.
-- Homebrew tap (in progress).
+- `anchorleg accounts login NAME [--cli claude|codex|agy]`: a new account in one step. It gets
+  its own folder (`~/.claude-NAME`, `~/.codex-NAME`, `~/.agy-NAME`), the CLI's own sign-in runs
+  in your browser (Antigravity's in a terminal), and the account is added once the CLI says it's
+  signed in. anchorleg never sees the login.
+- For contributors: conformance tests replay every captured stream of every CLI anchorleg drives
+  through the same decoder the supervisor uses, and fuzz each field; `CONTRIBUTING.md` lists the
+  steps for adding a CLI.
+
+### Fixed
+- An Antigravity run with an out-of-range token count in its result no longer crashes; token
+  sums for Antigravity and Codex saturate instead of overflowing.
 
 ## [0.6.1] — 2026-10-13
 
