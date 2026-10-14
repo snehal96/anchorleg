@@ -17,6 +17,7 @@ import {
   type WindowStatus,
 } from "./api";
 import { ago } from "./sessions";
+import { useVendors } from "./vendors";
 
 /** A reading older than this shows its age, as the CLI does. */
 const STALE_SECS = 3600;
@@ -272,6 +273,11 @@ function Editor({ s, a, onSet, onRemove }: { s: AccountStatus; a: Account | unde
 
 /** A new account in one step: a name, which agent, and the agent's own sign-in in the browser. */
 function SignIn({ existing, onAdded }: { existing: string[]; onAdded: () => void }) {
+  const { vendors, driven } = useVendors();
+  // The CLIs `accounts login` can sign in to; before the table loads, the three it knew.
+  const choices = vendors.length
+    ? vendors.filter((v) => v.sign_in.kind !== "manual").map((v) => [v.vendor, v.label, v.sign_in.kind] as const)
+    : driven.map((v) => [v.vendor, v.label, v.vendor === "antigravity" ? "terminal" : "browser"] as const);
   const [name, setName] = useState("");
   const [vendor, setVendor] = useState("claude");
   const [state, setState] = useState<"idle" | "waiting" | "done">("idle");
@@ -279,7 +285,9 @@ function SignIn({ existing, onAdded }: { existing: string[]; onAdded: () => void
   const [error, setError] = useState<string | null>(null);
   const clean = name.trim();
   const bad = clean !== "" && !/^[A-Za-z0-9_-]+$/.test(clean) ? "Letters, digits, - and _ only" : existing.includes(clean) ? "That name is taken" : null;
-  const folder = `~/.${vendor === "codex" ? "codex" : vendor === "antigravity" ? "agy" : "claude"}-${clean || "name"}`;
+  const prefix = vendors.find((v) => v.vendor === vendor)?.folder_prefix ?? `.${vendor === "antigravity" ? "agy" : vendor}-`;
+  const folder = `~/${prefix}${clean || "name"}`;
+  const viaTerminal = choices.find(([v]) => v === vendor)?.[2] === "terminal";
   // Antigravity signs in from its own screen in a Terminal window: watch for the account.
   const [terminalFor, setTerminalFor] = useState<string | null>(null);
   const added = useRef(onAdded);
@@ -313,7 +321,7 @@ function SignIn({ existing, onAdded }: { existing: string[]; onAdded: () => void
     );
   };
   const go = async () => {
-    if (vendor === "antigravity") return inTerminal(clean, vendor);
+    if (viaTerminal) return inTerminal(clean, vendor);
     setState("waiting");
     setError(null);
     setMsg(null);
@@ -337,11 +345,7 @@ function SignIn({ existing, onAdded }: { existing: string[]; onAdded: () => void
       </p>
       <div className="add-row">
         <div className="segmented" role="radiogroup" aria-label="Agent">
-          {[
-            ["claude", "Claude Code"],
-            ["codex", "Codex"],
-            ["antigravity", "Antigravity"],
-          ].map(([v, l]) => (
+          {choices.map(([v, l]) => (
             <button key={v} role="radio" aria-checked={vendor === v} className={vendor === v ? "on" : ""} disabled={state === "waiting"} onClick={() => setVendor(v)}>
               {l}
             </button>
@@ -361,8 +365,8 @@ function SignIn({ existing, onAdded }: { existing: string[]; onAdded: () => void
       {bad && <p className="error small">{bad}</p>}
       {state === "waiting" && terminalFor && (
         <p className="sign-in-wait small">
-          <span className="spinner" /> A Terminal window opened with Antigravity: sign in there (it opens your browser), then quit agy. The account
-          shows up here by itself.
+          <span className="spinner" /> A Terminal window opened: sign in there (it opens your browser), then quit the agent. The account shows up
+          here by itself.
         </p>
       )}
       {state === "waiting" && !terminalFor && (

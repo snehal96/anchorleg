@@ -125,6 +125,13 @@ pub async fn add_account(name: String, command: String) -> Result<(), String> {
     blocking(move || cli::text(&["accounts", "add", &name, "--cmd", &command]).map(drop)).await
 }
 
+/// What each CLI can do with anchorleg (`anchorleg vendors --json`), so the window offers only
+/// what an account's CLI supports.
+#[tauri::command]
+pub async fn vendors() -> Result<Value, String> {
+    blocking(|| cli::json(&["vendors", "--json"])).await
+}
+
 #[tauri::command]
 pub async fn remove_account(name: String) -> Result<(), String> {
     blocking(move || cli::text(&["accounts", "rm", &name]).map(drop)).await

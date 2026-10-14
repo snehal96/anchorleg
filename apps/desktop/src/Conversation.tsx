@@ -7,6 +7,7 @@ import { copyText } from "./share";
 import { short, sideRuns, tilde } from "./sessions";
 import Tools, { type ToolTab } from "./Tools";
 import { APPROVAL, Icon } from "./ui";
+import { useVendors } from "./vendors";
 
 const POLL_WORKING_MS = 1000;
 const POLL_IDLE_MS = 4000;
@@ -202,6 +203,7 @@ type MsgDialog = { kind: "rewind"; to: number; message: string; title: string } 
 /** Tool calls are grouped with their output, which opens on a click; notes in a row fold into one line. */
 function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarted: (run: number) => void }) {
   const [dialog, setDialog] = useState<MsgDialog>(null);
+  const caps = useVendors().ofAccount(view.run.account);
   const messages = view.messages;
   // Each run starts with the message that was sent: match them in order, for "go back to here".
   const runOf = new Map<number, number>();
@@ -230,7 +232,7 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
       out.push(<Step key={i} what={m.text} result={result} />);
     } else if (m.role === "user") {
       const run = runOf.get(i);
-      const canRewind = run != null && run !== view.runs[0] && !view.working;
+      const canRewind = run != null && run !== view.runs[0] && !view.working && (caps?.rewind ?? true);
       out.push(
         <div key={i} className="msg-row user">
           <MsgActions
@@ -256,7 +258,7 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
           <div className="msg agent">{m.text}</div>
           <MsgActions
             text={m.text}
-            extra={i === lastAgent ? [{ icon: "fork", tip: "Try another direction from here", onClick: () => setDialog({ kind: "fork" }) }] : []}
+            extra={i === lastAgent && (caps?.fork ?? true) ? [{ icon: "fork", tip: "Try another direction from here", onClick: () => setDialog({ kind: "fork" }) }] : []}
           />
         </div>,
       );

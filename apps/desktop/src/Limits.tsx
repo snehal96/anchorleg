@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { AccountStatus, Status } from "./api";
 import { until, windowName } from "./Accounts";
 import { Icon } from "./ui";
+import { useVendors } from "./vendors";
 
-export const VENDORS: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity" };
 
 /** Room left in an account's fullest window, 0–1, or null before any reading. */
 export function roomLeft(a: AccountStatus): number | null {
@@ -30,6 +30,7 @@ export default function Limits({
   onRefresh: () => void;
   onPage: (p: "accounts" | "usage" | "settings") => void;
 }) {
+  const { label: vendorLabel } = useVendors();
   const [pinned, setPinned] = useState(false);
   const [hover, setHover] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -84,7 +85,7 @@ export default function Limits({
           {st?.accounts.map((a) => (
             <div key={a.name} className={`limits-account ${a.name === next?.name ? "next" : ""}`}>
               <div className="limits-name">
-                <b>{a.name}</b> <span className="muted">{VENDORS[a.vendor] ?? a.vendor}</span>
+                <b>{a.name}</b> <span className="muted">{vendorLabel(a.vendor)}</span>
                 {a.name === next?.name && <span className="tag">next</span>}
               </div>
               {a.windows.length === 0 && <span className="muted small">Not read yet</span>}

@@ -5,7 +5,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { cliSettings, start, type Account, type Run, type Status } from "./api";
 import { windowName } from "./Accounts";
-import { nextAccount, Ring, roomLeft, VENDORS } from "./Limits";
+import { nextAccount, Ring, roomLeft } from "./Limits";
+import { useVendors } from "./vendors";
 import { pastedImages } from "./paste";
 import { tilde } from "./sessions";
 import { APPROVAL, Field, Icon, Menu, Switch } from "./ui";
@@ -27,6 +28,7 @@ export default function NewTask({
   status: Status | null;
   onStarted: (run: number) => void;
 }) {
+  const { driven, label: vendorLabel } = useVendors();
   const [task, setTask] = useState("");
   const [attach, setAttach] = useState<string[]>([]);
   const [more, setMore] = useState(false);
@@ -121,7 +123,7 @@ export default function NewTask({
             <span>
               Starts on <b>{starts.name}</b>
             </span>
-            <span className="dot-sep">{VENDORS[starts.vendor] ?? starts.vendor}</span>
+            <span className="dot-sep">{vendorLabel(starts.vendor)}</span>
             <span className="dot-sep">{startModel || "default model"}</span>
             {starts.windows.map((w) => (
               <span key={w.window} className="dot-sep">
@@ -206,7 +208,7 @@ export default function NewTask({
                 .filter((a) => a.enabled !== false)
                 .map((a) => (
                   <option key={a.name} value={a.name}>
-                    Start on {a.name} ({a.vendor})
+                    Start on {a.name} ({vendorLabel(a.vendor)})
                   </option>
                 ))}
             </select>
@@ -220,9 +222,9 @@ export default function NewTask({
           <Field label="Agent">
             <select value={cli} onChange={(e) => setCli(e.target.value)}>
               <option value="">Any (recommended)</option>
-              {Object.entries(VENDORS).map(([v, l]) => (
-                <option key={v} value={v}>
-                  Only {l}
+              {driven.map((v) => (
+                <option key={v.vendor} value={v.vendor}>
+                  Only {v.label}
                 </option>
               ))}
             </select>

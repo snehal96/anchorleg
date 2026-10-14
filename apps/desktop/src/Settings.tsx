@@ -1,16 +1,13 @@
 // How runs pick an account (`anchorleg policy`) and what each CLI runs with (`anchorleg settings`).
 import { useEffect, useState } from "react";
 import { cliSettings, policy, type PolicyInfo, type VendorSettings } from "./api";
+import { useVendors } from "./vendors";
 import { McpServers, Notifications, Rules } from "./MoreSettings";
 
 /** The CLIs anchorleg runs today; kimi and cursor aren't usable yet. */
-const CLIS = [
-  ["claude", "Claude Code", "low, medium, high, xhigh, max"],
-  ["codex", "Codex", "low, medium, high, xhigh, max, ultra"],
-  ["antigravity", "Antigravity", "low, medium, high, xhigh, max"],
-] as const;
 
 export default function Settings({ onChanged }: { onChanged: () => void }) {
+  const { driven } = useVendors();
   const [p, setP] = useState<PolicyInfo | null>(null);
   const [vendors, setVendors] = useState<Record<string, VendorSettings> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,8 +47,16 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
         <h3>Per CLI</h3>
         <p className="muted small">Shared by every account of that CLI, so a task keeps the same model when it moves between accounts.</p>
         {vendors &&
-          CLIS.map(([v, label, efforts]) => (
-            <CliRow key={v} vendor={v} label={label} efforts={efforts} s={vendors[v] ?? { model: null, effort: null, args: [] }} run={run} onSaved={(s) => setVendors(s)} />
+          driven.map((d) => (
+            <CliRow
+              key={d.vendor}
+              vendor={d.vendor}
+              label={d.label}
+              efforts={(d.efforts ?? ["low", "medium", "high", "xhigh", "max"]).join(", ")}
+              s={vendors[d.vendor] ?? { model: null, effort: null, args: [] }}
+              run={run}
+              onSaved={(s) => setVendors(s)}
+            />
           ))}
       </section>
       <Rules />

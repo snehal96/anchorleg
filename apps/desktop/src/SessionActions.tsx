@@ -4,7 +4,8 @@ import { useState } from "react";
 import { rename, start, stop, type Run, type Session } from "./api";
 import type { ToolTab } from "./Tools";
 import { conversationMarkdown, copyText } from "./share";
-import { APPROVAL, Field, Icon, Menu, Modal, Switch } from "./ui";
+import { APPROVAL, Field, Icon, Menu, Modal, Switch, type MenuItem } from "./ui";
+import { useVendors } from "./vendors";
 
 type Dialog = "rename" | "side" | "review" | "rewind" | "fork" | "compact" | "goal" | "mode" | null;
 
@@ -32,6 +33,9 @@ export default function SessionActions({
   const r = view.run;
   const working = view.working;
   const busyNote = working ? "Wait until it finishes, or stop it" : undefined;
+  // What this task's CLI supports; unknown means everything is offered.
+  const caps = useVendors().ofAccount(r.account);
+  const can = (k: "fork" | "side" | "rewind") => caps?.[k] ?? true;
   const close = () => setDialog(null);
 
   return (
@@ -44,9 +48,11 @@ export default function SessionActions({
       <button className="icon-button" onClick={() => onTools("changes")} aria-label="See changes" data-tip="See changes">
         <Icon name="diff" />
       </button>
-      <button className="icon-button" onClick={() => setDialog("side")} aria-label="Ask a side question" data-tip="Ask a side question">
-        <Icon name="chat" />
-      </button>
+      {can("side") && (
+        <button className="icon-button" onClick={() => setDialog("side")} aria-label="Ask a side question" data-tip="Ask a side question">
+          <Icon name="chat" />
+        </button>
+      )}
       <Menu
         label="More actions"
         icon="more"
@@ -55,9 +61,11 @@ export default function SessionActions({
           { label: "Rename…", icon: "pencil", onClick: () => setDialog("rename") },
           { label: "Get a second opinion…", hint: "Another account reviews the changes", icon: "review", disabled: working, onClick: () => setDialog("review") },
           { label: "Undo the changes…", hint: "Put the files back as they were", icon: "undo", disabled: working, onClick: () => onTools("changes") },
-          { label: "Go back to an earlier point…", hint: busyNote ?? "Conversation and files", icon: "back", disabled: working || view.runs.length < 2, onClick: () => setDialog("rewind") },
+          ...(can("rewind")
+            ? [{ label: "Go back to an earlier point…", hint: busyNote ?? "Conversation and files", icon: "back", disabled: working || view.runs.length < 2, onClick: () => setDialog("rewind") } as MenuItem]
+            : []),
           "-",
-          { label: "Try another direction…", hint: "A new task that starts from this conversation", icon: "fork", onClick: () => setDialog("fork") },
+          ...(can("fork") ? [{ label: "Try another direction…", hint: "A new task that starts from this conversation", icon: "fork", onClick: () => setDialog("fork") } as MenuItem] : []),
           { label: "Keep going until…", hint: busyNote ?? "Work until a condition holds", icon: "goal", disabled: working, onClick: () => setDialog("goal") },
           { label: "Approval setting…", hint: APPROVAL.find((a) => a.value === (mode ?? r.mode ?? ""))?.label, icon: "shield", onClick: () => setDialog("mode") },
           { label: "Free up memory", hint: busyNote ?? "Summarise the conversation so far", icon: "compact", disabled: working, onClick: () => setDialog("compact") },

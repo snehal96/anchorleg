@@ -282,6 +282,7 @@ pub fn run() {
             approve_plan,
             settings::status,
             settings::accounts,
+            settings::vendors,
             settings::usage,
             settings::policy,
             settings::settings,

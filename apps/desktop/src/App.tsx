@@ -24,6 +24,7 @@ import NewTask from "./NewTask";
 import { ago, heads, isWorking, nameOf, newest } from "./sessions";
 import TerminalCard from "./TerminalCard";
 import { Icon } from "./ui";
+import { loadVendors, VendorsContext, type VendorCaps } from "./vendors";
 
 const POLL_MS = 2000;
 const TERMINAL_SEEN = "terminal-card-seen";
@@ -289,7 +290,13 @@ export default function App() {
     refresh();
   };
 
+  const [vendorCaps, setVendorCaps] = useState<VendorCaps[]>([]);
+  useEffect(() => {
+    if (info?.ok) loadVendors().then(setVendorCaps, () => {});
+  }, [info?.ok]);
+
   return (
+    <VendorsContext.Provider value={{ vendors: vendorCaps, accounts: list ?? [] }}>
     <div className="app">
       <header>
         <Logo />
@@ -366,5 +373,6 @@ export default function App() {
         )
       )}
     </div>
+    </VendorsContext.Provider>
   );
 }
