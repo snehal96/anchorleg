@@ -33,6 +33,8 @@ export interface Run {
   review_of: number | null;
   /** Given on this run; follow-ups inherit it (see `Session.name`). */
   name: string | null;
+  /** A side question's run (`btw`): it continues nothing. */
+  side?: boolean;
 }
 
 export const cliInfo = () => invoke<CliInfo>("cli_info");
@@ -71,6 +73,17 @@ export interface Start {
   cwd?: string;
   follow_up?: number;
   fork?: number;
+  /** A side question: a read-only copy of that session answers. */
+  btw?: number;
+  /** Go back to before that run (conversation and files, unless `keep_files`). */
+  rewind?: number;
+  keep_files?: boolean;
+  /** Review that session's changes on another account; `fix` sends the findings back. */
+  review?: number;
+  fix?: boolean;
+  goal?: string;
+  mode?: string;
+  plan?: boolean;
   attach?: string[];
 }
 /** `anchorleg run --detach --json`: returns once the run has an id. */
@@ -247,3 +260,28 @@ export const removeAccount = (name: string) => invoke<void>("remove_account", { 
 export const importAliases = (yes: boolean) => invoke<{ add: Account[]; skip: string[]; saved: boolean }>("import_aliases", { yes });
 export const updateTray = (title: string | null, lines: string[], waiting: number) =>
   invoke<void>("update_tray", { title, lines, waiting });
+
+// ---- Session tools and the rest of the settings (M4) ----------------------------------------------
+
+/** What a session changed since it started, as a unified diff (git folders). */
+export const diff = (run: number) => invoke<string>("diff", { run });
+/** `preview` → `{preview}` (diff --stat, or null: no changes); `undo` / `redo` → `{done}`. */
+export const undo = (run: number, action: "preview" | "undo" | "redo") =>
+  invoke<{ preview?: string | null; done?: string }>("undo", { run, action });
+/** `!cmd` in the session's folder; the output goes with the next message. */
+export const shell = (cwd: string, command: string) => invoke<string>("shell", { cwd, command });
+export const rules = (add: string[] = [], rm: string[] = []) => invoke<{ rules: string[] }>("rules", { add, rm });
+export interface NotifySettings {
+  desktop: boolean;
+  command: string | null;
+  data_dir: string;
+  app_running: boolean;
+}
+export const notifySettings = (change?: { desktop?: boolean; command?: string; test?: boolean }) =>
+  invoke<NotifySettings>("notify", { change: change ?? null });
+export interface McpSync {
+  accounts: { name: string; servers: string[] }[];
+  plan: { server: string; account: string; skip: string | null }[];
+  results: { server: string; account: string; ok: boolean; error: string | null }[] | null;
+}
+export const mcpSync = (withEnv: boolean, yes: boolean) => invoke<McpSync>("mcp_sync", { withEnv, yes });

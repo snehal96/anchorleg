@@ -215,3 +215,18 @@ select { font: inherit; color: var(--ink); background: var(--panel); border: 1px
 /* Settings. */
 .cli-row { display: grid; grid-template-columns: 110px 170px 220px 1fr auto; gap: 8px; align-items: center; margin-top: 8px; }
 @media (max-width: 900px) { .cli-row { grid-template-columns: 1fr 1fr; } }
+
+/* Session tools beside the conversation. */
+.pane-row { flex: 1; min-height: 0; display: flex; }
+.pane-row > .pane { min-width: 0; }
+.tools { width: 44%; max-width: 640px; min-width: 320px; border-left: 1px solid var(--rule); background: var(--panel); display: flex; flex-direction: column; }
+.tools-head { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--rule); }
+.tools-body { flex: 1; overflow: auto; padding: 10px 12px; }
+.tools-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+pre.diff.full { max-height: none; font-size: 12px; }
+pre.diff .file { color: var(--ink); font-weight: 600; margin-top: 10px; }
+pre.diff .hunk { color: var(--signal); }
+.side-answer { border-bottom: 1px solid var(--rule); padding-bottom: 8px; margin-bottom: 10px; }
+.runs-chain button.link { padding: 0 2px; }
+.pane-head .title .spacer { flex: 1; }
+.rules li { display: flex; align-items: center; gap: 8px; }

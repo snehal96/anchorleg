@@ -40,33 +40,92 @@ async fn session(run: i64, since: Option<usize>) -> Result<Value, String> {
 
 /// A new run in the background (`anchorleg run --detach --json`): a new session in `cwd`, a reply
 /// to a finished one (`follow_up`), or a new session from another's history (`fork`).
-#[derive(Debug, Deserialize)]
+/// Also: a side question (`btw`), going back to before a run (`rewind`), a review of a session
+/// (`review`, `fix` sends the findings back), and a new session's goal, mode or plan-first.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct Start {
     text: String,
     cwd: Option<String>,
     follow_up: Option<i64>,
     fork: Option<i64>,
-    #[serde(default)]
+    btw: Option<i64>,
+    rewind: Option<i64>,
+    keep_files: bool,
+    review: Option<i64>,
+    fix: bool,
+    goal: Option<String>,
+    mode: Option<String>,
+    plan: bool,
     attach: Vec<String>,
+}
+
+impl Start {
+    fn args(self) -> Vec<String> {
+        let mut args: Vec<String> = vec!["run".into(), "--detach".into(), "--json".into()];
+        let mut opt = |flag: &str, v: Option<String>| {
+            if let Some(v) = v {
+                args.extend([flag.to_owned(), v]);
+            }
+        };
+        opt("--cwd", self.cwd);
+        opt("--follow-up", self.follow_up.map(|i| i.to_string()));
+        opt("--fork", self.fork.map(|i| i.to_string()));
+        opt("--btw", self.btw.map(|i| i.to_string()));
+        opt("--rewind", self.rewind.map(|i| i.to_string()));
+        opt("--review", self.review.map(|i| i.to_string()));
+        opt("--goal", self.goal);
+        opt("--mode", self.mode);
+        for f in self.attach {
+            args.extend(["--attach".into(), f]);
+        }
+        if self.keep_files {
+            args.push("--keep-files".into());
+        }
+        if self.fix {
+            args.push("--fix".into());
+        }
+        if self.plan {
+            args.push("--plan".into());
+        }
+        args.extend(["--".into(), self.text]);
+        args
+    }
 }
 
 #[tauri::command]
 async fn start(req: Start) -> Result<Value, String> {
-    let mut args: Vec<String> = vec!["run".into(), "--detach".into(), "--json".into()];
-    if let Some(cwd) = req.cwd {
-        args.extend(["--cwd".into(), cwd]);
-    }
-    if let Some(id) = req.follow_up {
-        args.extend(["--follow-up".into(), id.to_string()]);
-    }
-    if let Some(id) = req.fork {
-        args.extend(["--fork".into(), id.to_string()]);
-    }
-    for f in req.attach {
-        args.extend(["--attach".into(), f]);
-    }
-    args.extend(["--".into(), req.text]);
+    let args = req.args();
     blocking(move || cli::json(&args)).await
+}
+
+/// What a session changed in its folder since it started (`anchorleg diff`), as a unified diff.
+#[tauri::command]
+async fn diff(run: i64) -> Result<String, String> {
+    blocking(move || cli::text(&["diff".to_owned(), run.to_string()])).await
+}
+
+/// `preview` (the files, nothing changes), `undo` or `redo` a session's changes.
+#[tauri::command]
+async fn undo(run: i64, action: String) -> Result<Value, String> {
+    blocking(move || {
+        let mut args = vec!["undo".to_owned(), run.to_string(), "--json".to_owned()];
+        match action.as_str() {
+            "preview" => {}
+            "undo" => args.push("--yes".into()),
+            "redo" => args.push("--redo".into()),
+            other => return Err(format!("unknown undo action {other}")),
+        }
+        cli::json(&args)
+    })
+    .await
+}
+
+/// `!cmd`: run a command in the session's folder, as `anchorleg ui` does: `sh -c`, up to 60 s,
+/// stdout and stderr together, at most 8 KB. Its output goes with the next message.
+#[tauri::command]
+async fn shell(cwd: String, command: String) -> Result<String, String> {
+    blocking(move || cli::shell(std::path::Path::new(&cwd), &command)).await
 }
 
 /// A message for a session that is working (`anchorleg send`); `interrupt` stops its turn first.
@@ -176,6 +235,9 @@ pub fn run() {
             sessions,
             session,
             start,
+            diff,
+            undo,
+            shell,
             send,
             stop,
             rename,
@@ -192,6 +254,9 @@ pub fn run() {
             settings::add_account,
             settings::remove_account,
             settings::import_aliases,
+            settings::rules,
+            settings::notify,
+            settings::mcp_sync,
             tray::update_tray,
             terminal,
             link_terminal
@@ -205,4 +270,36 @@ pub fn run() {
             tauri::RunEvent::Reopen { .. } => tray::show(app),
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_args() {
+        let s: Start =
+            serde_json::from_str(r#"{"text":"-why?","btw":4,"attach":["/a b"]}"#).unwrap();
+        assert_eq!(
+            s.args(),
+            [
+                "run", "--detach", "--json", "--btw", "4", "--attach", "/a b", "--", "-why?"
+            ]
+        );
+        let s: Start =
+            serde_json::from_str(r#"{"text":"go on","rewind":7,"keep_files":true}"#).unwrap();
+        assert_eq!(
+            s.args(),
+            [
+                "run",
+                "--detach",
+                "--json",
+                "--rewind",
+                "7",
+                "--keep-files",
+                "--",
+                "go on"
+            ]
+        );
+    }
 }

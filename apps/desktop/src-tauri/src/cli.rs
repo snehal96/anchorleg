@@ -177,6 +177,53 @@ pub fn json<S: AsRef<OsStr>>(args: &[S]) -> Result<Value, String> {
     serde_json::from_str(&text(args)?).map_err(|e| format!("reading anchorleg's output: {e}"))
 }
 
+/// `!cmd` in the composer: `sh -c cmd` in `folder` (with the shell's PATH), stdout and stderr
+/// together, at most 8 KB; stopped after 60 s.
+pub fn shell(folder: &Path, command: &str) -> Result<String, String> {
+    const MAX: usize = 8 * 1024;
+    const LIMIT: Duration = Duration::from_secs(60);
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", &format!("({command}) 2>&1")])
+        .current_dir(folder)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(p) = shell_path() {
+        cmd.env("PATH", p);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("running sh: {e}"))?;
+    let mut out = child.stdout.take().expect("piped");
+    let reader = std::thread::spawn(move || {
+        use std::io::Read as _;
+        let mut buf = Vec::new();
+        let _ = out.read_to_end(&mut buf);
+        buf
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) if start.elapsed() < LIMIT => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let buf = reader.join().unwrap_or_default();
+    let mut text = String::from_utf8_lossy(&buf[..buf.len().min(MAX)]).into_owned();
+    if buf.len() > MAX {
+        text.push_str("\n… (output cut at 8 KB)");
+    }
+    match status {
+        None => text.push_str("\n(stopped after 60 s)"),
+        Some(s) if !s.success() => text.push_str(&format!("\n({s})")),
+        Some(_) => {}
+    }
+    Ok(text.trim_end().to_owned())
+}
+
 /// The files of `folder` for `@` completions, as `anchorleg ui` lists them: `git ls-files`
 /// (tracked and untracked, not ignored) in a repository, else a walk three levels deep that skips
 /// hidden folders. At most 5000.
@@ -409,6 +456,13 @@ mod tests {
         assert_eq!(parse_version("anchorleg 1.10.3\n"), Some((1, 10, 3)));
         assert_eq!(parse_version("anchorleg"), None);
         assert!((0, 6, 0) < MIN_VERSION && (0, 6, 1) >= MIN_VERSION);
+    }
+
+    #[test]
+    fn shell_output_and_exit() {
+        let dir = std::env::temp_dir();
+        assert_eq!(shell(&dir, "echo hi; echo err >&2").unwrap(), "hi\nerr");
+        assert!(shell(&dir, "exit 3").unwrap().contains("exit status: 3"));
     }
 
     #[test]

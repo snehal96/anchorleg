@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
-import { files, rename, send, start, type Session } from "./api";
+import { files, rename, send, shell, start, type Session } from "./api";
 
 /** anchorleg's own slash commands; the rest go to the session's CLI as the message. */
 const OWN: [string, string][] = [
@@ -9,7 +9,19 @@ const OWN: [string, string][] = [
   ["compact", "summarise the session to free context"],
   ["fork", "<message>: a new session from this one's history"],
   ["rename", "<name>: name this session"],
+  ["btw", "<question>: a side question; a read-only copy answers"],
+  ["review", "[fix] [notes]: review this session's changes on another account"],
+  ["rewind", "<run> <message>: go back to before that run, files too"],
+  ["goal", "<condition>: keep working until it holds"],
+  ["mode", "ask | edits | auto: how tool calls are approved from the next message"],
 ];
+/** For a new session. */
+const NEW: [string, string][] = [
+  ["plan", "<task>: plan first; you approve the plan before it runs"],
+  ["goal", "<condition>: work until it holds"],
+  ["mode", "ask | edits | auto: how tool calls are approved"],
+];
+const MODES = ["ask", "edits", "auto"];
 
 const MAX_SUGGESTIONS = 8;
 
@@ -21,16 +33,32 @@ const MAX_SUGGESTIONS = 8;
 export default function Composer({
   view,
   cwd,
+  seed,
   onStarted,
   onNew,
+  onSide,
 }: {
   view: Session | null;
   /** New sessions: the folder they run in. */
   cwd?: string;
+  /** Text put in the box from elsewhere; a new `key` puts it again. */
+  seed?: { text: string; key: number } | null;
   onStarted: (run: number) => void;
   onNew?: (cwd: string) => void;
+  /** A side question was asked: show the answers. */
+  onSide?: () => void;
 }) {
   const [text, setText] = useState("");
+  // `!cmd` output waiting to go in front of the next message, as in `anchorleg ui`.
+  const [shellOut, setShellOut] = useState<string[]>([]);
+  // `/mode`: for the next run started from here.
+  const [mode, setMode] = useState<string | null>(null);
+  useEffect(() => {
+    if (seed) {
+      setText(seed.text);
+      box.current?.focus();
+    }
+  }, [seed?.key]);
   const [attach, setAttach] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; error?: boolean } | null>(null);
@@ -60,10 +88,10 @@ export default function Composer({
 
   const suggestions = useMemo((): [string, string][] => {
     const slash = text.match(/^\/(\S*)$/);
-    if (slash && view) {
+    if (slash) {
       const typed = slash[1].toLowerCase();
-      const own = OWN.map(([n, d]): [string, string] => [n, `anchorleg: ${d}`]);
-      const theirs = (view.slash_commands ?? [])
+      const own = (view ? OWN : NEW).map(([n, d]): [string, string] => [n, `anchorleg: ${d}`]);
+      const theirs = (view?.slash_commands ?? [])
         .filter((c) => !OWN.some(([n]) => n === c))
         .map((c): [string, string] => [c, ""]);
       return [...own, ...theirs].filter(([n]) => n.toLowerCase().startsWith(typed)).slice(0, MAX_SUGGESTIONS);
@@ -101,13 +129,63 @@ export default function Composer({
       setAttach([]);
       setNote({ text: msg });
     };
+    // What a run started from here sends: earlier `!cmd` output, then the message.
+    const withShell = (msg: string) => (shellOut.length ? `${shellOut.join("\n\n")}\n\n${msg}` : msg);
+    const sent = () => {
+      setShellOut([]);
+      setMode(null);
+    };
     try {
       const [cmd, ...rest] = t.startsWith("/") ? t.slice(1).split(" ") : [""];
       const arg = rest.join(" ").trim();
-      if (!view) {
+      if (t.startsWith("!")) {
         if (!folder) throw "choose a folder first";
-        const r = await start({ text: t, cwd: folder, attach });
+        const command = t.slice(1).trim();
+        const out = await shell(folder, command);
+        setShellOut((o) => [...o, `$ ${command}\n${out}`]);
+        done("the output goes with your next message");
+      } else if (cmd === "mode") {
+        if (!MODES.includes(arg)) throw `/mode ${MODES.join(" | ")}`;
+        setMode(arg);
+        done(`mode ${arg} from the next message`);
+      } else if (!view) {
+        if (!folder) throw "choose a folder first";
+        const plan = cmd === "plan";
+        const goal = cmd === "goal" ? arg : undefined;
+        const task = plan ? arg : goal != null ? "" : t;
+        if (plan && !arg) throw "/plan <task>";
+        if (cmd === "goal" && !arg) throw "/goal <condition>";
+        const r = await start({ text: withShell(task), cwd: folder, attach, plan, goal, mode: mode ?? undefined });
+        sent();
         done(`started #${r.run_id}`);
+        onStarted(r.run_id);
+      } else if (cmd === "btw") {
+        if (!arg) throw "/btw <question>";
+        await start({ text: arg, btw: view.run.id });
+        done("asked a read-only copy; the session goes on untouched");
+        onSide?.();
+      } else if (cmd === "review") {
+        if (working) throw "the session is working; review it once it's done";
+        const fix = rest[0] === "fix";
+        const notes = (fix ? rest.slice(1) : rest).join(" ").trim();
+        const r = await start({ text: notes, review: view.run.id, fix });
+        done(`reviewing as #${r.run_id}`);
+        onStarted(r.run_id);
+      } else if (cmd === "rewind") {
+        const id = Number((rest[0] ?? "").replace(/^#/, ""));
+        const message = rest.slice(1).join(" ").trim();
+        if (!id || !message) throw "/rewind <run> <message>: the run to go back to before, and how to go on";
+        if (working) throw "the session is working; stop it first";
+        const r = await start({ text: withShell(message), rewind: id, attach });
+        sent();
+        done(`went back to before #${id}; going on as #${r.run_id}`);
+        onStarted(r.run_id);
+      } else if (cmd === "goal") {
+        if (!arg) throw "/goal <condition>";
+        if (working) throw "the session is working; set the goal once it's done";
+        const r = await start({ text: "", follow_up: view.run.id, goal: arg, mode: mode ?? undefined });
+        sent();
+        done(`working toward the goal as #${r.run_id}`);
         onStarted(r.run_id);
       } else if (cmd === "clear") {
         done("");
@@ -122,10 +200,12 @@ export default function Composer({
         onStarted(r.run_id);
       } else if (working) {
         if (cmd === "compact") throw "the session is working; /compact once it's done";
-        await send(view.run.id, t, interrupt, attach);
+        await send(view.run.id, withShell(t), interrupt, attach);
+        sent();
         done(interrupt ? "interrupting; sent" : "sent; it goes in when the turn ends");
       } else {
-        const r = await start({ text: t, follow_up: view.run.id, attach });
+        const r = await start({ text: withShell(t), follow_up: view.run.id, attach, mode: mode ?? undefined });
+        sent();
         done(`replied as #${r.run_id}`);
         onStarted(r.run_id);
       }
@@ -157,10 +237,10 @@ export default function Composer({
   };
 
   const placeholder = !view
-    ? "What should the agent do?"
+    ? "What should the agent do?  ·  /plan  /goal  /mode  ·  !command"
     : working
       ? "Message (goes in when the turn ends; ⌘⏎ interrupts)"
-      : "Reply  ·  / commands  ·  @ files";
+      : "Reply  ·  / commands  ·  @ files  ·  !command";
 
   return (
     <div className="composer">
@@ -173,6 +253,26 @@ export default function Composer({
             </li>
           ))}
         </ul>
+      )}
+      {(shellOut.length > 0 || mode) && (
+        <div className="chips">
+          {shellOut.map((o, i) => (
+            <span key={i} className="chip mono" title={o}>
+              {o.split("\n")[0]}
+              <button className="link" onClick={() => setShellOut(shellOut.filter((_, j) => j !== i))} aria-label="Remove">
+                ×
+              </button>
+            </span>
+          ))}
+          {mode && (
+            <span className="chip">
+              mode {mode}
+              <button className="link" onClick={() => setMode(null)} aria-label="Remove">
+                ×
+              </button>
+            </span>
+          )}
+        </div>
       )}
       {attach.length > 0 && (
         <div className="chips">

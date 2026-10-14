@@ -4,9 +4,17 @@
 import type { Run } from "./api";
 
 export function heads(runs: Run[]): Run[] {
-  const continued = new Set(runs.map((r) => r.parent_id).filter((p) => p != null));
-  return runs.filter((r) => !continued.has(r.id));
+  // A side question (`btw`) continues nothing: it shows beside its session, not in the list.
+  const main = runs.filter((r) => !r.side);
+  const continued = new Set(main.map((r) => r.parent_id).filter((p) => p != null));
+  return main.filter((r) => !continued.has(r.id));
 }
+
+/** The side questions asked of any run in `chain`, newest first. */
+export const sideRuns = (runs: Run[], chain: number[]) => runs.filter((r) => r.side && r.parent_id != null && chain.includes(r.parent_id));
+
+/** A side question's task without the note anchorleg adds for the agent. */
+export const question = (task: string) => task.replace(/\n\n\(A side question about this session[\s\S]*\)\s*$/, "");
 
 /** The newest run continuing `id`, or `id` when nothing does (a reply sent from the terminal). */
 export function newest(runs: Run[], id: number): number {
@@ -15,7 +23,7 @@ export function newest(runs: Run[], id: number): number {
     for (let p = r.parent_id; p != null; p = byId.get(p)?.parent_id ?? null) if (p === id) return true;
     return false;
   };
-  return runs.reduce((best, r) => (r.id > best && continues(r) ? r.id : best), id);
+  return runs.reduce((best, r) => (r.id > best && !r.side && continues(r) ? r.id : best), id);
 }
 
 /** The session's name: the nearest one given on this run or a run it continues. */

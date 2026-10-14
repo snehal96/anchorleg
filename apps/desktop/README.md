@@ -35,11 +35,17 @@ The menu bar item shows the fullest quota window of the account the next run wou
 only hides it: sessions, notices and the menu bar item go on until **Quit anchorleg**; the Dock
 icon brings the window back.
 
-## Build a .dmg (macOS)
+## Release bundles
 
 ```bash
-npm run tauri build -- --bundles dmg      # → src-tauri/target/release/bundle/dmg/
+./scripts/release.sh                      # macOS: a .dmg per architecture; Linux: AppImage + .deb
+./scripts/release.sh aarch64-apple-darwin # one target
 ```
+
+They land in `release/` with `SHA256SUMS`. Each bundle carries the CLI built from the same
+checkout for its own architecture. CI does the same for all four targets when a `desktop-v*`
+tag matching `version` in `src-tauri/tauri.conf.json` is pushed
+(`.github/workflows/desktop-release.yml`), and leaves a draft release to check and publish.
 
 The app is ad-hoc signed and not notarized, so macOS blocks it the first time it opens. To allow
 it, open System Settings → Privacy & Security and click **Open Anyway**, or run

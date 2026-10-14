@@ -1,0 +1,86 @@
+name: desktop-release
+# Push a tag like desktop-v0.3.0 (matching "version" in apps/desktop/src-tauri/tauri.conf.json) to
+# build the desktop app: a .dmg per Mac architecture, an AppImage and a .deb per Linux
+# architecture, each with the anchorleg CLI from the same commit inside. The release is created
+# as a draft; publish it by hand after trying a download. Or run it by hand (Actions → Run
+# workflow) to get the bundles as workflow artifacts only.
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-14, bundles: "app,dmg" }
+          - { target: x86_64-apple-darwin, os: macos-14, bundles: "app,dmg" }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, bundles: "appimage,deb" }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, bundles: "appimage,deb" }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v5
+      - name: Tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          want="desktop-v$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+          [[ "$GITHUB_REF_NAME" == "$want" ]] || { echo "tag $GITHUB_REF_NAME but tauri.conf.json says $want"; exit 1; }
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.target }}
+          workspaces: |
+            . -> target
+            apps/desktop/src-tauri -> target
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci
+      # beforeBuildCommand builds the CLI for this target into src-tauri/binaries/ (sidecar.sh).
+      - run: npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: Collect
+        run: |
+          mkdir -p ../../dist
+          b=src-tauri/target/${{ matrix.target }}/release/bundle
+          cp $b/dmg/*.dmg $b/appimage/*.AppImage $b/deb/*.deb ../../dist/ 2>/dev/null || true
+          ls -la ../../dist
+      - uses: actions/upload-artifact@v6
+        with:
+          name: desktop-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Draft the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
+            --title "anchorleg desktop ${GITHUB_REF_NAME#desktop-v}" \
+            --notes "The anchorleg desktop app, with the anchorleg CLI inside. macOS: the app isn't notarized; the first time, right-click → Open, or System Settings → Privacy & Security → Open Anyway."

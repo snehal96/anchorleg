@@ -1,6 +1,7 @@
 // How runs pick an account (`anchorleg policy`) and what each CLI runs with (`anchorleg settings`).
 import { useEffect, useState } from "react";
 import { cliSettings, policy, type PolicyInfo, type VendorSettings } from "./api";
+import { McpServers, Notifications, Rules } from "./MoreSettings";
 
 /** The CLIs anchorleg runs today; kimi and cursor aren't usable yet. */
 const CLIS = [
@@ -53,6 +54,9 @@ export default function Settings({ onChanged }: { onChanged: () => void }) {
             <CliRow key={v} vendor={v} label={label} efforts={efforts} s={vendors[v] ?? { model: null, effort: null, args: [] }} run={run} onSaved={(s) => setVendors(s)} />
           ))}
       </section>
+      <Rules />
+      <Notifications />
+      <McpServers />
     </div>
   );
 }

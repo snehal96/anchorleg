@@ -359,6 +359,7 @@ export default function App() {
             ) : (
               <Conversation
                 run={selected}
+                runs={runs ?? []}
                 requests={requests}
                 onAnswered={refresh}
                 onStarted={started}

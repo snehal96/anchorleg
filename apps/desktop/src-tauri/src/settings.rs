@@ -143,6 +143,75 @@ pub async fn import_aliases(yes: bool) -> Result<Value, String> {
     .await
 }
 
+/// Lasting allow rules: add and remove, then the list.
+#[tauri::command]
+pub async fn rules(add: Vec<String>, rm: Vec<String>) -> Result<Value, String> {
+    blocking(move || {
+        let mut args = vec!["rules".to_owned()];
+        for r in add {
+            args.extend(["--add".to_owned(), r]);
+        }
+        for r in rm {
+            args.extend(["--rm".to_owned(), r]);
+        }
+        args.push("--json".to_owned());
+        cli::json(&args)
+    })
+    .await
+}
+
+/// Notification settings: change what's given, then show them. `test` sends a test notice.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct NotifyChange {
+    desktop: Option<bool>,
+    /// `""` stops running a command.
+    command: Option<String>,
+    test: bool,
+}
+
+#[tauri::command]
+pub async fn notify(change: Option<NotifyChange>) -> Result<Value, String> {
+    blocking(move || {
+        let mut args = vec!["notify".to_owned()];
+        if let Some(c) = change {
+            if let Some(d) = c.desktop {
+                args.extend([
+                    "--desktop".to_owned(),
+                    if d { "on" } else { "off" }.to_owned(),
+                ]);
+            }
+            match c.command {
+                Some(cmd) if cmd.trim().is_empty() => args.push("--no-command".to_owned()),
+                Some(cmd) => args.extend(["--command".to_owned(), cmd]),
+                None => {}
+            }
+            if c.test {
+                args.push("--test".to_owned());
+            }
+        }
+        args.push("--json".to_owned());
+        cli::json(&args)
+    })
+    .await
+}
+
+/// The same MCP servers on every account: the plan, or `yes` to add them.
+#[tauri::command]
+pub async fn mcp_sync(with_env: bool, yes: bool) -> Result<Value, String> {
+    blocking(move || {
+        let mut args = vec!["sync", "mcp", "--json"];
+        if with_env {
+            args.push("--with-env");
+        }
+        if yes {
+            args.push("--yes");
+        }
+        cli::json(&args)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

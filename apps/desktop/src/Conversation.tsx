@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { rename, session, stop, type Message, type Request, type Session } from "./api";
+import { rename, session, stop, type Message, type Request, type Run, type Session } from "./api";
 import Composer from "./Composer";
 import Requests from "./Requests";
+import { sideRuns } from "./sessions";
+import Tools, { type ToolTab } from "./Tools";
 import { short, tilde } from "./sessions";
 
 const POLL_WORKING_MS = 1000;
@@ -10,12 +12,15 @@ const POLL_IDLE_MS = 4000;
 /** One session, live: `anchorleg sessions show <run> --since N --json`, polled. */
 export default function Conversation({
   run,
+  runs,
   requests,
   onAnswered,
   onStarted,
   onNew,
 }: {
   run: number;
+  /** Every listed run, for the side questions asked of this session. */
+  runs: Run[];
   /** Everything waiting for the person; this session's are shown. */
   requests: Request[];
   onAnswered: () => void;
@@ -26,6 +31,9 @@ export default function Conversation({
 }) {
   const [view, setView] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tools, setTools] = useState<ToolTab | null>(null);
+  // Text put in the message box from elsewhere (a click on a run: `/rewind N `).
+  const [seed, setSeed] = useState<{ text: string; key: number } | null>(null);
   // The run the messages are for and how far they go; a reply's run shows the same history.
   const copy = useRef<{ run: number; messages: Message[] }>({ run, messages: [] });
 
@@ -77,9 +85,16 @@ export default function Conversation({
 
   if (!view) return <div className="pane">{error ? <p className="error pad">{error}</p> : <p className="muted pad">Loading…</p>}</div>;
   const r = view.run;
+  const side = sideRuns(runs, view.runs);
   return (
+    <div className="pane-row">
     <div className="pane">
-      <Head view={view} />
+      <Head
+        view={view}
+        side={side.length}
+        onTools={(t) => setTools(tools === t ? null : t)}
+        onRewind={(id) => setSeed({ text: `/rewind ${id} `, key: Date.now() })}
+      />
       <div className="conversation" ref={scroller} onScroll={onScroll}>
         {view.messages.map((m, i) => (
           <Line key={i} m={m} />
@@ -95,12 +110,31 @@ export default function Conversation({
       </div>
       {(view.steps.length > 0 || view.subagents.length > 0) && <Progress view={view} />}
       {error && <p className="error pad">{error}</p>}
-      <Composer view={view} onStarted={onStarted} onNew={onNew} />
+      <Composer
+        view={view}
+        seed={seed}
+        onStarted={onStarted}
+        onNew={onNew}
+        onSide={() => setTools("side")}
+      />
+    </div>
+    {tools && <Tools view={view} side={side} tab={tools} onTab={setTools} onClose={() => setTools(null)} onStarted={onStarted} />}
     </div>
   );
 }
 
-function Head({ view }: { view: Session }) {
+function Head({
+  view,
+  side,
+  onTools,
+  onRewind,
+}: {
+  view: Session;
+  side: number;
+  onTools: (t: ToolTab) => void;
+  /** Go back to before this run: puts `/rewind N ` in the message box. */
+  onRewind: (run: number) => void;
+}) {
   const r = view.run;
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
@@ -146,12 +180,28 @@ function Head({ view }: { view: Session }) {
             Stop
           </button>
         )}
+        <span className="spacer" />
+        <button className="link" onClick={() => onTools("changes")} title="What the session changed: diff, undo, review">
+          Changes
+        </button>
+        <button className="link" onClick={() => onTools("side")} title="Side questions (/btw)">
+          Side questions{side ? ` (${side})` : ""}
+        </button>
       </div>
       <div className="meta muted mono">
         <span title={r.cwd}>{tilde(r.cwd)}</span>
         {r.account && <span>{r.account}</span>}
         {r.mode && <span>{r.mode}</span>}
-        <span>#{view.runs.join(" → #")}</span>
+        <span className="runs-chain">
+          {view.runs.map((id, i) => (
+            <span key={id}>
+              {i > 0 && " → "}
+              <button className="link mono small" title={`Go back to before #${id} (/rewind)`} onClick={() => onRewind(id)}>
+                #{id}
+              </button>
+            </span>
+          ))}
+        </span>
         {ctx.tokens != null && (
           <span title="context used">
             ctx {short(ctx.tokens)}
