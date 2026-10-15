@@ -1,0 +1,21 @@
+CHANGELOG.md
+  s_24d456e49210ef::t_363298898f5f47 9-11
+mod/.claude-plugin/plugin.json
+  s_24d456e49210ef::t_ea486a5fe2cc26 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf3f42e7a5c5bc218a38b924561b0c5a1dd457c5",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
