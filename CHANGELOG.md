@@ -27,6 +27,10 @@ All notable changes are listed here. The format follows
 - `anchorleg diff` shows what the CLIs reported changing, in any folder; `--git` compares the
   folder with how the session found it, as before.
 
+### Fixed
+- Codex 0.162+: when Codex says the plan's usage isn't available (`ordinaryUsageAllowed: false`),
+  the account counts as blocked whatever its percentages show.
+
 ## [0.7.0] — 2026-10-14
 
 ### Added
