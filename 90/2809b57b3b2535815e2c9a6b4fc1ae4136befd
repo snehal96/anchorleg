@@ -1,0 +1,29 @@
+apps/desktop/src-tauri/src/lib.rs
+  s_24d456e49210ef::t_c8a882287a5bd3 313
+apps/desktop/src-tauri/src/settings.rs
+  s_24d456e49210ef::t_6198aefb6f7d6f 23-36
+apps/desktop/src/Accounts.tsx
+  s_24d456e49210ef::t_7aaf3146752aee 9-10,105,480-547
+apps/desktop/src/App.tsx
+  s_24d456e49210ef::t_d4b1431e8a84bc 120,123-124,154-161,376
+apps/desktop/src/api.ts
+  s_24d456e49210ef::t_cde6ef44354684 306-326
+apps/desktop/src/style.css
+  s_24d456e49210ef::t_3be9c04be68cf6 245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "902809b57b3b2535815e2c9a6b4fc1ae4136befd",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
