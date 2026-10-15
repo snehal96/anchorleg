@@ -1,0 +1,55 @@
+fixtures/claude-2.1.299-transcript-20261015/README.md
+  s_24d456e49210ef::t_f26522228e8c33 1-10
+fixtures/codex-0.153.4-rollout-20261015/README.md
+  s_24d456e49210ef::t_f26522228e8c33 1-12
+crates/anchorleg-core/src/adapters/conformance.rs
+  s_24d456e49210ef::t_f26522228e8c33 24-26
+docs/CLI.md
+  s_24d456e49210ef::t_f26522228e8c33 27,800-819
+  s_24d456e49210ef::t_ef85d991db5fde 820
+crates/anchorleg/src/import.rs
+  s_24d456e49210ef::t_f26522228e8c33 1-239
+crates/anchorleg-core/src/registry.rs
+  s_24d456e49210ef::t_f26522228e8c33 318-328
+crates/anchorleg-core/src/store.rs
+  s_24d456e49210ef::t_f26522228e8c33 732-759
+CHANGELOG.md
+  s_24d456e49210ef::t_f26522228e8c33 20-23
+crates/anchorleg-core/src/import.rs
+  s_24d456e49210ef::t_f26522228e8c33 1-589
+fixtures/codex-0.153.4-rollout-20261015/rollout.jsonl
+  s_24d456e49210ef::t_f26522228e8c33 1-8
+crates/anchorleg-core/src/lib.rs
+  s_24d456e49210ef::t_f26522228e8c33 14
+crates/anchorleg-core/tests/claude_replay.rs
+  s_24d456e49210ef::t_f26522228e8c33 13-17
+crates/anchorleg/tests/run.rs
+  s_24d456e49210ef::t_f26522228e8c33 3208-3307
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_f26522228e8c33 2,40-61,623-641
+README.md
+  s_24d456e49210ef::t_f26522228e8c33 95-97
+fixtures/claude-2.1.299-transcript-20261015/transcript.jsonl
+  s_24d456e49210ef::t_f26522228e8c33 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2fc436fa927e41527313338f0d16e04397f5d55c",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
