@@ -17,6 +17,10 @@ All notable changes are listed here. The format follows
   (turn on with `anchorleg settings claude --args "--prompt-suggestions=true"`).
 - `/context` and `/init` for Codex sessions in `anchorleg ui`.
 - `sessions show --json` has `changes` and `suggestion`.
+- `anchorleg sessions import [--account A] [--since 30d] [--cwd DIR] [--include-temp]
+  [--dry-run] [--json]`: Claude Code and Codex sessions started outside anchorleg, from every
+  account, show in `sessions`, the UI and the desktop app with their conversations, and a
+  follow-up continues them on any account.
 - Homebrew tap (in progress).
 
 ### Changed
