@@ -1,0 +1,50 @@
+crates/anchorleg-core/src/agents.rs
+  s_24d456e49210ef::t_69d40863424ad0 1-317
+  s_24d456e49210ef::t_48dc76993ea935 318-450
+CHANGELOG.md
+  s_24d456e49210ef::t_70515862f5e66a 13-15
+README.md
+  s_24d456e49210ef::t_c607362d48fdf3 104-105
+crates/anchorleg-core/src/import.rs
+  s_24d456e49210ef::t_f130c12d77ce5b 43,47,59,233
+crates/anchorleg-core/src/lib.rs
+  s_24d456e49210ef::t_f60b5dddd77b46 7
+crates/anchorleg-core/tests/claude_replay.rs
+  s_24d456e49210ef::t_d26780791b4d14 13-14,18
+crates/anchorleg/src/agents.rs
+  s_24d456e49210ef::t_53b2f56a6eae80 1-96
+crates/anchorleg/src/main.rs
+  s_24d456e49210ef::t_1cad1fa73c864f 2,41-48,641-644
+docs/CLI.md
+  s_24d456e49210ef::t_b279e462c9f3d0 27,829-843
+fixtures/claude-2.1.300-subagents-20261015/README.md
+  s_24d456e49210ef::t_07630c36e551b4 1-12
+fixtures/claude-2.1.300-subagents-20261015/agent-a91fba5647e9fb9ca.jsonl
+  s_24d456e49210ef::t_4148ba49335f11 1-7
+fixtures/claude-2.1.300-subagents-20261015/agent-a91fba5647e9fb9ca.meta.json
+  s_24d456e49210ef::t_1abceb2c53dd7c 1
+fixtures/claude-2.1.300-subagents-20261015/agent-aee0ac2395e567597.jsonl
+  s_24d456e49210ef::t_c4fba74bdc888f 1-7
+fixtures/claude-2.1.300-subagents-20261015/agent-aee0ac2395e567597.meta.json
+  s_24d456e49210ef::t_4972015faa66fb 1
+fixtures/codex-0.153.4-subagent-rollout-20261015/README.md
+  s_24d456e49210ef::t_9395375527eac0 1-11
+fixtures/codex-0.153.4-subagent-rollout-20261015/rollout.jsonl
+  s_24d456e49210ef::t_b28907bf09ab97 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6874de610be7f875b98f14fcc218c9def4c30608",
+  "prompts": {},
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
