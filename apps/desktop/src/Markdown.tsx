@@ -1,8 +1,13 @@
-import { memo, useEffect, useId, useState, type ReactNode } from "react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+import { memo, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { openTarget } from "./api";
+import { mathDelimiters } from "./math";
 import { copyText } from "./share";
 import { Icon } from "./ui";
 
@@ -46,6 +51,7 @@ function CopyButton({ value }: { value: string }) {
 function CodeBlock({ lang, children }: { lang: string; children: ReactNode }) {
   const source = text(children).replace(/\n$/, "");
   if (lang === "mermaid") return <Diagram source={source} />;
+  if (lang === "math" || lang === "latex" || lang === "tex") return <MathBlock source={source} />;
   if (lang === "svg" && /^\s*<svg[\s>]/.test(source)) return <Svg source={source} />;
   return (
     <figure className="md-code">
@@ -57,6 +63,16 @@ function CodeBlock({ lang, children }: { lang: string; children: ReactNode }) {
         <code className={lang ? `hljs language-${lang}` : "hljs"}>{children}</code>
       </pre>
     </figure>
+  );
+}
+
+/** A ```math block (GitHub's way of writing display maths). */
+function MathBlock({ source }: { source: string }) {
+  const html = useMemo(() => katex.renderToString(source, { displayMode: true, throwOnError: false, strict: false }), [source]);
+  return (
+    <Figure kind="math" source={source}>
+      <div className="md-math" dangerouslySetInnerHTML={{ __html: html }} />
+    </Figure>
   );
 }
 
@@ -239,12 +255,19 @@ function components(cwd: string): Components {
   };
 }
 
-/** What the agent wrote, as Markdown (GitHub's flavour). */
+/** What the agent wrote, as Markdown (GitHub's flavour), with maths drawn by KaTeX. */
 export const Markdown = memo(function Markdown({ source, cwd }: { source: string; cwd: string }) {
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false }]]} components={components(cwd)}>
-        {source}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }]]}
+        rehypePlugins={[
+          [rehypeKatex, { throwOnError: false, strict: false }],
+          [rehypeHighlight, { detect: false }],
+        ]}
+        components={components(cwd)}
+      >
+        {mathDelimiters(source)}
       </ReactMarkdown>
     </div>
   );
