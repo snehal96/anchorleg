@@ -100,10 +100,18 @@ pub fn run(o: Options) -> anyhow::Result<()> {
     let store = Store::open(&db)?;
     let mut new = Vec::new();
     let (mut known, mut gone, mut elsewhere, mut temp, mut open) = (0, 0, 0, 0, 0);
+    // Imported before and not gone on with in anchorleg: its log is written again, so it shows
+    // what was said since in the CLI and has the points to go back to (`at`).
+    let mut refresh = Vec::new();
     let now = crate::now();
     for f in found {
         if store.has_session(&f.session_id)? {
             known += 1;
+            if let Some(id) = store.lone_run(&f.session_id)?
+                && log_of(&db, id).starts_with(IMPORT_NOTE_START)
+            {
+                refresh.push((id, f));
+            }
         } else if !Path::new(&f.cwd).is_dir() {
             gone += 1;
         } else if !o.include_temp && is_temp(&f.cwd) {
@@ -126,21 +134,11 @@ pub fn run(o: Options) -> anyhow::Result<()> {
         std::fs::create_dir_all(&logs)?;
         for f in &new {
             let id = store.import_run(f)?;
-            let note = serde_json::json!({
-                "type": "anchorleg",
-                "text": format!(
-                    "imported from {} on {}: started outside anchorleg; a follow-up continues it",
-                    f.vendor.caps().label,
-                    f.account
-                ),
-            });
-            let mut body = note.to_string() + "\n";
-            for l in &f.log {
-                body.push_str(l);
-                body.push('\n');
-            }
-            std::fs::write(logs.join(format!("run-{id}.jsonl")), body)?;
+            std::fs::write(logs.join(format!("run-{id}.jsonl")), import_log(f))?;
             ids.push(id);
+        }
+        for (id, f) in &refresh {
+            std::fs::write(logs.join(format!("run-{id}.jsonl")), import_log(f))?;
         }
     }
 
@@ -168,6 +166,7 @@ pub fn run(o: Options) -> anyhow::Result<()> {
                     "in_use": open,
                 },
                 "not_importable": skipped_cli,
+                "updated": refresh.len(),
             }))?
         );
         return Ok(());
@@ -200,7 +199,12 @@ pub fn run(o: Options) -> anyhow::Result<()> {
     };
     let mut also = Vec::new();
     if known > 0 {
-        also.push(format!("{known} already in anchorleg"));
+        let updated = match (refresh.len(), o.dry_run) {
+            (0, _) => String::new(),
+            (n, true) => format!(" ({n} would be brought up to date)"),
+            (n, false) => format!(" ({n} brought up to date)"),
+        };
+        also.push(format!("{known} already in anchorleg{updated}"));
     }
     if gone > 0 {
         also.push(format!("{gone} whose folder is gone"));
@@ -236,4 +240,33 @@ pub fn run(o: Options) -> anyhow::Result<()> {
         println!("run it without --dry-run to import them");
     }
     Ok(())
+}
+
+/// How an imported session's log starts (the note [`import_log`] writes).
+const IMPORT_NOTE_START: &str = r#"{"text":"imported from "#;
+
+fn log_of(db: &Path, id: i64) -> String {
+    let path = db
+        .parent()
+        .map(|d| d.join("runs").join(format!("run-{id}.jsonl")))
+        .unwrap_or_default();
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+/// An imported session's run log: a note saying where it came from, then its conversation.
+fn import_log(f: &import::Found) -> String {
+    let note = serde_json::json!({
+        "text": format!(
+            "imported from {} on {}: started outside anchorleg; a follow-up continues it",
+            f.vendor.caps().label,
+            f.account
+        ),
+        "type": "anchorleg",
+    });
+    let mut body = note.to_string() + "\n";
+    for l in &f.log {
+        body.push_str(l);
+        body.push('\n');
+    }
+    body
 }

@@ -24,12 +24,12 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
-| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` · `import [--account A] [--since 30d] [--cwd DIR] [--include-temp] [--dry-run] [--json]` | works |
+| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` · `agents <run> [--json]` · `import [--account A] [--since 30d] [--cwd DIR] [--include-temp] [--dry-run] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
 | `anchorleg rules [--add RULE]… [--rm RULE]… [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
 | `anchorleg btw <run> [--model M] [--json] -- <question…>` | works (Claude, Codex) |
-| `anchorleg rewind <run> [--keep-files] [--model M] [--json] -- <message…>` | works (Claude, Codex; files in git folders) |
+| `anchorleg rewind <run> [--at POINT] [--keep-files] [--model M] [--json] -- <message…>` | works (Claude, Codex; files in git folders) |
 | `anchorleg sync mcp [--with-env] [--yes] [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg settings [<cli>] [--model M] [--effort E] [--args "…"] [--clear] [--json]` | works |
 | `anchorleg stop <run>` | works |
@@ -39,7 +39,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg usage [--since 24h\|7d\|30d\|all] [--json]` | works |
 | `anchorleg report --json` (stdin) | works |
 | `anchorleg review <run> [--cli claude\|codex\|antigravity] [--account A] [--fix] [--json] [--no-wait] [-- <notes…>]` | works (Claude, Codex, Antigravity; git folders) |
-| `anchorleg run [--follow-up RUN \| --fork RUN \| --btw RUN \| --rewind RUN [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--add-dir DIR]… [--instructions TEXT\|FILE] [--effort LEVEL] [Claude Code options] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--detach] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
+| `anchorleg run [--follow-up RUN \| --fork RUN [--at POINT] \| --btw RUN \| --rewind RUN [--at POINT] [--keep-files] \| --review RUN [--cli C] [--fix]] [--name NAME] [--worktree [NAME]] [--cwd DIR] [--plan] [--goal CONDITION [--goal-turns N]] [--budget TOKENS] [--json-schema SCHEMA] [--add-dir DIR]… [--instructions TEXT\|FILE] [--effort LEVEL] [Claude Code options] [--mode ask\|edits\|auto] [--answer-wait DURATION] [--attach FILE]… [--json] [--detach] [--no-wait] [--model M] [--stop-at F] [--fresh-above N] [--no-mod] [--policy P] [--prefer A \| --account A] -- <prompt…>` | works (Claude, Codex; Antigravity under development) |
 
 ### Session manager: `anchorleg ui`
 
@@ -379,6 +379,12 @@ goes back to just before run #14 and goes on from there with the new message:
 #14 must have a run before it in its session (`anchorleg undo` puts back a whole session's
 changes), and nothing in the session may be working. `anchorleg run --rewind 14 -- …` is the same
 thing. Claude and Codex only.
+
+`--at POINT` goes back to a point inside #14 instead: any message's `at` in
+`anchorleg sessions show 14 --json` (just before a message you sent, or just after the reply that
+ended a turn). #14 may then be its session's first run (an imported session is one run). The
+files go back only when the point is where #14 started; otherwise they stay as they are.
+`anchorleg run --fork 14 --at POINT -- …` forks from that point the same way, files untouched.
 
 ### What the agent is doing
 
@@ -811,12 +817,29 @@ characters). Left out: sessions anchorleg already has (importing twice adds noth
 whose folder is gone, sessions in temporary folders (`--include-temp` brings them in), sessions
 used in the last 5 minutes (they may still be open), a Codex subagent's own thread, and sessions
 nobody answered. A session anchorleg copied into several accounts is imported once, from the
-latest copy. `--dry-run` lists them; `--since` takes `24h`, `7d`, `4w` or `all` (default `30d`).
+latest copy. Importing again brings the sessions imported before that nobody went on with in
+anchorleg up to date: what was said in the CLI since, and the points to go back to (`at`). `--dry-run` lists them; `--since` takes `24h`, `7d`, `4w` or `all` (default `30d`).
 
 `--json` → `{"schema": 1, "dry_run", "sessions": [{"run_id", "vendor", "account", "session_id",
 "cwd", "task", "name", "started_at", "ended_at", "prompts"}], "skipped": {"known",
-"folder_gone", "other_folder", "temporary_folder", "in_use"}, "not_importable": [accounts]}`;
+"folder_gone", "other_folder", "temporary_folder", "in_use"}, "not_importable": [accounts],
+"updated"}` (`updated`: sessions imported before whose conversation was read again);
 `run_id` is `null` with `--dry-run`.
+
+## `anchorleg sessions agents <run> [--json]`
+
+A session's subagents in full: what each was asked, every step it took and what it reported,
+whether it's still at work. Read from what the CLIs keep on disk, so finished ones show too:
+Claude Code's subagent transcripts (`<config dir>/projects/<folder>/<session>/subagents/
+agent-<id>.jsonl` and `.meta.json`) and Codex's subagent threads (rollouts whose `session_meta`
+names the session's thread as their parent). Antigravity keeps none.
+
+`--json` → `{"schema": 1, "agents": [{"id", "run", "tool_use_id", "name", "kind", "status",
+"prompt", "result", "steps", "messages", "started_at", "updated_at"}]}`. `status` is `working`,
+`done` (it reported back) or `stopped` (no report, and nothing written for 2 minutes). `kind` is
+Claude's agent type or Codex's role, when set; `messages` are its own, as in `sessions show`;
+`tool_use_id` is the parent's Agent call (Claude), matching `subagents[].id` there. You can't
+message a subagent from outside; ask the main agent about it (a follow-up).
 
 ## `anchorleg sessions show <run> --json` → session
 
@@ -831,7 +854,8 @@ One session (the run and the runs it follows up, oldest first) as `anchorleg ui`
   "working": true,
   "since": 0,
   "next": 42,
-  "messages": [{ "role": "user", "text": "fix the build" }, { "role": "tool", "text": "Bash  cargo test" }],
+  "messages": [{ "role": "user", "text": "fix the build", "run": 56 }, { "role": "tool", "text": "Bash  cargo test", "run": 57 },
+               { "role": "agent", "text": "Fixed.", "run": 57, "at": "9b1c…" }],
   "running": { "what": "Bash  cargo test", "output": "running 124 tests…" },
   "subagents": [{ "id": "t1", "name": "find the flaky test", "done": false, "steps": 3, "doing": "Read  src/lib.rs" }],
   "steps": [{ "text": "Fix the build", "status": "done" }],
@@ -844,6 +868,9 @@ One session (the run and the runs it follows up, oldest first) as `anchorleg ui`
 ```
 
 `role` is `user`, `agent`, `tool`, `tool_error`, `output`, `thinking`, `anchorleg` or `error`.
+`run` is the run a message is from. `at`, when there is one, is where `anchorleg rewind RUN --at`
+or `run --fork RUN --at` can start from: on a message you sent, the point just before it; on the
+reply that ended a turn, the point just after it (Claude Code's message uuid, Codex's turn id).
 `working` is true while the run's process is alive. `steps[].status` is `pending`, `in_progress`
 or `done`. `context.window` and `slash_commands` are `null` when the CLI didn't report them.
 `suggestion` is Claude's guess at your next message (prompt suggestions on), else `null`.

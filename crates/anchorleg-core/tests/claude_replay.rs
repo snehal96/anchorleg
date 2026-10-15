@@ -10,10 +10,12 @@ fn replay_claude_fixtures() {
         |path| {
             let name = path.file_name().unwrap().to_string_lossy();
             // Phase 0 also saves mod and Codex output next to Claude's; those aren't stream-json.
-            // …and session transcripts (`sessions import`) aren't either.
+            // …and session and subagent transcripts (`sessions import`, `sessions agents`)
+            // aren't either.
             if name.starts_with("probe-mod")
                 || name.starts_with("codex")
                 || name == "transcript.jsonl"
+                || name.starts_with("agent-")
             {
                 return;
             }

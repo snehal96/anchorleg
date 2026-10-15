@@ -738,6 +738,21 @@ impl Store {
         )?)
     }
 
+    /// The session's run when it's its only one and nothing follows it: an imported session
+    /// nobody went on with in anchorleg, whose log a new import may bring up to date.
+    pub fn lone_run(&self, session_id: &str) -> Result<Option<RunId>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT r.id FROM runs r WHERE r.session_id = ?1 AND r.parent_id IS NULL
+                   AND (SELECT COUNT(*) FROM runs WHERE session_id = ?1) = 1
+                   AND NOT EXISTS (SELECT 1 FROM runs c WHERE c.parent_id = r.id)",
+                params![session_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
     /// A finished run for a session started outside anchorleg (`anchorleg sessions import`).
     pub fn import_run(&self, f: &crate::import::Found) -> Result<RunId> {
         self.conn.execute(

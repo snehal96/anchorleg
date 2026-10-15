@@ -29,12 +29,22 @@ pub enum Role {
 pub struct Message {
     pub role: Role,
     pub text: String,
+    /// In a session view: the run the message is from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<i64>,
+    /// In a session view, where the session can be forked from (`anchorleg rewind RUN --at`,
+    /// `anchorleg run --fork RUN --at`): for a message the person sent, the point just before
+    /// it; for the reply that ends a turn, the point just after it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
 }
 
 fn msg(role: Role, text: impl Into<String>) -> Message {
     Message {
         role,
         text: text.into(),
+        run: None,
+        at: None,
     }
 }
 
@@ -981,6 +991,70 @@ pub fn suggestion(log: &str) -> Option<String> {
     out
 }
 
+/// Where a session stood around each message the person sent in a run log: for the k-th, the
+/// point just before it (`before[k]`) and the point at the end of its turn (`after[k]`). Points
+/// are Claude's assistant message uuids and Codex's turn ids, what [`fork_point`] reads.
+#[derive(Debug, Default, PartialEq)]
+pub struct TurnPoints {
+    pub before: Vec<Option<String>>,
+    pub after: Vec<Option<String>>,
+}
+
+pub fn turn_points(log: &str) -> TurnPoints {
+    let mut out = TurnPoints::default();
+    let mut point: Option<String> = None;
+    for line in log.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let field = |k: &str| v.get(k).and_then(Value::as_str);
+        match field("type") {
+            Some("assistant") if !is_sidechain(&v) => {
+                point = field("uuid").map(str::to_owned).or(point);
+            }
+            Some("turn.completed") => point = field("turn_id").map(str::to_owned).or(point),
+            Some("anchorleg_user" | "relay_user") => {
+                if !out.before.is_empty() {
+                    out.after.push(point.clone());
+                }
+                out.before.push(point.clone());
+            }
+            _ => {}
+        }
+    }
+    if !out.before.is_empty() {
+        out.after.push(point);
+    }
+    out
+}
+
+/// Marks each message with its run and, from `points`, where the session can be forked from
+/// around it: the person's k-th message and the last reply of its turn.
+fn place(messages: &mut [Message], run: i64, points: &TurnPoints) {
+    let mut k = 0;
+    let mut last_reply: Option<usize> = None;
+    let close = |messages: &mut [Message], last: Option<usize>, k: usize| {
+        if let (Some(i), Some(Some(at))) =
+            (last, k.checked_sub(1).and_then(|k| points.after.get(k)))
+        {
+            messages[i].at = Some(at.clone());
+        }
+    };
+    for i in 0..messages.len() {
+        messages[i].run = Some(run);
+        match messages[i].role {
+            Role::User => {
+                close(messages, last_reply.take(), k);
+                messages[i].at = points.before.get(k).cloned().flatten();
+                k += 1;
+            }
+            Role::Agent => last_reply = Some(i),
+            _ => {}
+        }
+    }
+    close(messages, last_reply, k);
+}
+
 /// The view of a session from its runs' logs (`<log_dir>/run-<id>.jsonl`), oldest run first.
 pub fn session_view(runs: &[&crate::store::Run], log_dir: &std::path::Path) -> SessionView {
     let read = |id: i64| {
@@ -1001,6 +1075,7 @@ pub fn session_view(runs: &[&crate::store::Run], log_dir: &std::path::Path) -> S
         if !part.iter().any(|m| m.role == Role::User) {
             part.insert(0, msg(Role::User, run.task.clone()));
         }
+        place(&mut part, run.id, &turn_points(&log));
         view.messages.extend(part);
         whole.push_str(&log);
         newest = log;
@@ -1036,6 +1111,55 @@ mod tests {
         );
         assert_eq!(super::suggestion(&later), None);
         assert_eq!(super::suggestion(""), None);
+    }
+
+    #[test]
+    fn messages_say_where_the_session_can_go_back_to() {
+        use super::{Role, TurnPoints, turn_points};
+        // Claude: assistant uuids; the person's second message goes back to the end of the
+        // first turn, and each turn's last reply forks from just after it.
+        let claude = [
+            r#"{"type":"anchorleg_user","text":"one"}"#,
+            r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hi"}]}}"#,
+            r#"{"type":"assistant","uuid":"a2","parent_tool_use_id":"t9","message":{"content":[{"type":"text","text":"sub"}]}}"#,
+            r#"{"type":"assistant","uuid":"a3","message":{"content":[{"type":"text","text":"done"}]}}"#,
+            r#"{"type":"anchorleg_user","text":"two"}"#,
+            r#"{"type":"assistant","uuid":"b1","message":{"content":[{"type":"text","text":"ok"}]}}"#,
+        ]
+        .join("\n");
+        let p = turn_points(&claude);
+        assert_eq!(
+            p,
+            TurnPoints {
+                before: vec![None, Some("a3".into())],
+                after: vec![Some("a3".into()), Some("b1".into())],
+            }
+        );
+        let mut m = super::from_log(&claude);
+        super::place(&mut m, 7, &p);
+        let at: Vec<(Role, Option<&str>)> = m.iter().map(|m| (m.role, m.at.as_deref())).collect();
+        assert_eq!(
+            at,
+            [
+                (Role::User, None),
+                (Role::Agent, None),
+                (Role::Agent, Some("a3")),
+                (Role::User, Some("a3")),
+                (Role::Agent, Some("b1")),
+            ]
+        );
+        assert!(m.iter().all(|m| m.run == Some(7)));
+        // Codex: turn ids.
+        let codex = [
+            r#"{"type":"anchorleg_user","text":"one"}"#,
+            r#"{"type":"turn.completed","turn_id":"u1"}"#,
+            r#"{"type":"anchorleg_user","text":"two"}"#,
+        ]
+        .join("\n");
+        assert_eq!(
+            turn_points(&codex).before,
+            vec![None, Some("u1".to_owned())]
+        );
     }
 
     #[test]

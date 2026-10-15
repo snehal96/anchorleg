@@ -101,9 +101,12 @@ watches every account's quota, and when one gets close to its limit it:
 - **Plan first.** `--plan` (or `/plan` in the UI): the agent plans in Claude's or Codex's plan
   mode, you approve, say what to change or edit the plan yourself (`e`), then the same session
   carries it out.
+- **Subagents.** `anchorleg sessions agents 12`: every subagent the session started, working or
+  done, with what it was asked, its steps and what it reported (Claude Code and Codex).
 - **Side questions and rewind.** `anchorleg btw 12 -- "why this approach?"` (`/btw`): a read-only
   copy of the session answers while the session keeps working. `anchorleg rewind 14 -- "…"`
-  (`/rewind`): back to just before run #14, conversation and files, and on from there.
+  (`/rewind`): back to just before run #14, conversation and files, and on from there; `--at`
+  goes back to any message inside a run (the desktop app's "Edit and send again").
 - **Named sessions.** `--name "auth fix"`, `anchorleg rename` or `/rename`; the CLI gets the name
   too.
 - **The agent can ask you.** When Claude or Codex needs a decision, the question and its options
