@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AccountStatus, Status } from "./api";
 import { until, windowName } from "./Accounts";
 import { Icon } from "./ui";
+import { accountHue } from "./sessions";
 import { useVendors } from "./vendors";
 
 
@@ -85,6 +86,7 @@ export default function Limits({
           {st?.accounts.map((a) => (
             <div key={a.name} className={`limits-account ${a.name === next?.name ? "next" : ""}`}>
               <div className="limits-name">
+                <span className="acct-dot" style={{ "--acct-h": accountHue(st.accounts.map((x) => x.name), a.name) } as React.CSSProperties} />
                 <b>{a.name}</b> <span className="muted">{vendorLabel(a.vendor)}</span>
                 {a.name === next?.name && <span className="tag">next</span>}
               </div>

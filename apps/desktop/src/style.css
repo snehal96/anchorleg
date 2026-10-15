@@ -237,6 +237,11 @@ main { padding: 28px 32px 40px; overflow: auto; flex: 1; }
 .sidebar .item:hover:not(:disabled) { background: var(--hover); }
 .sidebar .item:active:not(:disabled) { transform: none; }
 .sidebar .item.selected { background: var(--panel); box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--hairline); }
+/* The session's account: a soft tint and a bar on the left, the same hue as its dot elsewhere. */
+.sidebar .item.tinted { background: oklch(0.7 0.11 var(--acct-h) / 0.10); box-shadow: inset 3px 0 0 oklch(0.62 0.13 var(--acct-h)); }
+.sidebar .item.tinted:hover:not(:disabled) { background: oklch(0.7 0.11 var(--acct-h) / 0.17); }
+.sidebar .item.tinted.selected { background: oklch(0.7 0.11 var(--acct-h) / 0.20); box-shadow: var(--shadow-sm), inset 3px 0 0 oklch(0.62 0.13 var(--acct-h)), inset 0 0 0 1px var(--hairline); }
+.acct-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: oklch(0.62 0.13 var(--acct-h)); flex: none; }
 .mark { width: 14px; flex: none; text-align: center; font-size: 12px; line-height: 20px; }
 .item-text { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; font-size: 13.5px; }

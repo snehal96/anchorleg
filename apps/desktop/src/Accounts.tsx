@@ -16,7 +16,7 @@ import {
   type Status,
   type WindowStatus,
 } from "./api";
-import { ago } from "./sessions";
+import { accountHue, ago } from "./sessions";
 import { useVendors } from "./vendors";
 
 /** A reading older than this shows its age, as the CLI does. */
@@ -89,6 +89,7 @@ export default function Accounts({
             s={s}
             a={byName.get(s.name)}
             next={status.next.action !== "no_accounts" && status.next.account === s.name}
+            hue={accountHue(rows.map((r) => r.name), s.name)}
             open={open === s.name}
             onToggle={() => setOpen(open === s.name ? null : s.name)}
             onUp={i > 0 ? () => move(i, -1) : undefined}
@@ -120,6 +121,7 @@ function AccountRow({
   s,
   a,
   next,
+  hue,
   open,
   onToggle,
   onUp,
@@ -130,6 +132,8 @@ function AccountRow({
   s: AccountStatus;
   a: Account | undefined;
   next: boolean;
+  /** The account's colour, as on its sessions. */
+  hue: number | null;
   open: boolean;
   onToggle: () => void;
   onUp?: () => void;
@@ -152,6 +156,7 @@ function AccountRow({
           </button>
         </span>
         <span className="account-name">
+          {hue != null && <span className="acct-dot" style={{ "--acct-h": hue } as React.CSSProperties} />}
           <b>{s.name}</b> <span className="muted">{s.vendor}</span>
           {a?.pinned && <span className="tag">pinned</span>}
           {!enabled && <span className="tag">off</span>}

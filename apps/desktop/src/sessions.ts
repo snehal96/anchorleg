@@ -34,6 +34,27 @@ export function nameOf(runs: Run[], r: Run): string | null {
   return null;
 }
 
+/** The account the session started on: its first run's. */
+export function startedOn(runs: Run[], r: Run): string | null {
+  const byId = new Map(runs.map((x) => [x.id, x]));
+  let first = r;
+  for (let x: Run | undefined = r; x; x = x.parent_id != null ? byId.get(x.parent_id) : undefined) first = x;
+  return first.account ?? r.account;
+}
+
+/** Hues for accounts, in the order anchorleg tries them; the brand green is left out. */
+const HUES = [250, 25, 300, 85, 200, 345, 130, 55];
+
+/** A steady hue per account: by its place in the account list, so colours don't shuffle. */
+export function accountHue(names: string[], account: string | null | undefined): number | null {
+  if (!account) return null;
+  const i = names.indexOf(account);
+  if (i >= 0) return HUES[i % HUES.length];
+  let h = 0;
+  for (const c of account) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return HUES[h % HUES.length];
+}
+
 export const isWorking = (r: Run) => (r.state === "running" || r.state === "waiting" || r.state === "switching") && r.pid != null;
 
 export function ago(secs: number): string {

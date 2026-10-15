@@ -21,7 +21,7 @@ import Usage from "./Usage";
 import Limits from "./Limits";
 import Conversation, { firstLine } from "./Conversation";
 import NewTask from "./NewTask";
-import { ago, heads, isWorking, nameOf, newest } from "./sessions";
+import { accountHue, ago, heads, isWorking, nameOf, newest, startedOn } from "./sessions";
 import TerminalCard from "./TerminalCard";
 import { Icon } from "./ui";
 import { loadVendors, VendorsContext, type VendorCaps } from "./vendors";
@@ -115,8 +115,13 @@ function Sidebar({
   error,
   selected,
   onSelect,
+  accounts,
+  status: st,
 }: {
   runs: Run[] | null;
+  /** Account names in the order they're tried: each gets its colour from its place. */
+  accounts: string[];
+  status: Status | null;
   /** Runs with something waiting for the person. */
   waiting: Set<number>;
   error: string | null;
@@ -156,15 +161,27 @@ function Sidebar({
               : r.state === "done"
                 ? ["done", "Done"]
                 : ["stopped", "Stopped"];
+        // Tinted by the account the session started on; while it waits for every limit to reset,
+        // by the account it will continue on.
+        const blocked = r.state === "waiting" && working && st?.next.action === "wait" ? st.next : null;
+        const on = blocked ? blocked.account : startedOn(runs ?? [], r);
+        const hue = accountHue(accounts, on);
+        const resumes = blocked ? new Date(blocked.until * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
         return (
-          <button key={r.id} className={`item ${selected === r.id ? "selected" : ""}`} onClick={() => onSelect(r.id)} title={`${r.task}\n\n${r.cwd}`}>
+          <button
+            key={r.id}
+            className={`item ${selected === r.id ? "selected" : ""} ${hue != null ? "tinted" : ""}`}
+            style={hue != null ? ({ "--acct-h": hue } as React.CSSProperties) : undefined}
+            onClick={() => onSelect(r.id)}
+            title={`${r.task}\n\n${r.cwd}${on ? `\n${blocked ? `Continues on ${on} at ${resumes}, when limits reset` : `Started on ${on}`}` : ""}`}
+          >
             <span className="item-text">
               <span className="item-title">{nameOf(runs ?? [], r) ?? firstLine(r.task)}</span>
               <span className="item-meta muted">
                 <span className={`pill pill-${cls} small-pill`}>
                   {working && !needs && <span className="spinner" />} {word}
                 </span>{" "}
-                {r.cwd.split("/").filter(Boolean).pop()} · {ago(r.started_at)} ago
+                {blocked ? `resumes on ${on} at ${resumes}` : `${r.cwd.split("/").filter(Boolean).pop()} · ${ago(r.started_at)} ago`}
               </span>
             </span>
           </button>
@@ -346,7 +363,7 @@ export default function App() {
           </main>
         ) : (
         <div className="body">
-          <Sidebar runs={runs} waiting={waiting} error={error} selected={selected} onSelect={setSelected} />
+          <Sidebar runs={runs} waiting={waiting} error={error} selected={selected} onSelect={setSelected} accounts={(st?.accounts ?? list ?? []).map((a) => a.name)} status={st} />
           <div className="main">
             {showTerminal && info.bundled && (
               <div className="pad">
