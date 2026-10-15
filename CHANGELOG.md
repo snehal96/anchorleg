@@ -7,6 +7,11 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- Go back to or fork from any message, not just the start of a run: `anchorleg rewind RUN --at
+  POINT` and `anchorleg run --fork RUN --at POINT`, the point being a message's new `at` in
+  `sessions show --json` (each message also says its `run`). Works in imported sessions too.
+- `anchorleg sessions import` brings sessions it imported before up to date (what was said in the
+  CLI since, and the points to go back to); `--json` reports them as `updated`.
 - A Changes panel in `anchorleg ui` (**v**, right half, closed by default): every file the
   session changed with its diff, as Claude Code, Codex and Antigravity report it, in any folder.
   Its Files tab (**f**, or **Files ▾** on the conversation) lists the files the session created

@@ -103,7 +103,8 @@ watches every account's quota, and when one gets close to its limit it:
   carries it out.
 - **Side questions and rewind.** `anchorleg btw 12 -- "why this approach?"` (`/btw`): a read-only
   copy of the session answers while the session keeps working. `anchorleg rewind 14 -- "…"`
-  (`/rewind`): back to just before run #14, conversation and files, and on from there.
+  (`/rewind`): back to just before run #14, conversation and files, and on from there; `--at`
+  goes back to any message inside a run (the desktop app's "Edit and send again").
 - **Named sessions.** `--name "auth fix"`, `anchorleg rename` or `/rename`; the CLI gets the name
   too.
 - **The agent can ask you.** When Claude or Codex needs a decision, the question and its options

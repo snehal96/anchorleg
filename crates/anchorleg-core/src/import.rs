@@ -193,10 +193,13 @@ pub fn claude(transcript: &str, account: &str, file: &Path) -> Option<Found> {
                     b.iter()
                         .any(|b| b.get("type").and_then(Value::as_str) == Some("text"))
                 });
+                // The uuid and session are where a rewind or fork can start from (`at`).
                 log.push(
                     json!({
                         "type": "assistant",
                         "message": { "model": v.pointer("/message/model"), "content": content },
+                        "uuid": v.get("uuid"),
+                        "session_id": v.get("sessionId"),
                     })
                     .to_string(),
                 );
@@ -344,6 +347,15 @@ pub fn codex(rollout: &str, account: &str, file: &Path) -> Option<Found> {
                     out.pointer("/item/type").and_then(Value::as_str) == Some("agent_message");
                 log.push(out.to_string());
             }
+            // The end of a turn: where a rewind or fork can start from (`thread/fork`
+            // `lastTurnId`).
+            Some("event_msg")
+                if payload.get("type").and_then(Value::as_str) == Some("task_complete") =>
+            {
+                if let Some(turn) = payload.get("turn_id").and_then(Value::as_str) {
+                    log.push(json!({ "type": "turn.completed", "turn_id": turn }).to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -426,6 +438,25 @@ pub fn dedup(mut found: Vec<Found>) -> Vec<Found> {
 mod tests {
     use super::*;
     use crate::conversation::{Role, from_log};
+
+    #[test]
+    fn imported_sessions_keep_the_points_to_go_back_to() {
+        use crate::conversation::turn_points;
+        // Real captures: a Claude Code transcript's assistant uuids, a Codex rollout's turn ids.
+        let t =
+            include_str!("../../../fixtures/claude-2.1.299-transcript-20261015/transcript.jsonl");
+        let f = claude(t, "work", Path::new("/x.jsonl")).unwrap();
+        let p = turn_points(&f.log.join("\n"));
+        assert!(p.after.iter().all(Option::is_some), "{p:?}");
+        assert!(p.before.iter().skip(1).all(Option::is_some), "{p:?}");
+        let r = include_str!("../../../fixtures/codex-0.153.4-rollout-20261015/rollout.jsonl");
+        let f = codex(r, "work", Path::new("/x.jsonl")).unwrap();
+        let p = turn_points(&f.log.join("\n"));
+        assert!(
+            !p.after.is_empty() && p.after.iter().all(Option::is_some),
+            "{p:?}"
+        );
+    }
 
     #[test]
     fn a_claude_transcript_reads_like_an_anchorleg_run() {

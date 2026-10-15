@@ -105,6 +105,10 @@ enum Command {
         /// Only the conversation goes back; the files stay as they are.
         #[arg(long)]
         keep_files: bool,
+        /// Go back to this point inside the run instead (a message's `at` in
+        /// `anchorleg sessions show --json`); the files stay unless it's the run's start.
+        #[arg(long, value_name = "POINT")]
+        at: Option<String>,
         #[arg(long)]
         json: bool,
         /// Model to go on with.
@@ -396,6 +400,11 @@ pub struct RunArgs {
     /// With `--rewind`: leave the files as they are; only the conversation goes back.
     #[arg(long, requires = "rewind")]
     pub keep_files: bool,
+    /// With `--rewind RUN` or `--fork RUN`: a point inside RUN's conversation to go back to or
+    /// fork from instead (a message's `at` in `anchorleg sessions show --json`). Going back to
+    /// a point inside a run leaves the files as they are unless it's the run's start.
+    #[arg(long, value_name = "POINT")]
+    pub at: Option<String>,
     /// Only use accounts of this CLI: claude, codex or antigravity.
     #[arg(long, value_parser = ["claude", "codex", "antigravity"])]
     pub cli: Option<String>,
@@ -720,6 +729,7 @@ fn main() -> ExitCode {
         Command::Rewind {
             run,
             keep_files,
+            at,
             json,
             model,
             message,
@@ -730,6 +740,9 @@ fn main() -> ExitCode {
                 "--rewind".to_owned(),
                 run.to_string(),
             ];
+            if let Some(at) = at {
+                argv.extend(["--at".to_owned(), at]);
+            }
             for (flag, on) in [("--keep-files", keep_files), ("--json", json)] {
                 if on {
                     argv.push(flag.to_owned());
