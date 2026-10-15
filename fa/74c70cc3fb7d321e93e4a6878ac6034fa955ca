@@ -1,0 +1,115 @@
+fixtures/claude-2.1.300-edit-write-20261015/README.md
+  s_3c59a91d489536::t_097bc5d11382d3 1-11
+crates/anchorleg-core/src/lib.rs
+  s_3c59a91d489536::t_771d6a63114349 9
+fixtures/claude-2.1.300-prompt-suggestion-20261015/stream.jsonl
+  s_3c59a91d489536::t_d7159f419b4982 1-9
+crates/anchorleg/src/run.rs
+  s_3c59a91d489536::t_febc86ed8deb10 784-787
+  s_3c59a91d489536::t_4f424c26ad12d5 753-755,760-783,788-790
+fixtures/claude-2.1.300-edit-write-20261015/stream.jsonl
+  s_3c59a91d489536::t_097bc5d11382d3 1-29
+docs/CLI.md
+  s_3c59a91d489536::t_455f449e83a3fe 72-75,417-420
+  s_3c59a91d489536::t_3d9b841eb1b611 277,279-294,818-821,828-831
+  s_3c59a91d489536::t_5d84dffd82f218 678,682-683
+  s_24d456e49210ef::t_ea00f4148936c7 421
+crates/anchorleg-core/src/adapters/codex_server.rs
+  s_3c59a91d489536::t_771d6a63114349 818-822,1306-1307,1309-1316
+  s_3c59a91d489536::t_41eb36f32dee62 1308,1317-1318
+crates/anchorleg/tests/run.rs
+  s_3c59a91d489536::t_2345bfc626f6f5 1427,1429-1434,1437,1456,1461,1467
+  s_3c59a91d489536::t_15bbb5475a7906 406,483,1381-1398
+  s_3c59a91d489536::t_232cdeafdcf8a3 490,1428,1435-1436,1438-1442,1468-1469
+  s_3c59a91d489536::t_41eb36f32dee62 442-468
+  s_3c59a91d489536::t_febc86ed8deb10 478-479,487,1443-1455,1457-1460,1462-1466
+  s_24d456e49210ef::t_763757be6a6d10 403-405,407-441,469-477,480-482,484-486,488-489,491,1380,1426
+mod/hooks/hooks.json
+  s_3c59a91d489536::t_273a4a518b6ed6 2-15
+fixtures/claude-2.1.300-elicitation-20261015/server.py
+  s_3c59a91d489536::t_6bf80546bfbb1a 1-35
+crates/anchorleg/src/ui.rs
+  s_3c59a91d489536::t_c41590716352ea 4403
+  s_3c59a91d489536::t_076c604ee41c0c 1919-1920,2262-2263,2335
+  s_3c59a91d489536::t_638910184ed4e3 54-55,82-97,124-134,234-239,254-259,396-398,477-478,3746,3766-3768
+  s_3c59a91d489536::t_534452117d1f2e 3250-3257
+  s_3c59a91d489536::t_d7159f419b4982 394-395,479,620,754-764
+  s_3c59a91d489536::t_db167504cebcb5 432,501,586,610,1707,1713-1715,2624-2630,2638-2639,3769
+  s_3c59a91d489536::t_41eb36f32dee62 4428-4432
+  s_3c59a91d489536::t_7dfe2aeb9e5893 799,828-834
+  s_3c59a91d489536::t_c6ee853c547b20 3278,4448-4468
+  s_3c59a91d489536::t_9090885a3256e1 4737-4740,4743,4758,4761-4764
+  s_3c59a91d489536::t_a32c0761ba3563 2340,2343,2348-2350
+  s_3c59a91d489536::t_aa13e5f3a993ef 4388,4393-4402,4404,4406-4414
+  s_3c59a91d489536::t_a1d4f47507c4ee 4387,4415-4427,4433-4447
+  s_3c59a91d489536::t_4b00fe8e9f2200 4405
+  s_3c59a91d489536::t_d8468a0606eb86 1343-1355,1364-1365,1381,3282-3287
+  s_3c59a91d489536::t_febc86ed8deb10 2215-2219,2236-2239,2296-2301,2320-2323,2354-2356,2631-2637,4389-4392
+  s_3c59a91d489536::t_20528c53f910c5 3354-3355
+  s_3c59a91d489536::t_8fbe69169047b5 687-695,1823-1871,1877-1878,1969-1971,1974-1976,2023-2025,2052-2060,2086-2089,2178-2185,2187-2194,2197,2202-2214,2220-2235,2240-2261,2264-2295,2302-2319,2324-2334,2336-2339,2341-2342,2344-2346,2351-2353,2357-2360,2363-2364,2366,2369-2370,2380-2383,2386,3115-3116,3258-3277,3279
+  s_3c59a91d489536::t_b6db38567ff507 3280
+crates/anchorleg-core/src/conversation.rs
+  s_3c59a91d489536::t_41eb36f32dee62 1028-1035
+  s_3c59a91d489536::t_d7159f419b4982 956-981,1009,1022-1027,1036-1039
+  s_3c59a91d489536::t_9ff88ae0ba6ebd 1040
+crates/anchorleg/src/permission.rs
+  s_3c59a91d489536::t_4b297937c39361 25-70,93-97,189-197,199
+  s_24d456e49210ef::t_8d2d0aaf46ebbd 198
+fixtures/claude-2.1.300-elicitation-20261015/README.md
+  s_3c59a91d489536::t_6bf80546bfbb1a 1-6,8,10-15
+  s_3c59a91d489536::t_38011983b5f870 7,9
+crates/anchorleg-core/src/changes.rs
+  s_3c59a91d489536::t_771d6a63114349 182-186,226-233
+  s_3c59a91d489536::t_5a2ed3136a2923 1-67,74-181,187-225,234-353
+  s_3c59a91d489536::t_febc86ed8deb10 68-73
+crates/anchorleg/src/status.rs
+  s_3c59a91d489536::t_3d9b841eb1b611 249-253
+crates/anchorleg/src/main.rs
+  s_3c59a91d489536::t_4f424c26ad12d5 170-173,582
+  s_3c59a91d489536::t_9f29954697b26e 164
+README.md
+  s_3c59a91d489536::t_20528c53f910c5 284
+  s_3c59a91d489536::t_4acfd54c0d7500 78-81
+CHANGELOG.md
+  s_3c59a91d489536::t_f0e65e23fac7ba 10-19
+  s_24d456e49210ef::t_bed69f2c87f09c 22-25
+fixtures/claude-2.1.300-prompt-suggestion-20261015/README.md
+  s_3c59a91d489536::t_15bbb5475a7906 1-10
+crates/anchorleg-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.300-edit-write-20261015__stream.jsonl.snap
+  s_3c59a91d489536::t_b97529543bc9c6 1-478
+crates/anchorleg-core/tests/snapshots/claude_replay__replay_claude_fixtures@claude-2.1.300-prompt-suggestion-20261015__stream.jsonl.snap
+  s_3c59a91d489536::t_9ce48a919e0ccf 1-210
+fixtures/claude-2.1.300-elicitation-20261015/hook-input.json
+  s_3c59a91d489536::t_7a98a5558e1928 1
+fixtures/claude-2.1.300-elicitation-20261015/server-log.ndjson
+  s_3c59a91d489536::t_e303b28a54eff3 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa74c70cc3fb7d321e93e4a6878ac6034fa955ca",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    },
+    "s_3c59a91d489536": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c4c485f2-83e8-4b82-8fc4-1036647e851c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
