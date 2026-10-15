@@ -33,6 +33,11 @@ for t in "${targets[@]}"; do
       [ -x "$lsr" ] && "$lsr" -u "$app" 2>/dev/null
       rm -rf "$app"
     done
+    # So is the copy inside the dmg tauri mounted while building it.
+    if [ -x "$lsr" ]; then
+      "$lsr" -dump 2>/dev/null | sed -nE 's#^path: +(/Volumes/dmg\.[^ ]+\.app).*#\1#p' | sort -u |
+        while read -r ghost; do "$lsr" -u "$ghost" 2>/dev/null; done
+    fi
   fi
 done
 cd "$out" && shasum -a 256 -- * > SHA256SUMS && cat SHA256SUMS
