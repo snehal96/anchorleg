@@ -340,8 +340,19 @@ button.msg.thinking:hover:not(:disabled) { background: none; color: var(--ink-2)
 .working { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; color: var(--ink-2); padding: 6px 0; font-size: 13px; }
 pre.tail { flex-basis: 100%; user-select: text; color: var(--muted); max-height: 8em; overflow: hidden; margin: 2px 0 0; font-size: 12px; }
 
-.progress { border-top: 1px solid var(--hairline); background: var(--panel); padding: 10px 28px; max-height: 30%; overflow-y: auto; font-size: 13px; }
-.progress-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 4px 0 4px; }
+.progress { border-top: 1px solid var(--hairline); background: var(--panel); padding: 4px max(20px, calc((100% - 860px) / 2)); font-size: 13px; }
+.progress-line {
+  width: 100%; justify-content: flex-start; gap: 14px; background: none; box-shadow: none; font-weight: 400;
+  font-size: 13px; color: var(--ink-2); padding: 6px 8px; border-radius: 8px; min-width: 0;
+}
+.progress-line:hover:not(:disabled) { background: var(--hover); }
+.progress-line:active:not(:disabled) { transform: none; }
+.progress-line > .icon { margin-left: auto; color: var(--muted); transition: transform 200ms var(--ease-out); }
+.progress.open .progress-line > .icon { transform: rotate(180deg); }
+.progress-part { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.progress-count { font-weight: 600; font-variant-numeric: tabular-nums; flex: none; }
+.progress-now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.progress-detail { max-height: 30vh; overflow-y: auto; padding: 2px 8px 8px; display: grid; gap: 8px; }
 .progress ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .step-done { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--rule); }
 .step-in_progress { font-weight: 600; color: var(--brand-strong); }
@@ -801,3 +812,25 @@ button.back { margin: -8px 0 10px -8px; font-size: 13px; }
 .md-math { padding: 14px 16px; overflow-x: auto; background: var(--panel); }
 .md-math .katex-display { margin: 0; }
 .md .katex-error { color: var(--stop); font-family: var(--mono); font-size: 12.5px; }
+
+/* Jump to one of your messages: ticks at the right edge; the list opens on hover or focus. */
+.conversation-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.jump-rail { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2; display: flex; justify-content: flex-end; }
+.jump-ticks { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding: 8px 4px; max-height: 50vh; overflow: hidden; }
+.jump-ticks span { display: block; width: 12px; height: 2px; border-radius: 1px; background: var(--rule); transition: background var(--fast) ease, width var(--fast) var(--ease-out); }
+.jump-ticks span.current { width: 18px; background: var(--ink-2); }
+.jump-list {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%) scale(0.98); transform-origin: right center;
+  list-style: none; margin: 0; padding: 6px; width: 280px; max-height: 60vh; overflow-y: auto;
+  background: var(--panel); border-radius: var(--r); box-shadow: var(--shadow-lg), inset 0 0 0 1px var(--hairline);
+  opacity: 0; pointer-events: none; transition: opacity 150ms ease, transform 150ms var(--ease-out);
+}
+.jump-rail:hover .jump-list, .jump-rail:focus-within .jump-list { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
+.jump-list button {
+  width: 100%; justify-content: flex-start; background: none; box-shadow: none; font-weight: 400; font-size: 13px;
+  color: var(--ink-2); padding: 6px 10px; border-radius: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-align: left;
+}
+.jump-list button:hover { background: var(--hover); color: var(--ink); }
+.jump-list button.current { color: var(--ink); font-weight: 550; }
+.jump-list button:active { transform: none; }
+@media (max-width: 1100px) { .jump-rail { right: 4px; } }

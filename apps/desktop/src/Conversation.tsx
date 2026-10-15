@@ -139,6 +139,7 @@ export default function Conversation({
             <SessionActions view={view} runs={runs} mode={mode} setMode={setMode} onTools={(t) => setTools(tools === t ? null : t)} onStarted={onStarted} onNew={onNew} />
           </div>
         </div>
+        <div className="conversation-wrap">
         <div className="conversation" ref={scroller} onScroll={onScroll}>
           <Lines view={view} runs={runs} onStarted={onStarted} />
           <Requests requests={mine} onAnswered={onAnswered} />
@@ -150,12 +151,71 @@ export default function Conversation({
           )}
           {!view.working && mine.length === 0 && r.state === "failed" && <p className="error">This step failed. You can reply to try again or say what to do differently.</p>}
         </div>
-        {(view.steps.length > 0 || view.subagents.length > 0) && <Progress view={view} />}
+        <JumpRail messages={view.messages} scroller={scroller} onJump={() => (pinned.current = false)} />
+        </div>
+        <Progress view={view} />
         {error && <p className="error pad">{error}</p>}
         <Composer view={view} mode={mode} onSent={() => setMode(null)} onStarted={onStarted} onNew={onNew} onSide={() => setTools("side")} />
       </div>
       {tools && <Tools view={view} side={side} tab={tools} onTab={setTools} onClose={() => setTools(null)} onStarted={onStarted} />}
     </div>
+  );
+}
+
+/** Beside the conversation, one tick per message you sent: hover for the list, click to go
+ * there (ChatGPT's way of finding your way back in a long task). */
+function JumpRail({ messages, scroller, onJump }: { messages: Message[]; scroller: React.RefObject<HTMLDivElement>; onJump: () => void }) {
+  // anchorleg's own nudges toward a goal (goal.rs) aren't something you wrote.
+  const nudge = /^The goal isn't met yet( \(.*\))?\. Keep working toward it\.$/;
+  const mine = messages.flatMap((m, i) => (m.role === "user" && !nudge.test(m.text.trim()) ? [{ i, text: m.text }] : []));
+  const [current, setCurrent] = useState<number | null>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const top = el.getBoundingClientRect().top + 80;
+      let at: number | null = null;
+      for (const row of el.querySelectorAll<HTMLElement>("[data-msg]")) {
+        if (row.getBoundingClientRect().top <= top) at = Number(row.dataset.msg);
+        else break;
+      }
+      setCurrent(at ?? mine[0]?.i ?? null);
+    };
+    const onScroll = () => (frame ||= requestAnimationFrame(update));
+    update();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, [scroller, mine.length]);
+  if (mine.length < 3) return null;
+  const jump = (i: number) => {
+    const row = scroller.current?.querySelector<HTMLElement>(`[data-msg="${i}"]`);
+    if (!row) return;
+    onJump();
+    const smooth = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    row.scrollIntoView({ block: "start", behavior: smooth ? "smooth" : "auto" });
+  };
+  return (
+    <nav className="jump-rail" aria-label="Your messages">
+      <div className="jump-ticks" aria-hidden="true">
+        {mine.map((m) => (
+          <span key={m.i} className={m.i === current ? "current" : ""} />
+        ))}
+      </div>
+      <ol className="jump-list">
+        {mine.map((m) => (
+          <li key={m.i}>
+            <button className={m.i === current ? "current" : ""} onClick={() => jump(m.i)} title={m.text}>
+              {firstLine(m.text)}
+            </button>
+          </li>
+        ))}
+      </ol>
+    </nav>
   );
 }
 
@@ -250,7 +310,7 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
       const run = runOf.get(i);
       const canRewind = run != null && run !== view.runs[0] && !view.working && (caps?.rewind ?? true);
       out.push(
-        <div key={i} className="msg-row user">
+        <div key={i} className="msg-row user" data-msg={i}>
           <MsgActions
             text={m.text}
             extra={
@@ -428,35 +488,56 @@ function Line({ m }: { m: Message }) {
   }
 }
 
+/** Above the composer: one line for the plan and the sub-agents at work, opened on a click.
+ * Finished sub-agents aren't listed here; the conversation already says what they did. */
 function Progress({ view }: { view: Session }) {
+  const [open, setOpen] = useState(false);
+  const done = view.steps.filter((s) => s.status === "done").length;
+  const now = view.steps.find((s) => s.status === "in_progress");
+  const running = view.subagents.filter((a) => !a.done);
+  const planLeft = view.steps.length > 0 && done < view.steps.length;
+  if (!planLeft && running.length === 0) return null;
   return (
-    <div className="progress">
-      {view.steps.length > 0 && (
-        <>
-          <div className="progress-title">Plan</div>
-          <ul className="steps">
-            {view.steps.map((s, i) => (
-              <li key={i} className={`step-${s.status}`}>
-                {s.status === "done" ? "✓" : s.status === "in_progress" ? "▸" : "○"} {s.text}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {view.subagents.length > 0 && (
-        <>
-          <div className="progress-title">Helpers</div>
-          <ul className="subagents">
-            {view.subagents.map((a) => (
-              <li key={a.id}>
-                {a.done ? "✓" : <span className="spinner" />} {a.name}{" "}
-                <span className="muted small">
-                  {a.steps} steps{!a.done && a.doing ? ` · ${friendly(a.doing)}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </>
+    <div className={`progress ${open ? "open" : ""}`}>
+      <button className="progress-line" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {planLeft && (
+          <span className="progress-part">
+            <span className="progress-count">
+              Plan {done}/{view.steps.length}
+            </span>
+            {now && <span className="progress-now">{now.text}</span>}
+          </span>
+        )}
+        {running.length > 0 && (
+          <span className="progress-part" data-tip="Separate agents this one started to work on parts of the task at the same time">
+            <span className="spinner" />
+            {running.length === 1 ? `1 sub-agent: ${running[0].name}` : `${running.length} sub-agents working`}
+          </span>
+        )}
+        <Icon name="chevron" size={12} />
+      </button>
+      {open && (
+        <div className="progress-detail">
+          {view.steps.length > 0 && (
+            <ul className="steps">
+              {view.steps.map((s, i) => (
+                <li key={i} className={`step-${s.status}`}>
+                  {s.status === "done" ? "✓" : s.status === "in_progress" ? "▸" : "○"} {s.text}
+                </li>
+              ))}
+            </ul>
+          )}
+          {running.length > 0 && (
+            <ul className="subagents">
+              {running.map((a) => (
+                <li key={a.id}>
+                  <span className="spinner" /> {a.name}
+                  {a.doing && <span className="muted small"> · {friendly(a.doing)}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
     </div>
   );

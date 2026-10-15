@@ -24,5 +24,15 @@ for t in "${targets[@]}"; do
   for f in "$b"/dmg/*.dmg "$b"/appimage/*.AppImage "$b"/deb/*.deb; do
     [ -f "$f" ] && cp "$f" "$out/"
   done
+  # The .app left in target/ shows up as another installed copy (Launchpad, Open With): the
+  # dmg holds it, so drop it and forget it.
+  if [ "$(uname -s)" = Darwin ]; then
+    lsr=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+    for app in "$b"/macos/*.app; do
+      [ -d "$app" ] || continue
+      [ -x "$lsr" ] && "$lsr" -u "$app" 2>/dev/null
+      rm -rf "$app"
+    done
+  fi
 done
 cd "$out" && shasum -a 256 -- * > SHA256SUMS && cat SHA256SUMS
