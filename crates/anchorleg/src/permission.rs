@@ -22,6 +22,52 @@ use serde_json::{Value, json};
 
 use crate::now;
 
+/// Claude Code's `Elicitation` hook input as Codex's `mcpServer/elicitation/request` params,
+/// which the questions are built from.
+fn elicitation_params(hook: &Value) -> Value {
+    json!({
+        "serverName": hook.get("mcp_server_name"),
+        "message": hook.get("message"),
+        "mode": hook.get("mode"),
+        "url": hook.get("url"),
+        "elicitationId": hook.get("elicitation_id"),
+        "requestedSchema": hook.get("requested_schema"),
+    })
+}
+
+/// Ask the person an MCP server's request (`hook`, Claude Code's `Elicitation` input) for run
+/// `run_id` and answer it as the hook's output. Declined when it has nothing to ask, the person
+/// skips it, or asking fails.
+fn elicit(store: &Store, run_id: i64, hook: &Value) -> Value {
+    let params = elicitation_params(hook);
+    let qs = questions::from_elicitation(&params);
+    let answers = if qs.is_empty() {
+        None
+    } else {
+        let req = AskInput {
+            run_id,
+            tool: questions::TOOL.to_owned(),
+            input: questions::to_input(&qs),
+            reason: None,
+            id: None,
+        };
+        match ask(store, &req, Duration::from_secs(u64::MAX / 4)) {
+            Ok(AskOutput {
+                decision: "allow",
+                answers: Some(answers),
+                ..
+            }) => Some(answers),
+            _ => None,
+        }
+    };
+    let mut out = match answers {
+        Some(a) => questions::elicitation_response(&params, &a),
+        None => json!({ "action": "decline" }),
+    };
+    out["hookEventName"] = "Elicitation".into();
+    json!({ "hookSpecificOutput": out })
+}
+
 /// After this long without an answer the call is refused, as the CLI would have.
 pub const GIVE_UP_SECS: i64 = 30 * 60;
 
@@ -44,6 +90,11 @@ pub enum PermissionCmd {
     /// next to the hook.
     #[command(hide = true)]
     McpAsk,
+    /// Claude Code's `Elicitation` hook (in anchorleg-mod): an MCP server's request for input,
+    /// read on stdin, put to the person as questions; prints the hook's answer. Prints nothing
+    /// outside an anchorleg run, which leaves the request to Claude Code.
+    #[command(hide = true)]
+    Elicit,
     /// List tool calls waiting for an answer.
     List {
         #[arg(long)]
@@ -133,6 +184,17 @@ pub fn run(cmd: PermissionCmd) -> anyhow::Result<()> {
                     writeln!(out, "{reply}")?;
                     out.flush()?;
                 }
+            }
+        }
+        PermissionCmd::Elicit => {
+            let mut text = String::new();
+            std::io::stdin().read_to_string(&mut text)?;
+            let run_id = std::env::var("ANCHORLEG_RUN_ID")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok());
+            let hook: Value = serde_json::from_str(&text).context("reading the request")?;
+            if let Some(out) = run_id.map(|r| elicit(&store, r, &hook)) {
+                println!("{out}");
             }
         }
         PermissionCmd::List { json } => {

@@ -750,20 +750,44 @@ pub fn interrupt_check(id: i64) -> anyhow::Result<bool> {
 }
 
 /// `anchorleg diff <run>`: the session's changes since it started.
-pub fn diff(id: i64, stat: bool) -> anyhow::Result<()> {
-    let store = Store::open(&Store::default_path()?)?;
+pub fn diff(id: i64, stat: bool, git: bool) -> anyhow::Result<()> {
+    let db = Store::default_path()?;
+    let store = Store::open(&db)?;
     let run = store
         .run(id)?
         .ok_or_else(|| anyhow::anyhow!("no run {id}"))?;
     let chain = store.session_runs(id)?;
-    match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, stat)? {
-        Some(d) if d.is_empty() => println!("no changes since #{id}'s session started"),
-        Some(d) => println!("{d}"),
-        None => anyhow::bail!(
-            "nothing to compare: {} isn't a git repository, or the session started before \
-             anchorleg recorded starts",
-            run.cwd
-        ),
+    if git {
+        match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, stat)? {
+            Some(d) if d.is_empty() => println!("no changes since #{id}'s session started"),
+            Some(d) => println!("{d}"),
+            None => anyhow::bail!(
+                "nothing to compare: {} isn't a git repository, or the session started before \
+                 anchorleg recorded starts",
+                run.cwd
+            ),
+        }
+        return Ok(());
+    }
+    // What the CLIs reported changing, in any folder.
+    let changes = anchorleg_core::changes::session(&db.with_file_name("runs"), &chain);
+    if changes.is_empty() {
+        println!("#{id}'s session reported no file changes");
+    } else if stat {
+        for c in &changes {
+            let path = anchorleg_core::changes::relative(&c.path, &run.cwd);
+            let counts = if c.has_diff {
+                format!("+{} -{}", c.added, c.removed)
+            } else {
+                "(no diff reported)".to_owned()
+            };
+            println!(
+                "{:<8} {counts:<12} {path}",
+                format!("{:?}", c.kind).to_lowercase()
+            );
+        }
+    } else {
+        print!("{}", anchorleg_core::changes::unified(&changes, &run.cwd));
     }
     Ok(())
 }

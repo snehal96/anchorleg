@@ -401,6 +401,95 @@ fn a_json_schema_brings_the_answer_back_as_structured_output() {
 }
 
 #[test]
+fn an_mcp_servers_request_in_a_claude_run_goes_to_the_person() {
+    use std::io::Write;
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "done"));
+    let std_cmd = |args: &[&str]| {
+        let mut c = std::process::Command::new(assert_cmd::cargo::cargo_bin("anchorleg"));
+        c.args(args)
+            .env("ANCHORLEG_CONFIG", env.path("config.toml"))
+            .env("ANCHORLEG_HOME", env.path("home"))
+            .env("ANCHORLEG_NOTIFY_LOG", env.path("notify.log"))
+            .env("HOME", env.path("userhome"))
+            .env("FAKE_DIR", env.path("fake"))
+            .env("FAKE_LOG", env.path("fake.log"));
+        c
+    };
+    // What Claude Code gives the mod's `Elicitation` hook (fixture claude-2.1.300-elicitation).
+    let hook = serde_json::json!({
+        "hook_event_name": "Elicitation", "mcp_server_name": "colors",
+        "message": "Which color do you like?", "mode": "form",
+        "requested_schema": { "type": "object", "required": ["color"],
+            "properties": { "color": { "type": "string", "title": "Color" } } } });
+    let elicit = |run: Option<&str>| {
+        let mut c = std_cmd(&["permission", "elicit"]);
+        c.env_remove("ANCHORLEG_RUN_ID");
+        if let Some(r) = run {
+            c.env("ANCHORLEG_RUN_ID", r);
+        }
+        let mut child = c
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(child.stdin.take().unwrap(), "{hook}").unwrap();
+        child
+    };
+    // Outside an anchorleg run it says nothing: Claude Code handles the request itself.
+    let out = elicit(None).wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let work = env.path("work");
+    let mut run = std_cmd(&["run", "--json", "--cwd", work.to_str().unwrap(), "--", "go"])
+        .env("FAKE_SLEEP", "30")
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(60) {
+        let out = std_cmd(&["sessions", "--json"]).output().unwrap();
+        if String::from_utf8_lossy(&out.stdout).contains("running") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let child = elicit(Some("1"));
+    let start = std::time::Instant::now();
+    let id = loop {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "never asked"
+        );
+        let out = std_cmd(&["permission", "list", "--json"]).output().unwrap();
+        let pending: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+        if let Some(id) = pending.get(0).and_then(|p| p["id"].as_i64()) {
+            assert!(pending.to_string().contains("Which color"), "{pending}");
+            break id;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let answered = std_cmd(&["permission", "answer", &id.to_string(), "teal"])
+        .output()
+        .unwrap();
+    assert!(answered.status.success(), "{answered:?}");
+    let out = child.wait_with_output().unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        reply,
+        serde_json::json!({ "hookSpecificOutput": { "hookEventName": "Elicitation",
+            "action": "accept", "content": { "color": "teal" } } })
+    );
+    std_cmd(&["stop", "1"]).output().unwrap();
+    run.wait().unwrap();
+}
+
+#[test]
 fn agys_question_tool_puts_questions_to_the_person() {
     use std::io::{BufRead, BufReader, Write};
     let env = Env::new(&["a"]);
@@ -1289,6 +1378,25 @@ fn claude_usage(session: u32, week: u32) -> String {
 }
 
 #[test]
+fn claudes_suggested_next_prompt_reaches_the_run_log() {
+    let env = Env::new(&["a"]);
+    // Claude prints the suggestion after the turn's result.
+    let script = format!(
+        "{}{}\n",
+        ok("s1", "add subtracts"),
+        r#"{"type":"prompt_suggestion","suggestion":"fix the add function"}"#
+    );
+    env.script("a.jsonl", &script);
+    let (code, r) = env.run(&[]);
+    assert_eq!(code, 0, "{r}");
+    let log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert_eq!(
+        anchorleg_core::conversation::suggestion(&log).as_deref(),
+        Some("fix the add function")
+    );
+}
+
+#[test]
 fn live_claude_quota_sees_use_from_outside_anchorleg() {
     let env = Env::new(&["a", "b"]);
     // a's week was used up in an interactive session anchorleg never saw.
@@ -1313,6 +1421,50 @@ fn live_claude_quota_sees_use_from_outside_anchorleg() {
     // Accounts are asked in parallel, in no set order.
     let count = |name: &str| asked.lines().filter(|l| *l == name).count();
     assert_eq!((count("a"), count("b")), (2, 1), "{asked}");
+}
+
+#[test]
+fn the_diff_is_what_the_cli_reported_in_any_folder() {
+    let env = Env::mixed(&[("c", "codex")]);
+    let work = env.path("work");
+    let change = format!(
+        r#"{{"method":"item/completed","params":{{"threadId":"t1","item":{{"type":"fileChange","id":"f1","status":"completed","changes":[{{"path":"{}/a.txt","kind":{{"type":"update"}},"diff":"@@ -1 +1 @@\n-old\n+new\n"}},{{"path":"{}/notes.md","kind":{{"type":"add"}},"diff":"hello\n"}}]}}}}}}"#,
+        work.display(),
+        work.display()
+    );
+    let script = codex_ok("t1", "changed it");
+    let (first, rest) = script.split_once('\n').unwrap();
+    env.script("c.jsonl", &format!("{first}\n{change}\n{rest}"));
+    // `work` isn't a git repository.
+    assert_eq!(env.run(&[]).0, 0);
+    let out = env.anchorleg().args(["diff", "1"]).output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        text.starts_with("--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,1 @@\n+hello"),
+        "{text}"
+    );
+    let out = env
+        .anchorleg()
+        .args(["diff", "1", "--stat"])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("modified +1 -1") && text.contains("created  +1 -0"),
+        "{text}"
+    );
+    // `--git` needs a git folder.
+    let out = env
+        .anchorleg()
+        .args(["diff", "1", "--git"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
 }
 
 #[test]
@@ -3052,4 +3204,104 @@ fn a_missing_extra_folder_is_refused_before_anything_runs() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(env.launches().is_empty());
+}
+
+#[test]
+fn sessions_started_in_the_clis_are_imported_and_can_be_continued() {
+    let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
+    let work = env.path("work").canonicalize().unwrap();
+    let w = work.display();
+    let transcript = [
+        format!(r#"{{"type":"user","sessionId":"s1","cwd":"{w}","timestamp":"2026-10-01T10:00:00Z","message":{{"content":"fix the build"}}}}"#),
+        r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-10-01T10:00:05Z","message":{"content":[{"type":"text","text":"Fixed it."}]}}"#.to_owned(),
+        r#"{"type":"custom-title","customTitle":"build fix","sessionId":"s1"}"#.to_owned(),
+    ]
+    .join("\n");
+    std::fs::create_dir_all(env.path("cfg/a/projects/-w")).unwrap();
+    std::fs::write(env.path("cfg/a/projects/-w/s1.jsonl"), transcript).unwrap();
+    let rollout = [
+        format!(r#"{{"timestamp":"2026-10-01T09:00:00Z","type":"session_meta","payload":{{"id":"th1","cwd":"{w}"}}}}"#),
+        r#"{"timestamp":"2026-10-01T09:00:01Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"add a test"}]}}}"#.to_owned(),
+        r#"{"timestamp":"2026-10-01T09:00:02Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"text","text":"Added."}]}}}"#.to_owned(),
+    ]
+    .join("\n");
+    std::fs::create_dir_all(env.path("cfg/c/sessions/2026/10/01")).unwrap();
+    std::fs::write(
+        env.path("cfg/c/sessions/2026/10/01/rollout-2026-10-01T09-00-00-th1.jsonl"),
+        rollout,
+    )
+    .unwrap();
+
+    // Temporary folders are left out unless asked for.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "import", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("would import 0 sessions"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let out = env
+        .anchorleg()
+        .args(["sessions", "import", "--include-temp", "--json"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let sessions = r["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2, "{r}");
+    // Oldest first: Codex's started an hour earlier.
+    assert_eq!(
+        (
+            sessions[0]["session_id"].as_str(),
+            sessions[0]["account"].as_str()
+        ),
+        (Some("th1"), Some("c"))
+    );
+    assert_eq!(sessions[1]["name"], "build fix");
+    let claude_run = sessions[1]["run_id"].as_i64().unwrap();
+
+    let out = env
+        .anchorleg()
+        .args(["sessions", "show", &claude_run.to_string(), "--json"])
+        .output()
+        .unwrap();
+    let show: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let texts: Vec<&str> = show["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["text"].as_str())
+        .collect();
+    assert!(
+        texts.contains(&"fix the build") && texts.contains(&"Fixed it."),
+        "{texts:?}"
+    );
+
+    // Importing again finds nothing new.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "import", "--include-temp", "--json"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        (
+            r["sessions"].as_array().unwrap().len(),
+            r["skipped"]["known"].as_i64()
+        ),
+        (0, Some(2)),
+        "{r}"
+    );
+
+    // A follow-up continues the CLI's own session.
+    env.script("a.jsonl", &ok("s1", "continued"));
+    assert_eq!(env.run(&["--follow-up", &claude_run.to_string()]).0, 0);
+    assert!(
+        env.launches()[0].contains("--resume s1"),
+        "{:?}",
+        env.launches()
+    );
 }

@@ -24,7 +24,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
-| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
+| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` · `import [--account A] [--since 30d] [--cwd DIR] [--include-temp] [--dry-run] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
 | `anchorleg rules [--add RULE]… [--rm RULE]… [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
@@ -69,6 +69,10 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
   - `/compact` summarises a finished session to free its context: Claude Code runs its own
     `/compact`, Codex gets `thread/compact/start`, Antigravity expands its own `/compact`. The
     conversation notes it (with the token counts Claude reports).
+  - `/context` and `/init`: Claude Code runs its own (`/context` costs no request). Codex has
+    them only in its own app, so for a Codex session anchorleg shows how full the context is
+    (from the last token count) and sends `/init` as the request it stands for: write or
+    improve an `AGENTS.md`.
 - **Shell commands**: `!cmd` runs `cmd` with `sh` in the task folder (up to 60 s) and shows its
   output in the conversation. Nothing goes to the agent yet: the output (up to 8 KB) is put in
   front of the next message you send in that folder, as Claude Code does with `!`.
@@ -270,14 +274,24 @@ conversation resumed with the message. Either way the session then continues wit
 delivered yet show in the conversation as `(queued)`. A session that isn't working takes a
 normal reply (`anchorleg run --follow-up <run>`).
 
-### What a session changed: `anchorleg diff`
+### What a session changed: `anchorleg diff`, and the Changes and Files panel
 
-Every run saves its folder as it found it, as a local ref `refs/anchorleg/run-<id>/start` (never
-pushed; your branch, index and stash are untouched). `anchorleg diff <run>` shows what changed
-since the session's first run started, new files included and your own earlier uncommitted
-changes left out; `--stat` lists files and line counts. In `anchorleg ui`, **v** shows the same
-for the selected session (↑↓ PgUp PgDn scroll, any other key closes). Sessions from before this
-version have no start to compare with.
+`anchorleg diff <run>` shows every file the session changed, as the CLIs reported it, in any
+folder (git or not): Claude Code's edits and new files, Codex's file changes, and the files
+Antigravity names (agy sends no diff, so those show without one). `--stat` lists each file with
+`created` / `modified` / `deleted` and its line counts. Changes made by shell commands
+(`sed -i`, a code generator) aren't reported by the CLIs; in a git folder, `anchorleg diff <run>
+--git` compares the folder with how the session found it and catches those too.
+
+In `anchorleg ui`, **v** opens the **Changes** panel on the right half (closed by default): the
+files with their line counts, and under them the selected file's diff (↑↓ file, PgUp PgDn
+scroll, ←→ switch tab, Esc or **v** closes). **f**, or the **Files (n) ▾** button on the
+conversation, opens its **Files** tab: the files the session created (docs, reports, images,
+code), with a look at what's in each; Enter (or **Open**) opens the file in the app your system
+picks.
+
+Every run also saves its folder as it found it, as a local ref `refs/anchorleg/run-<id>/start`
+(never pushed; your branch, index and stash are untouched); `--git` and undo use it.
 
 `anchorleg undo <run>` puts every file the session changed back the way the session found it and
 removes the files it created (**U U** in the UI). Without `--yes` it only lists them. Only the
@@ -399,6 +413,11 @@ session's; its answer is shown as the output of the call that started or waited 
 untracked, not ignored); **Tab** puts the path in. **Ctrl+P** / **Ctrl+N** (or **↑** in an empty
 box with a session selected) bring back earlier messages: the session's own, or, for a new task,
 the ones sent from this UI.
+
+**Suggested next message.** With Claude Code's prompt suggestions on
+(`anchorleg settings claude --args "--prompt-suggestions=true"`), Claude guesses your next message
+after each turn; in an empty reply box it shows as a suggestion, and **Tab** puts it in. Each
+guess is an extra small model request on the account, so it's off unless you turn it on.
 
 ### Permission mode per session: `--mode`
 
@@ -656,12 +675,12 @@ Codex also asks before every **MCP tool call**; that shows up as `mcp__<server>_
 its arguments. A request for more sandbox access shows up as `Permissions  network · write
 /path`; yes grants it for the current turn.
 
-**MCP prompts (Codex).** When an MCP server asks for input (a form, or a link to open, e.g. to
+**MCP prompts (Claude Code and Codex).** When an MCP server asks for input (a form, or a link to open, e.g. to
 sign in), it arrives as a question: one per form field, with its choices numbered (Yes / No for
 a yes/no field), or "Done" / "Decline" for a link. Skipping declines it. Fields named like a
 password, token or API key are treated as secrets: anchorleg doesn't pass them (answer `-`).
-Claude Code's MCP prompts can't be answered from a mod yet, so in `-p` they are declined as
-before.
+For Claude Code, anchorleg-mod carries an `Elicitation` hook that hands the request to
+`anchorleg permission elicit`; outside an anchorleg run it does nothing.
 
 **Antigravity (under development).** Headless agy can't ask either, and its hooks can refuse a call but not approve
 one. So for an agy account with its own `HOME` (`--cmd "HOME=~/.agy-2 agy"`), anchorleg adds an
@@ -778,6 +797,27 @@ With `--goal`, `--budget` or `--json-schema` the report also has `goal`, `budget
 `available`, `in_use` or `unlimited`. `used` is a fraction 0–1 and may be `null` (Claude often omits it).
 `source` is `stream` (CLI events), `mod` (exact, from anchorleg-mod) or `manual`.
 
+## `anchorleg sessions import`
+
+Brings in sessions you started in the CLIs themselves, from every account, so they show in
+`anchorleg sessions`, `anchorleg ui` and the desktop app, and a follow-up (`run --follow-up RUN`)
+continues them on any account. It reads what each CLI keeps on disk: Claude Code's transcripts
+(`<config dir>/projects/*/<id>.jsonl`) and Codex's rollout files (`$CODEX_HOME/sessions/`).
+Antigravity keeps no readable transcript, so its sessions aren't imported.
+
+Each session becomes one finished run: its first message is the task, Claude Code's title its
+name, and its conversation is shown as if anchorleg had run it (tool outputs are cut to 4k
+characters). Left out: sessions anchorleg already has (importing twice adds nothing), sessions
+whose folder is gone, sessions in temporary folders (`--include-temp` brings them in), sessions
+used in the last 5 minutes (they may still be open), a Codex subagent's own thread, and sessions
+nobody answered. A session anchorleg copied into several accounts is imported once, from the
+latest copy. `--dry-run` lists them; `--since` takes `24h`, `7d`, `4w` or `all` (default `30d`).
+
+`--json` → `{"schema": 1, "dry_run", "sessions": [{"run_id", "vendor", "account", "session_id",
+"cwd", "task", "name", "started_at", "ended_at", "prompts"}], "skipped": {"known",
+"folder_gone", "other_folder", "temporary_folder", "in_use"}, "not_importable": [accounts]}`;
+`run_id` is `null` with `--dry-run`.
+
 ## `anchorleg sessions show <run> --json` → session
 
 One session (the run and the runs it follows up, oldest first) as `anchorleg ui` shows it:
@@ -796,13 +836,20 @@ One session (the run and the runs it follows up, oldest first) as `anchorleg ui`
   "subagents": [{ "id": "t1", "name": "find the flaky test", "done": false, "steps": 3, "doing": "Read  src/lib.rs" }],
   "steps": [{ "text": "Fix the build", "status": "done" }],
   "context": { "tokens": 50401, "window": 1000000 },
-  "slash_commands": ["compact", "..."]
+  "slash_commands": ["compact", "..."],
+  "suggestion": "fix the add function",
+  "changes": [{ "path": "/w/src/calc.py", "kind": "modified", "diff": "@@ -1,2 +1,2 @@\n…",
+               "added": 1, "removed": 1, "has_diff": true }]
 }
 ```
 
 `role` is `user`, `agent`, `tool`, `tool_error`, `output`, `thinking`, `anchorleg` or `error`.
 `working` is true while the run's process is alive. `steps[].status` is `pending`, `in_progress`
 or `done`. `context.window` and `slash_commands` are `null` when the CLI didn't report them.
+`suggestion` is Claude's guess at your next message (prompt suggestions on), else `null`.
+`changes` is every file the session changed as its CLIs reported it (as `anchorleg diff`):
+`kind` is `created`, `modified` or `deleted`; `has_diff` is false when the CLI named the file
+but sent no diff (Antigravity).
 To poll, pass the last `next` as `--since`, and replace your copy from index `since` onward
 (the last message can still grow while the agent works). `schema` changes only when a field
 changes meaning.

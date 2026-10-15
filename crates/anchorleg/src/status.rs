@@ -246,6 +246,11 @@ pub fn show_session(id: i64, since: usize, json: bool) -> anyhow::Result<()> {
             "steps": view.steps,
             "context": { "tokens": view.context_tokens, "window": view.context_window },
             "slash_commands": slash,
+            "suggestion": view.suggestion,
+            "changes": anchorleg_core::changes::session(
+                &log_dir,
+                &runs.iter().map(|r| r.id).collect::<Vec<_>>()
+            ),
         });
         println!("{}", serde_json::to_string_pretty(&out)?);
         return Ok(());

@@ -815,7 +815,11 @@ fn exec_item(item: &Value) -> Option<Value> {
                         .or_else(|| c.get("kind"))
                         .and_then(Value::as_str)
                         .unwrap_or("update");
-                    json!({ "path": c.get("path").cloned().unwrap_or_default(), "kind": kind })
+                    json!({
+                        "path": c.get("path").cloned().unwrap_or_default(),
+                        "kind": kind,
+                        "diff": c.get("diff").cloned().unwrap_or_default(),
+                    })
                 })
                 .collect();
             Some(json!({ "id": id, "type": "file_change", "changes": changes, "status": status }))
@@ -1298,6 +1302,19 @@ pub(crate) mod tests {
 
     const AUTO_REVIEW: &str =
         include_str!("../../../../fixtures/codex-0.153.4-auto-review-20261012/auto-review.jsonl");
+
+    #[test]
+    fn a_file_changes_diffs_reach_the_log() {
+        let events = translate(ACCEPT);
+        let change = events
+            .iter()
+            .find(|e| e["type"] == "item.completed" && e["item"]["type"] == "file_change")
+            .expect("a file change");
+        let c = crate::changes::from_log(&format!("{change}\n"));
+        assert_eq!(c.len(), 1, "{change}");
+        assert!(c[0].path.ends_with("out.txt"));
+        assert!(c[0].added > 0, "{c:?}");
+    }
 
     #[test]
     fn a_turns_budget_tokens_count_cache_reads_at_a_tenth() {

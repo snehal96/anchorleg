@@ -1,0 +1,210 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/claude-2.1.300-prompt-suggestion-20261015/stream.jsonl
+---
+[
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01KPFVa9iM1AcA6osGzi5oRm",
+            "input": {
+              "file_path": "/tmp/scratch/suggest/calc.py"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "e42e4475-6f10-4652-8508-6673c3589639"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "org_level_disabled",
+      "overageStatus": "rejected",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1792060200,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1792060200,
+          "status": null,
+          "utilization": 0.23
+        },
+        "seven_day": {
+          "resetsAt": 1792364400,
+          "status": null,
+          "utilization": 0.62
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1792060200,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.23,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1792364400,
+        "signal": "quota",
+        "status": null,
+        "used": 0.62,
+        "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "org_level_disabled",
+        "signal": "credits",
+        "state": "off"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "e42e4475-6f10-4652-8508-6673c3589639"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "`add` returns `a - b` (subtraction) instead of `a + b`, so `add(2, 3)` gives `-1` rather than `5`.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "e42e4475-6f10-4652-8508-6673c3589639"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 3089,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 15049,
+          "cacheReadInputTokens": 36273,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.003489430000000001,
+          "inputTokens": 4,
+          "maxOutputTokens": 128000,
+          "outputTokens": 233,
+          "provider": "firstParty",
+          "thinkingTokens": 53,
+          "webSearchRequests": 0
+        }
+      },
+      "num_turns": 2,
+      "result": "`add` returns `a - b` (subtraction) instead of `a + b`, so `add(2, 3)` gives `-1` rather than `5`.",
+      "session_id": "e42e4475-6f10-4652-8508-6673c3589639",
+      "subtype": "success",
+      "total_cost_usd": 0.003489430000000001,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 15049,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 15049,
+        "cache_read_input_tokens": 36273,
+        "fallback_credit": null,
+        "inference_geo": "global",
+        "input_tokens": 4,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 2228,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 2228,
+            "cache_read_input_tokens": 24547,
+            "input_tokens": 2,
+            "output_tokens": 103,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 233,
+        "output_tokens_details": {
+          "thinking_tokens": 53
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
+    },
+    "signals": [
+      {
+        "cache_read_tokens": 36273,
+        "cache_write_tokens": 15049,
+        "cost_usd": 0.003489430000000001,
+        "input_tokens": 4,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 233,
+        "signal": "usage"
+      },
+      {
+        "ok": true,
+        "session_id": "e42e4475-6f10-4652-8508-6673c3589639",
+        "signal": "finished",
+        "text": "`add` returns `a - b` (subtraction) instead of `a + b`, so `add(2, 3)` gives `-1` rather than `5`."
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "prompt_suggestion"
+    },
+    "signals": []
+  }
+]

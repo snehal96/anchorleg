@@ -315,6 +315,17 @@ impl Account {
 
     /// Where this Codex account keeps its login and sessions: the account's `CODEX_HOME`, else
     /// `~/.codex`. `None` for `shell` accounts and other vendors.
+    /// The config folder this Claude Code account runs with (its sessions are under it).
+    pub fn claude_dir(&self, home: &Path) -> Option<PathBuf> {
+        if self.vendor != Vendor::Claude || self.shell.is_some() {
+            return None;
+        }
+        Some(match self.env.get("CLAUDE_CONFIG_DIR") {
+            Some(dir) => PathBuf::from(expand_tilde(dir, home)),
+            None => home.join(".claude"),
+        })
+    }
+
     pub fn codex_home(&self, home: &Path) -> Option<PathBuf> {
         if self.vendor != Vendor::Codex || self.shell.is_some() {
             return None;

@@ -1,4 +1,5 @@
 mod accounts;
+mod import;
 mod permission;
 mod run;
 mod settings;
@@ -33,6 +34,28 @@ enum SessionsCmd {
         /// Only messages from this index on (the `next` of an earlier `--json` call), for polling.
         #[arg(long, default_value_t = 0)]
         since: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Bring in sessions started in the CLIs themselves (Claude Code, Codex), from every
+    /// account: they show in `anchorleg sessions` and the apps, and a follow-up continues them
+    /// on any account. Sessions anchorleg already has, or whose folder is gone, are skipped.
+    Import {
+        /// Only this account's sessions.
+        #[arg(long, value_name = "ACCOUNT")]
+        account: Option<String>,
+        /// Only sessions active in this window: e.g. 24h, 7d, 4w or all.
+        #[arg(long, default_value = "30d", value_parser = usage::parse_since)]
+        since: i64,
+        /// Only sessions in this folder or below it.
+        #[arg(long, value_name = "DIR")]
+        cwd: Option<PathBuf>,
+        /// List what would be imported; change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Also sessions in temporary folders (`/tmp`, `$TMPDIR`), skipped by default.
+        #[arg(long)]
+        include_temp: bool,
         #[arg(long)]
         json: bool,
     },
@@ -161,12 +184,16 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// What a session changed in its folder since it started (new files included), as a diff.
+    /// What a session changed, as the CLIs reported it (any folder, git or not), as a diff.
     Diff {
         run: i64,
         /// Only the files and line counts.
         #[arg(long)]
         stat: bool,
+        /// Compare the folder with how the session found it (git folders): also catches
+        /// changes made by shell commands, which the CLIs don't report.
+        #[arg(long)]
+        git: bool,
     },
     /// Put back every file a session changed since it started (files it created are removed).
     /// Without --yes it only shows what would change. A backup is kept: --redo brings it back.
@@ -575,7 +602,7 @@ fn main() -> ExitCode {
             yes,
             json,
         }) => sync::mcp(with_env, yes, json),
-        Command::Diff { run, stat } => run::diff(run, stat),
+        Command::Diff { run, stat, git } => run::diff(run, stat, git),
         Command::Undo {
             run,
             yes,
@@ -593,6 +620,25 @@ fn main() -> ExitCode {
             show: Some(SessionsCmd::Show { run, since, json }),
             ..
         } => status::show_session(run, since, json),
+        Command::Sessions {
+            show:
+                Some(SessionsCmd::Import {
+                    account,
+                    since,
+                    cwd,
+                    dry_run,
+                    include_temp,
+                    json,
+                }),
+            ..
+        } => import::run(import::Options {
+            account,
+            since,
+            cwd,
+            dry_run,
+            json,
+            include_temp,
+        }),
         Command::Sessions {
             show: None,
             json,
