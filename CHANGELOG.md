@@ -6,6 +6,9 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- anchorleg-mod carries anchorleg's version instead of staying at 0.1.0 (set at the next release).
+
 ## [0.8.0] — 2026-10-15
 
 ### Added
