@@ -70,6 +70,11 @@ export type Role = "user" | "agent" | "tool" | "tool_error" | "output" | "thinki
 export interface Message {
   role: Role;
   text: string;
+  /** The run the message is from. */
+  run?: number;
+  /** Where the session can go back to (before a message you sent) or fork from (after the
+   * reply that ended a turn); `anchorleg rewind RUN --at`. */
+  at?: string;
 }
 
 /** `anchorleg sessions show <run> --json` (docs/CLI.md). */
@@ -117,6 +122,8 @@ export interface Start {
   btw?: number;
   /** Go back to before that run (conversation and files, unless `keep_files`). */
   rewind?: number;
+  /** With `rewind` or `fork`: a point inside that run (a message's `at`). */
+  at?: string;
   keep_files?: boolean;
   /** Review that session's changes on another account; `fix` sends the findings back. */
   review?: number;

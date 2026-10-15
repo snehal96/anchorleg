@@ -183,8 +183,9 @@ export function RewindDialog({
   runs: Run[];
   onClose: () => void;
   onStarted: (run: number) => void;
-  /** Opened from a message: go back to before its run, maybe with its text to edit. */
-  initial?: { to?: number; message?: string; title?: string };
+  /** Opened from a message: go back to before its run (or to its point `at` inside run `to`),
+   * maybe with its text to edit. */
+  initial?: { to?: number; at?: string; message?: string; title?: string };
 }) {
   // Going back to before the first run would be a new task; every later run is a point to go back to.
   const points = view.runs.slice(1);
@@ -193,20 +194,27 @@ export function RewindDialog({
   const [message, setMessage] = useState(initial?.message ?? "");
   const { busy, error, act } = useAct(onClose);
   const task = (id: number) => runs.find((r) => r.id === id)?.task.split("\n")[0] ?? `#${id}`;
-  const ok = () => act(async () => onStarted((await start({ text: message.trim(), rewind: to, keep_files: keepFiles })).run_id));
+  const at = initial?.at;
+  const ok = () => act(async () => onStarted((await start({ text: message.trim(), rewind: to, at, keep_files: keepFiles })).run_id));
   return (
     <Modal title={initial?.title ?? "Go back to an earlier point"} onClose={onClose}>
-      <p className="muted small">The conversation goes back to just before the message you pick, and so do the project's files (unless you keep them). Then the agent goes on from there with your new message.</p>
-      <Field label="Go back to before">
-        <select value={to} onChange={(e) => setTo(Number(e.target.value))}>
-          {points.map((id) => (
-            <option key={id} value={id}>
-              “{task(id).slice(0, 70)}”
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Switch checked={keepFiles} onChange={setKeepFiles} label="Keep the files as they are now" hint="Only the conversation goes back." />
+      {at ? (
+        <p className="muted small">The conversation goes back to just before this message and goes on from there with what you send. The files stay as they are; the old conversation is kept.</p>
+      ) : (
+        <>
+          <p className="muted small">The conversation goes back to just before the message you pick, and so do the project's files (unless you keep them). Then the agent goes on from there with your new message.</p>
+          <Field label="Go back to before">
+            <select value={to} onChange={(e) => setTo(Number(e.target.value))}>
+              {points.map((id) => (
+                <option key={id} value={id}>
+                  “{task(id).slice(0, 70)}”
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Switch checked={keepFiles} onChange={setKeepFiles} label="Keep the files as they are now" hint="Only the conversation goes back." />
+        </>
+      )}
       <Field label="Then tell the agent">
         <textarea autoFocus={initial?.to != null} rows={3} value={message} placeholder="e.g. Let's try a simpler approach" onChange={(e) => setMessage(e.target.value)} />
       </Field>
@@ -215,13 +223,26 @@ export function RewindDialog({
   );
 }
 
-export function ForkDialog({ view, onClose, onStarted }: { view: Session; onClose: () => void; onStarted: (run: number) => void }) {
+export function ForkDialog({
+  view,
+  from,
+  onClose,
+  onStarted,
+}: {
+  view: Session;
+  /** Fork from this point (a reply's `at` in run `run`) instead of where the session is now. */
+  from?: { run: number; at: string };
+  onClose: () => void;
+  onStarted: (run: number) => void;
+}) {
   const [message, setMessage] = useState("");
   const { busy, error, act } = useAct(onClose);
-  const ok = () => act(async () => onStarted((await start({ text: message.trim(), fork: view.run.id })).run_id));
+  const ok = () => act(async () => onStarted((await start({ text: message.trim(), fork: from?.run ?? view.run.id, at: from?.at })).run_id));
   return (
     <Modal title="Try another direction" onClose={onClose}>
-      <p className="muted small">A new task that knows everything this one does so far. This task stays as it is, so you can compare.</p>
+      <p className="muted small">
+        {from ? "A new task that knows everything up to this reply." : "A new task that knows everything this one does so far."} This task stays as it is, so you can compare.
+      </p>
       <Field label="What should the new task do?">
         <textarea autoFocus rows={3} value={message} placeholder="e.g. Try it with a different library" onChange={(e) => setMessage(e.target.value)} />
       </Field>

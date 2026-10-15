@@ -264,7 +264,7 @@ export function friendly(what: string): string {
 /** A note from anchorleg, or a hook's output: shown only when asked for. */
 const isNote = (m: Message) => m.role === "anchorleg" || (m.role === "thinking" && m.text.startsWith("hook "));
 
-type MsgDialog = { kind: "rewind"; to: number; message: string; title: string } | { kind: "fork" } | null;
+type MsgDialog = { kind: "rewind"; to: number; at?: string; message: string; title: string } | { kind: "fork"; from?: { run: number; at: string } } | null;
 
 /** Tool calls are grouped with their output, which opens on a click; notes in a row fold into one line. */
 function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarted: (run: number) => void }) {
@@ -307,8 +307,10 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
       const live = view.working && i === messages.length - 1;
       out.push(steps.length === 1 ? <Step key={first} what={steps[0].what} result={steps[0].result} /> : <Steps key={first} steps={steps} live={live} />);
     } else if (m.role === "user") {
-      const run = runOf.get(i);
-      const canRewind = run != null && run !== view.runs[0] && !view.working && (caps?.rewind ?? true);
+      // A point inside the run (any message, imported sessions too), else before the run it
+      // started (not the session's first).
+      const point = m.at && m.run != null ? { to: m.run, at: m.at } : runOf.get(i) != null && runOf.get(i) !== view.runs[0] ? { to: runOf.get(i)!, at: undefined } : null;
+      const canRewind = point != null && !view.working && (caps?.rewind ?? true);
       out.push(
         <div key={i} className="msg-row user" data-msg={i}>
           <MsgActions
@@ -316,8 +318,8 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
             extra={
               canRewind
                 ? [
-                    { icon: "pencil", tip: "Edit and send again", onClick: () => setDialog({ kind: "rewind", to: run, message: m.text, title: "Edit and send again" }) },
-                    { icon: "back", tip: "Go back to before this message", onClick: () => setDialog({ kind: "rewind", to: run, message: "", title: "Go back to before this message" }) },
+                    { icon: "pencil", tip: "Edit and send again", onClick: () => setDialog({ kind: "rewind", ...point, message: m.text, title: "Edit and send again" }) },
+                    { icon: "back", tip: "Go back to before this message", onClick: () => setDialog({ kind: "rewind", ...point, message: "", title: "Go back to before this message" }) },
                   ]
                 : []
             }
@@ -333,7 +335,15 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
           </div>
           <MsgActions
             text={m.text}
-            extra={i === lastAgent && (caps?.fork ?? true) ? [{ icon: "fork", tip: "Try another direction from here", onClick: () => setDialog({ kind: "fork" }) }] : []}
+            extra={
+              !(caps?.fork ?? true) || view.working
+                ? []
+                : m.at && m.run != null
+                  ? [{ icon: "fork", tip: "Try another direction from here", onClick: () => setDialog({ kind: "fork", from: { run: m.run!, at: m.at! } }) }]
+                  : i === lastAgent
+                    ? [{ icon: "fork", tip: "Try another direction from here", onClick: () => setDialog({ kind: "fork" }) }]
+                    : []
+            }
           />
         </div>,
       );
@@ -343,9 +353,9 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
     <>
       {out}
       {dialog?.kind === "rewind" && (
-        <RewindDialog view={view} runs={runs} onClose={() => setDialog(null)} onStarted={onStarted} initial={{ to: dialog.to, message: dialog.message, title: dialog.title }} />
+        <RewindDialog view={view} runs={runs} onClose={() => setDialog(null)} onStarted={onStarted} initial={{ to: dialog.to, at: dialog.at, message: dialog.message, title: dialog.title }} />
       )}
-      {dialog?.kind === "fork" && <ForkDialog view={view} onClose={() => setDialog(null)} onStarted={onStarted} />}
+      {dialog?.kind === "fork" && <ForkDialog view={view} from={dialog.from} onClose={() => setDialog(null)} onStarted={onStarted} />}
     </>
   );
 }

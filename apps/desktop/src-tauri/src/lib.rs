@@ -54,6 +54,8 @@ struct Start {
     fork: Option<i64>,
     btw: Option<i64>,
     rewind: Option<i64>,
+    /// With `rewind` or `fork`: a point inside that run (a message's `at`).
+    at: Option<String>,
     keep_files: bool,
     review: Option<i64>,
     fix: bool,
@@ -103,6 +105,7 @@ impl Start {
         opt("--fork", self.fork.map(|i| i.to_string()));
         opt("--btw", self.btw.map(|i| i.to_string()));
         opt("--rewind", self.rewind.map(|i| i.to_string()));
+        opt("--at", self.at);
         opt("--review", self.review.map(|i| i.to_string()));
         opt("--goal", self.goal);
         opt("--mode", self.mode);
