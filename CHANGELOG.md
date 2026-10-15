@@ -8,6 +8,8 @@ All notable changes are listed here. The format follows
 
 ### Changed
 - anchorleg-mod carries anchorleg's version instead of staying at 0.1.0 (set at the next release).
+- anchorleg-mod has its own README (what it does, what it runs and sends) and license files, for
+  plugin directories.
 
 ## [0.8.0] — 2026-10-15
 

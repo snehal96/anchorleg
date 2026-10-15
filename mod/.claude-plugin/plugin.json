@@ -2,5 +2,9 @@
   "name": "anchorleg-mod",
   "version": "0.8.0",
   "description": "Reports exact quota to anchorleg and stops cleanly between model requests when an account runs low.",
-  "author": { "name": "anchorleg" }
+  "author": {
+    "name": "anchorleg"
+  },
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://github.com/snehal96/anchorleg"
 }
