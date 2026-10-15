@@ -150,7 +150,16 @@ function Sidebar({
         )}
       </div>
       {error && <p className="error pad">{error}</p>}
-      {!runs && !error && <p className="muted pad">Loading…</p>}
+      {!runs && !error && (
+        <div className="skeleton-list" aria-label="Loading tasks" role="status">
+          {[72, 54, 64, 46].map((w, i) => (
+            <div key={i} className="skeleton-row">
+              <span className="skeleton" style={{ width: `${w}%` }} />
+              <span className="skeleton short" />
+            </div>
+          ))}
+        </div>
+      )}
       {runs && list.length === 0 && (
         <p className="muted pad">
           Your tasks show up here.{" "}
@@ -171,8 +180,8 @@ function Sidebar({
               : r.state === "done"
                 ? ["done", "Done"]
                 : ["stopped", "Stopped"];
-        // Tinted by the account the session started on; while it waits for every limit to reset,
-        // by the account it will continue on.
+        // The initial of the account the session started on; while it waits for every limit to reset,
+        // for the account it will continue on.
         const blocked = r.state === "waiting" && working && st?.next.action === "wait" ? st.next : null;
         const on = blocked ? blocked.account : startedOn(runs ?? [], r);
         const hue = accountHue(accounts, on);
@@ -180,8 +189,7 @@ function Sidebar({
         return (
           <button
             key={r.id}
-            className={`item ${selected === r.id ? "selected" : ""} ${hue != null ? "tinted" : ""}`}
-            style={hue != null ? ({ "--acct-h": hue } as React.CSSProperties) : undefined}
+            className={`item ${selected === r.id ? "selected" : ""}`}
             onClick={() => onSelect(r.id)}
             title={`${r.task}\n\n${r.cwd}${on ? `\n${blocked ? `Continues on ${on} at ${resumes}, when limits reset` : `Started on ${on}`}` : ""}`}
           >
@@ -194,6 +202,11 @@ function Sidebar({
                 {blocked ? `resumes on ${on} at ${resumes}` : `${r.cwd.split("/").filter(Boolean).pop()} · ${ago(r.started_at)} ago`}
               </span>
             </span>
+            {hue != null && on && (
+              <span className="acct-mark" style={{ "--acct-h": hue } as React.CSSProperties} aria-label={`Account ${on}`}>
+                {on.slice(0, 1).toUpperCase()}
+              </span>
+            )}
           </button>
         );
       })}
@@ -224,8 +237,11 @@ export default function App() {
     }
   };
 
+  const infoRef = useRef<CliInfo | null>(null);
   const refresh = useCallback(async () => {
-    const i = await cliInfo();
+    // Asked until the CLI is found and new enough; after that it doesn't change.
+    const i = infoRef.current?.ok ? infoRef.current : await cliInfo();
+    infoRef.current = i;
     setInfo(i);
     if (!i.ok) return;
     try {

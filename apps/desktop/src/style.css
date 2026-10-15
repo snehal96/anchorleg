@@ -98,6 +98,15 @@ pre { padding: 12px 14px; white-space: pre-wrap; word-break: break-all; user-sel
 .pad { padding: 14px 24px; margin: 0; }
 .icon { flex: none; }
 .danger-text { color: var(--stop) !important; }
+/* First load: placeholder rows while the CLI answers. */
+.skeleton-list { padding: 6px 12px; display: grid; gap: 4px; }
+.skeleton-row { padding: 9px 12px; display: grid; gap: 7px; }
+.skeleton {
+  display: block; height: 10px; border-radius: 5px; background: var(--sunken);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.skeleton.short { width: 32%; height: 8px; opacity: 0.7; }
+@keyframes skeleton-pulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
 }
@@ -237,10 +246,6 @@ main { padding: 28px 32px 40px; overflow: auto; flex: 1; }
 .sidebar .item:hover:not(:disabled) { background: var(--hover); }
 .sidebar .item:active:not(:disabled) { transform: none; }
 .sidebar .item.selected { background: var(--panel); box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--hairline); }
-/* The session's account: a soft tint and a bar on the left, the same hue as its dot elsewhere. */
-.sidebar .item.tinted { background: oklch(0.7 0.11 var(--acct-h) / 0.10); box-shadow: inset 3px 0 0 oklch(0.62 0.13 var(--acct-h)); }
-.sidebar .item.tinted:hover:not(:disabled) { background: oklch(0.7 0.11 var(--acct-h) / 0.17); }
-.sidebar .item.tinted.selected { background: oklch(0.7 0.11 var(--acct-h) / 0.20); box-shadow: var(--shadow-sm), inset 3px 0 0 oklch(0.62 0.13 var(--acct-h)), inset 0 0 0 1px var(--hairline); }
 .changed-files { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .changed-file { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 7px; background: none; text-align: left; font-size: 12.5px; }
 .changed-file:hover { background: var(--hover); }
@@ -251,7 +256,14 @@ main { padding: 28px 32px 40px; overflow: auto; flex: 1; }
 .change-kind.kind-deleted { background: oklch(0.7 0.14 25 / 0.18); color: oklch(0.5 0.15 25); }
 .add-n { color: oklch(0.52 0.13 150); }
 .del-n { color: oklch(0.55 0.15 25); }
-.acct-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: oklch(0.62 0.13 var(--acct-h)); flex: none; }
+/* An account's colour: this dot (or its initial in the sidebar), the same hue wherever it shows. */
+.acct-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: oklch(0.64 0.11 var(--acct-h)); flex: none; }
+.sidebar .item-text { flex: 1; min-width: 0; }
+/* The session's account in the sidebar: its initial, on a quiet wash of the account's hue. */
+.acct-mark {
+  flex: none; margin-top: 1px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 10px; font-weight: 600; line-height: 1; color: oklch(0.42 0.07 var(--acct-h)); background: oklch(0.9 0.035 var(--acct-h));
+}
 .account-name .acct-dot, .limits-name .acct-dot { margin-right: 6px; vertical-align: 1px; }
 .mark { width: 14px; flex: none; text-align: center; font-size: 12px; line-height: 20px; }
 .item-text { display: flex; flex-direction: column; min-width: 0; gap: 2px; }

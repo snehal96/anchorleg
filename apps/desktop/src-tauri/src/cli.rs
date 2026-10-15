@@ -144,8 +144,7 @@ pub fn info() -> CliInfo {
 /// the CLI starts agents (`claude`, `codex`, `git`) that a terminal would find through the shell's.
 fn shell_path() -> Option<&'static str> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    PATH.get_or_init(|| ask_shell().map(|(_, path)| path))
-        .as_deref()
+    PATH.get_or_init(ask_shell).as_deref()
 }
 
 /// Ask the shell for its PATH ahead of the first command (it can take a few seconds).
@@ -153,12 +152,33 @@ pub fn warm_up() {
     std::thread::spawn(shell_path);
 }
 
+/// Commands that only read anchorleg's own store, so they needn't wait for the shell's PATH:
+/// the window's first load is these.
+fn reads_only<S: AsRef<OsStr>>(args: &[S]) -> bool {
+    let a: Vec<&str> = args.iter().filter_map(|a| a.as_ref().to_str()).collect();
+    match a.first() {
+        Some(
+            &("sessions" | "stop" | "rename" | "diff" | "undo" | "vendors" | "settings" | "notify"
+            | "--version"),
+        ) => true,
+        Some(&("permission" | "accounts")) => a.get(1) == Some(&"list"),
+        // `--refresh` asks each CLI.
+        Some(&"status") => !a.contains(&"--refresh"),
+        _ => false,
+    }
+}
+
+/// The shell's PATH for `args`: waited for when the command may start an agent.
+fn path_for<S: AsRef<OsStr>>(args: &[S]) -> Option<&'static str> {
+    if reads_only(args) { None } else { shell_path() }
+}
+
 /// Run `anchorleg <args>` and return its stdout; on failure, its error as the CLI put it.
 pub fn text<S: AsRef<OsStr>>(args: &[S]) -> Result<String, String> {
     let path = find().ok_or("the anchorleg CLI isn't installed")?;
     let mut cmd = Command::new(&path);
     cmd.args(args).stdin(Stdio::null());
-    if let Some(p) = shell_path() {
+    if let Some(p) = path_for(args) {
         cmd.env("PATH", p);
     }
     let out = cmd
@@ -181,7 +201,7 @@ pub fn spawn<S: AsRef<OsStr>>(args: &[S]) -> Result<std::process::Child, String>
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(p) = shell_path() {
+    if let Some(p) = path_for(args) {
         cmd.env("PATH", p);
     }
     cmd.spawn().map_err(|e| format!("running anchorleg: {e}"))
@@ -332,13 +352,12 @@ fn unlinkable(app: &Path) -> Option<String> {
         .then(|| "move anchorleg to Applications and open it from there first".to_owned())
 }
 
-/// The login shell's answer to `command -v anchorleg` and its PATH. A shell that hangs (a
-/// prompt in a dotfile) is given up on after a few seconds.
-fn ask_shell() -> Option<(Option<String>, String)> {
+/// The login shell's PATH. A shell that hangs (a prompt in a dotfile) is given up on after a few
+/// seconds.
+fn ask_shell() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let script = r#"printf '\n@@PATH=%s\n' "$PATH"; printf '@@BIN=%s\n' "$(command -v anchorleg)""#;
     let mut child = Command::new(shell)
-        .args(["-ilc", script])
+        .args(["-ilc", r#"printf '\n@@PATH=%s\n' "$PATH""#])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -359,17 +378,18 @@ fn ask_shell() -> Option<(Option<String>, String)> {
         }
     }
     let out = child.wait_with_output().ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let path = text
+    String::from_utf8_lossy(&out.stdout)
         .lines()
-        .find_map(|l| l.strip_prefix("@@PATH="))?
-        .to_owned();
-    let bin = text
-        .lines()
-        .find_map(|l| l.strip_prefix("@@BIN="))
-        .filter(|b| !b.is_empty())
-        .map(str::to_owned);
-    Some((bin, path))
+        .find_map(|l| l.strip_prefix("@@PATH="))
+        .map(str::to_owned)
+}
+
+/// What `command -v anchorleg` gives in a shell with `path`.
+fn resolve_in(path: &str) -> Option<String> {
+    std::env::split_paths(path)
+        .map(|d| d.join("anchorleg"))
+        .find(|p| is_executable(p))
+        .map(|p| p.display().to_string())
 }
 
 fn link_state(app: &Path, app_version: Option<Version>, link: &Path) -> TerminalState {
@@ -408,10 +428,8 @@ pub fn terminal() -> Terminal {
         },
         (Some(app), Some(link)) => link_state(app, app_version, link),
     };
-    let (shell_resolves, shell_path) = match ask_shell() {
-        Some((bin, path)) => (bin, Some(path)),
-        None => (None, None),
-    };
+    let shell_path = shell_path();
+    let shell_resolves = shell_path.and_then(resolve_in);
     let shell_version = shell_resolves
         .as_deref()
         .and_then(|b| version_of(Path::new(b)).ok())
@@ -464,6 +482,33 @@ pub fn link_terminal() -> Result<Terminal, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_commands_that_may_start_an_agent_wait_for_the_shell() {
+        assert!(reads_only(&["sessions", "--json"]));
+        assert!(reads_only(&["permission", "list", "--json"]));
+        assert!(!reads_only(&["permission", "answer", "3"]));
+        assert!(!reads_only(&["run", "--detach"]));
+        assert!(!reads_only(&["send", "4"]));
+        assert!(reads_only(&["status", "--json"]));
+        assert!(!reads_only(&["status", "--refresh", "--json"]));
+        assert!(!reads_only(&["accounts", "login", "x"]));
+        assert!(!reads_only::<&str>(&[]));
+    }
+
+    #[test]
+    fn resolves_the_cli_on_a_path() {
+        let dir = std::env::temp_dir().join(format!("anchorleg-resolve-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("anchorleg");
+        std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = format!("/nonexistent:{}", dir.display());
+        assert_eq!(resolve_in(&path), Some(bin.display().to_string()));
+        assert_eq!(resolve_in("/nonexistent"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn versions() {
