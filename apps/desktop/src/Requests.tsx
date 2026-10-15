@@ -2,6 +2,7 @@
 // agent, or a plan. Answers go through `anchorleg permission answer` (docs/CLI.md).
 import { useEffect, useState } from "react";
 import { answer, approvePlan, openTarget, type Question, type Request } from "./api";
+import { Markdown } from "./Markdown";
 
 /** Text with its web links clickable (an MCP server's "open this page, then answer Done"). */
 function Linked({ text }: { text: string }) {
@@ -165,12 +166,25 @@ function Plan({ r, busy, run }: Act) {
   const original = r.plan ?? "";
   const [text, setText] = useState(original);
   const [changes, setChanges] = useState("");
+  const [editing, setEditing] = useState(false);
   const edited = text.trim() !== original.trim();
   return (
     <>
       <div className="request-title">The plan is ready. Approve it?</div>
-      <p className="muted small">Nothing has changed yet. You can edit the plan below before approving it.</p>
-      <textarea className="plan" value={text} rows={Math.min(16, Math.max(4, text.split("\n").length))} disabled={busy} onChange={(e) => setText(e.target.value)} />
+      <p className="muted small">
+        Nothing has changed yet. You can{" "}
+        <button className="link" disabled={busy} onClick={() => setEditing(!editing)}>
+          {editing ? "see it as written" : "edit the plan"}
+        </button>{" "}
+        before approving it.
+      </p>
+      {editing ? (
+        <textarea className="plan" value={text} rows={Math.min(16, Math.max(4, text.split("\n").length))} disabled={busy} onChange={(e) => setText(e.target.value)} />
+      ) : (
+        <div className="plan-view">
+          <Markdown source={text} cwd={r.cwd} />
+        </div>
+      )}
       <div className="request-actions">
         <button className="primary" disabled={busy} onClick={() => run(() => (edited ? approvePlan(r.id, text) : answer(r.id, ["Approve"])))}>
           {edited ? "Approve my version" : "Approve and start"}

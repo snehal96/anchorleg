@@ -3,6 +3,7 @@ import { describeOptions, session, type Message, type Request, type Run, type Se
 import Composer from "./Composer";
 import Requests from "./Requests";
 import SessionActions, { ForkDialog, RewindDialog } from "./SessionActions";
+import { Markdown } from "./Markdown";
 import { copyText } from "./share";
 import { short, sideRuns, tilde } from "./sessions";
 import Tools, { type ToolTab } from "./Tools";
@@ -233,8 +234,18 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
       while (i + 1 < messages.length && isNote(messages[i + 1])) notes.push(messages[++i]);
       out.push(<Notes key={i} notes={notes} />);
     } else if (m.role === "tool") {
-      const result = messages[i + 1]?.role === "output" || messages[i + 1]?.role === "tool_error" ? messages[++i] : undefined;
-      out.push(<Step key={i} what={m.text} result={result} />);
+      // Steps in a row fold into one line that says what they were.
+      const steps: StepItem[] = [];
+      const first = i;
+      for (;;) {
+        const what = messages[i].text;
+        const result = messages[i + 1]?.role === "output" || messages[i + 1]?.role === "tool_error" ? messages[++i] : undefined;
+        steps.push({ what, result });
+        if (messages[i + 1]?.role !== "tool") break;
+        i++;
+      }
+      const live = view.working && i === messages.length - 1;
+      out.push(steps.length === 1 ? <Step key={first} what={steps[0].what} result={steps[0].result} /> : <Steps key={first} steps={steps} live={live} />);
     } else if (m.role === "user") {
       const run = runOf.get(i);
       const canRewind = run != null && run !== view.runs[0] && !view.working && (caps?.rewind ?? true);
@@ -257,10 +268,9 @@ function Lines({ view, runs, onStarted }: { view: Session; runs: Run[]; onStarte
     } else if (m.role === "agent") {
       out.push(
         <div key={i} className="msg-row agent">
-          <span className="avatar" aria-hidden="true">
-            <Icon name="sparkle" size={13} />
-          </span>
-          <div className="msg agent">{m.text}</div>
+          <div className="msg agent">
+            <Markdown source={m.text} cwd={view.run.cwd} />
+          </div>
           <MsgActions
             text={m.text}
             extra={i === lastAgent && (caps?.fork ?? true) ? [{ icon: "fork", tip: "Try another direction from here", onClick: () => setDialog({ kind: "fork" }) }] : []}
@@ -320,6 +330,65 @@ function Notes({ notes }: { notes: Message[] }) {
             <li key={k}>{text(n)}</li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+type StepItem = { what: string; result?: Message };
+
+/** `Bash  cargo test` → "Bash". */
+const toolOf = (what: string) => what.trim().split(/\s+/)[0];
+
+/** "Ran 3 commands, read 2 files": what a run of steps did, by kind. */
+export function summarize(steps: { what: string }[]): string {
+  const kinds: [string[], string, string][] = [
+    [["Bash"], "ran", "command"],
+    [["Read"], "read", "file"],
+    [["Edit", "MultiEdit", "NotebookEdit", "Write"], "changed", "file"],
+    [["Grep", "Glob", "LS"], "searched", "time"],
+    [["WebFetch", "WebSearch"], "looked up", "page"],
+    [["Task", "Agent"], "asked", "helper"],
+  ];
+  const counts = new Map<string, number>();
+  let other = 0;
+  for (const s of steps) {
+    const k = kinds.find(([tools]) => tools.includes(toolOf(s.what)));
+    if (k) counts.set(k[1], (counts.get(k[1]) ?? 0) + 1);
+    else other++;
+  }
+  const parts = kinds
+    .filter(([, verb]) => counts.has(verb))
+    .map(([, verb, noun]) => {
+      const n = counts.get(verb)!;
+      return verb === "searched" ? `searched ${n === 1 ? "once" : `${n} times`}` : `${verb} ${n} ${noun}${n === 1 ? "" : "s"}`;
+    });
+  if (other) parts.push(`${other} other step${other === 1 ? "" : "s"}`);
+  const out = parts.join(", ");
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+function Steps({ steps, live }: { steps: StepItem[]; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const failed = steps.filter((s) => s.result?.role === "tool_error").length;
+  return (
+    <div className={`steps-group ${open ? "open" : ""}`}>
+      <button className="step-line" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="dot">{failed ? "!" : "•"}</span>
+        <span>
+          {summarize(steps)}
+          {failed > 0 && <span className="danger-text"> · {failed} failed</span>}
+        </span>
+        <Icon name="chevron" size={12} />
+      </button>
+      {open ? (
+        <div className="steps-list">
+          {steps.map((s, k) => (
+            <Step key={k} what={s.what} result={s.result} />
+          ))}
+        </div>
+      ) : (
+        live && <div className="steps-last muted">{friendly(steps[steps.length - 1].what)}</div>
       )}
     </div>
   );
