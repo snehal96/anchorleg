@@ -287,7 +287,8 @@ main { padding: 28px 32px 40px; overflow: auto; flex: 1; }
 .folder input { flex: 1; }
 
 .conversation {
-  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+  /* Never sideways: wide code, tables and diagrams scroll inside their own box. */
+  flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 6px;
   padding: 24px max(28px, calc((100% - 860px) / 2)) 28px;
 }
 .conversation > p.error { margin: 6px 0; }
@@ -298,8 +299,8 @@ main { padding: 28px 32px 40px; overflow: auto; flex: 1; }
 .conversation > .msg-row.user:first-child { margin-top: 0; }
 .msg-row.user { justify-content: flex-end; }
 .msg.user {
-  max-width: min(78%, 62ch); background: var(--sunken); color: var(--ink); padding: 9px 14px;
-  border-radius: 16px 16px 5px 16px; box-shadow: inset 0 0 0 1px var(--hairline);
+  max-width: min(78%, 62ch); background: var(--brand); color: var(--brand-ink); padding: 9px 14px;
+  border-radius: 16px 16px 5px 16px; box-shadow: 0 1px 2px oklch(0.4 0.1 165 / 0.25);
 }
 .msg.agent { white-space: normal; min-width: 0; flex: 1; max-width: 72ch; }
 .msg.tool { color: var(--ink); }
@@ -590,7 +591,11 @@ pre.command-out { max-height: 300px; overflow: auto; user-select: text; margin: 
   box-shadow: var(--shadow); pointer-events: none;
   opacity: 0; transform: translate(-50%, -2px); transition: opacity 120ms ease, transform 160ms var(--ease-out);
 }
-[data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); transition-delay: 250ms; }
+/* A hidden tooltip takes no room: laid out while invisible, they pushed the conversation wider
+   than the window near its edge (a sideways scroll). Shown, they fade in after a short wait. */
+[data-tip]:not(:hover):not(:focus-visible)::after { display: none; }
+[data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); animation: tip-in 140ms ease 250ms both; }
+@keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
 .meta [data-tip]::after { left: 0; transform: translate(0, -2px); white-space: pre-line; }
 .meta [data-tip]:hover::after, .meta [data-tip]:focus-visible::after { transform: translate(0, 0); }
 .actions [data-tip]::after { left: auto; right: 0; transform: translate(0, -2px); }
