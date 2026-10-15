@@ -310,6 +310,7 @@ pub fn run() {
             approve_plan,
             settings::status,
             settings::accounts,
+            settings::import_sessions,
             settings::vendors,
             settings::usage,
             settings::policy,

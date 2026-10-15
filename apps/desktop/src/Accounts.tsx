@@ -6,6 +6,8 @@ import {
   addAccount,
   cancelLogin,
   importAliases,
+  importSessions,
+  type ImportResult,
   loginAccount,
   loginInTerminal,
   removeAccount,
@@ -100,6 +102,7 @@ export default function Accounts({
         ))}
       </div>
       <SignIn existing={list.map((a) => a.name)} onAdded={onChanged} />
+      <ImportSessions />
       <AddAccount run={run} />
     </div>
   );
@@ -471,6 +474,74 @@ function AddAccount({ run }: { run: (f: () => Promise<unknown>) => Promise<void>
           </button>
         </div>
       )}
+    </section>
+  );
+}
+
+/** Sessions started in Claude Code or Codex directly: look first, then bring them in. */
+function ImportSessions() {
+  const [since, setSince] = useState("30d");
+  const [found, setFound] = useState<ImportResult | null>(null);
+  const [done, setDone] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const go = async (dry: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await importSessions(dry, since);
+      if (dry) setFound(r);
+      else {
+        setDone(r.sessions.length);
+        setFound(null);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const skipped = found
+    ? [
+        found.skipped.known && `${found.skipped.known} already here`,
+        found.skipped.folder_gone && `${found.skipped.folder_gone} whose folder is gone`,
+        found.skipped.temporary_folder && `${found.skipped.temporary_folder} in temporary folders`,
+        found.skipped.in_use && `${found.skipped.in_use} still open`,
+      ].filter(Boolean)
+    : [];
+  const perAccount = found ? Object.entries(found.sessions.reduce<Record<string, number>>((m, s) => ({ ...m, [s.account]: (m[s.account] ?? 0) + 1 }), {})) : [];
+  return (
+    <section className="card add-account">
+      <h3>Sessions you started outside anchorleg</h3>
+      <p className="muted small">
+        Bring in your Claude Code and Codex sessions from every account, with their conversations. They show up with your tasks,
+        and a reply continues them on any account. Nothing changes in the CLIs.
+      </p>
+      <div className="add-row">
+        <select value={since} onChange={(e) => (setSince(e.target.value), setFound(null))} disabled={busy}>
+          <option value="7d">From the last week</option>
+          <option value="30d">From the last 30 days</option>
+          <option value="all">All of them</option>
+        </select>
+        {found && found.sessions.length > 0 ? (
+          <button className="primary" disabled={busy} onClick={() => go(false)}>
+            {busy ? "Importing…" : `Import ${found.sessions.length} session${found.sessions.length === 1 ? "" : "s"}`}
+          </button>
+        ) : (
+          <button className="secondary" disabled={busy} onClick={() => go(true)}>
+            {busy ? "Looking…" : "Look for sessions"}
+          </button>
+        )}
+      </div>
+      {found && (
+        <p className="small">
+          {found.sessions.length === 0 ? "No new sessions found." : `Found ${perAccount.map(([a, n]) => `${n} on ${a}`).join(", ")}.`}
+          {skipped.length > 0 && <span className="muted"> Left out: {skipped.join(", ")}.</span>}
+          {found.not_importable.length > 0 && <span className="muted"> Antigravity sessions can't be read ({found.not_importable.join(", ")}).</span>}
+        </p>
+      )}
+      {done != null && <p className="small">Imported {done} session{done === 1 ? "" : "s"}; they're in your task list.</p>}
+      {error && <p className="error small">{error}</p>}
     </section>
   );
 }

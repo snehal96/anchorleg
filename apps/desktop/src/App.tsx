@@ -117,8 +117,11 @@ function Sidebar({
   onSelect,
   accounts,
   status: st,
+  onImport,
 }: {
   runs: Run[] | null;
+  /** Opens the Accounts page, where sessions are imported. */
+  onImport: () => void;
   /** Account names in the order they're tried: each gets its colour from its place. */
   accounts: string[];
   status: Status | null;
@@ -148,7 +151,14 @@ function Sidebar({
       </div>
       {error && <p className="error pad">{error}</p>}
       {!runs && !error && <p className="muted pad">Loading…</p>}
-      {runs && list.length === 0 && <p className="muted pad">Your tasks show up here.</p>}
+      {runs && list.length === 0 && (
+        <p className="muted pad">
+          Your tasks show up here.{" "}
+          <button className="link" onClick={onImport}>
+            Import the sessions you started in Claude Code or Codex
+          </button>
+        </p>
+      )}
       {shown.map((r) => {
         const working = isWorking(r);
         const needs = waiting.has(r.id);
@@ -363,7 +373,7 @@ export default function App() {
           </main>
         ) : (
         <div className="body">
-          <Sidebar runs={runs} waiting={waiting} error={error} selected={selected} onSelect={setSelected} accounts={(st?.accounts ?? list ?? []).map((a) => a.name)} status={st} />
+          <Sidebar runs={runs} waiting={waiting} error={error} selected={selected} onSelect={setSelected} accounts={(st?.accounts ?? list ?? []).map((a) => a.name)} status={st} onImport={() => setPage("accounts")} />
           <div className="main">
             {showTerminal && info.bundled && (
               <div className="pad">

@@ -20,6 +20,20 @@ pub async fn status(refresh: bool) -> Result<Value, String> {
     .await
 }
 
+/// Sessions started in the CLIs themselves (`anchorleg sessions import`); `dry_run` only lists.
+#[tauri::command]
+pub async fn import_sessions(dry_run: bool, since: Option<String>) -> Result<Value, String> {
+    blocking(move || {
+        let since = since.unwrap_or_else(|| "30d".to_owned());
+        let mut args = vec!["sessions", "import", "--json", "--since", &since];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        cli::json(&args)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn accounts() -> Result<Value, String> {
     blocking(|| cli::json(&["accounts", "list", "--json"])).await

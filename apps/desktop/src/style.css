@@ -242,6 +242,7 @@ main { padding: 28px 32px 40px; overflow: auto; flex: 1; }
 .sidebar .item.tinted:hover:not(:disabled) { background: oklch(0.7 0.11 var(--acct-h) / 0.17); }
 .sidebar .item.tinted.selected { background: oklch(0.7 0.11 var(--acct-h) / 0.20); box-shadow: var(--shadow-sm), inset 3px 0 0 oklch(0.62 0.13 var(--acct-h)), inset 0 0 0 1px var(--hairline); }
 .acct-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: oklch(0.62 0.13 var(--acct-h)); flex: none; }
+.account-name .acct-dot, .limits-name .acct-dot { margin-right: 6px; vertical-align: 1px; }
 .mark { width: 14px; flex: none; text-align: center; font-size: 12px; line-height: 20px; }
 .item-text { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 550; font-size: 13.5px; }

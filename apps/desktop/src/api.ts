@@ -303,6 +303,27 @@ export interface AccountChange {
 
 export const status = (refresh = false) => invoke<Status>("status", { refresh });
 export const accounts = () => invoke<Account[]>("accounts");
+
+export interface ImportedSession {
+  run_id: number | null;
+  vendor: string;
+  account: string;
+  session_id: string;
+  cwd: string;
+  task: string;
+  name: string | null;
+  started_at: number;
+  ended_at: number;
+  prompts: number;
+}
+export interface ImportResult {
+  dry_run: boolean;
+  sessions: ImportedSession[];
+  skipped: { known: number; folder_gone: number; other_folder: number; temporary_folder: number; in_use: number };
+  not_importable: string[];
+}
+/** `anchorleg sessions import --json`: sessions started in the CLIs themselves. */
+export const importSessions = (dryRun: boolean, since?: string) => invoke<ImportResult>("import_sessions", { dryRun, since });
 export const usage = (since: string) => invoke<Usage>("usage", { since });
 export const policy = (set?: string) => invoke<PolicyInfo>("policy", { set: set ?? null });
 export const cliSettings = (change?: { vendor: string; model?: string; effort?: string; args?: string }) =>
