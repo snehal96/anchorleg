@@ -729,6 +729,34 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Whether any run already has this CLI session (imported, or run by anchorleg).
+    pub fn has_session(&self, session_id: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runs WHERE session_id = ?1)",
+            params![session_id],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// A finished run for a session started outside anchorleg (`anchorleg sessions import`).
+    pub fn import_run(&self, f: &crate::import::Found) -> Result<RunId> {
+        self.conn.execute(
+            "INSERT INTO runs (task, cwd, account, session_id, state, started_at, ended_at, name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                f.task,
+                f.cwd,
+                f.account,
+                f.session_id,
+                RunState::Done.as_str(),
+                f.started_at,
+                f.ended_at,
+                f.name
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
     /// Record the process working on a run; `None` once it's gone.
     pub fn set_run_mode(&self, id: RunId, mode: Option<&str>) -> Result<()> {
         self.conn

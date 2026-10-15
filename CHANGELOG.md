@@ -7,6 +7,10 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- `anchorleg sessions import [--account A] [--since 30d] [--cwd DIR] [--include-temp]
+  [--dry-run] [--json]`: Claude Code and Codex sessions started outside anchorleg, from every
+  account, show in `sessions`, the UI and the desktop app with their conversations, and a
+  follow-up continues them on any account.
 - Homebrew tap (in progress).
 
 ## [0.7.0] — 2026-10-14

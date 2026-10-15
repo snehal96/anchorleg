@@ -24,7 +24,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
-| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` | works |
+| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` · `import [--account A] [--since 30d] [--cwd DIR] [--include-temp] [--dry-run] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
 | `anchorleg rules [--add RULE]… [--rm RULE]… [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
@@ -777,6 +777,27 @@ With `--goal`, `--budget` or `--json-schema` the report also has `goal`, `budget
 `account`), or `no_accounts`. `credits` is `null` until the CLI has reported it; `state` is `off`,
 `available`, `in_use` or `unlimited`. `used` is a fraction 0–1 and may be `null` (Claude often omits it).
 `source` is `stream` (CLI events), `mod` (exact, from anchorleg-mod) or `manual`.
+
+## `anchorleg sessions import`
+
+Brings in sessions you started in the CLIs themselves, from every account, so they show in
+`anchorleg sessions`, `anchorleg ui` and the desktop app, and a follow-up (`run --follow-up RUN`)
+continues them on any account. It reads what each CLI keeps on disk: Claude Code's transcripts
+(`<config dir>/projects/*/<id>.jsonl`) and Codex's rollout files (`$CODEX_HOME/sessions/`).
+Antigravity keeps no readable transcript, so its sessions aren't imported.
+
+Each session becomes one finished run: its first message is the task, Claude Code's title its
+name, and its conversation is shown as if anchorleg had run it (tool outputs are cut to 4k
+characters). Left out: sessions anchorleg already has (importing twice adds nothing), sessions
+whose folder is gone, sessions in temporary folders (`--include-temp` brings them in), sessions
+used in the last 5 minutes (they may still be open), a Codex subagent's own thread, and sessions
+nobody answered. A session anchorleg copied into several accounts is imported once, from the
+latest copy. `--dry-run` lists them; `--since` takes `24h`, `7d`, `4w` or `all` (default `30d`).
+
+`--json` → `{"schema": 1, "dry_run", "sessions": [{"run_id", "vendor", "account", "session_id",
+"cwd", "task", "name", "started_at", "ended_at", "prompts"}], "skipped": {"known",
+"folder_gone", "other_folder", "temporary_folder", "in_use"}, "not_importable": [accounts]}`;
+`run_id` is `null` with `--dry-run`.
 
 ## `anchorleg sessions show <run> --json` → session
 

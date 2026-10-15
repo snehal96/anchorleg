@@ -90,6 +90,9 @@ watches every account's quota, and when one gets close to its limit it:
   CLI; the agent stops at a clean point when it's spent.
 - **Typed answers.** `--json-schema schema.json` makes the final answer follow your schema and
   returns it parsed in the JSON report, for scripts and task delegators.
+- **Your existing sessions too.** `anchorleg sessions import` brings in the Claude Code and Codex
+  sessions you started yourself, on every account, so you can see them in one place and continue
+  any of them through anchorleg.
 - **The same setup on every CLI.** `--add-dir`, `--instructions` and `--effort` go with the task
   to whichever account or CLI runs it; Claude Code's own `--agent`, `--allowed-tools`,
   `--mcp-config` and the like are passed through too.

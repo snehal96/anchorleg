@@ -21,6 +21,9 @@ const NOT_STREAMS: &[&str] = &[
     "subagent-transcript.jsonl",
     "rate-limits-read.jsonl",
     "requests.jsonl",
+    // Session files kept on disk (`anchorleg sessions import`), not the stream.
+    "transcript.jsonl",
+    "rollout.jsonl",
 ];
 
 /// The capture folders of a vendor, by name prefix. A driven vendor must have one.

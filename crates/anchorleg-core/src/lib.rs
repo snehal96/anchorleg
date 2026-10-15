@@ -10,6 +10,7 @@ pub mod checkpoint;
 pub mod conversation;
 pub mod goal;
 pub mod handoff;
+pub mod import;
 pub mod mcp_sync;
 pub mod notify;
 pub mod output;

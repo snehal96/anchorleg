@@ -3053,3 +3053,103 @@ fn a_missing_extra_folder_is_refused_before_anything_runs() {
     );
     assert!(env.launches().is_empty());
 }
+
+#[test]
+fn sessions_started_in_the_clis_are_imported_and_can_be_continued() {
+    let env = Env::mixed(&[("a", "claude"), ("c", "codex")]);
+    let work = env.path("work").canonicalize().unwrap();
+    let w = work.display();
+    let transcript = [
+        format!(r#"{{"type":"user","sessionId":"s1","cwd":"{w}","timestamp":"2026-10-01T10:00:00Z","message":{{"content":"fix the build"}}}}"#),
+        r#"{"type":"assistant","sessionId":"s1","timestamp":"2026-10-01T10:00:05Z","message":{"content":[{"type":"text","text":"Fixed it."}]}}"#.to_owned(),
+        r#"{"type":"custom-title","customTitle":"build fix","sessionId":"s1"}"#.to_owned(),
+    ]
+    .join("\n");
+    std::fs::create_dir_all(env.path("cfg/a/projects/-w")).unwrap();
+    std::fs::write(env.path("cfg/a/projects/-w/s1.jsonl"), transcript).unwrap();
+    let rollout = [
+        format!(r#"{{"timestamp":"2026-10-01T09:00:00Z","type":"session_meta","payload":{{"id":"th1","cwd":"{w}"}}}}"#),
+        r#"{"timestamp":"2026-10-01T09:00:01Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"add a test"}]}}}"#.to_owned(),
+        r#"{"timestamp":"2026-10-01T09:00:02Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","content":[{"type":"text","text":"Added."}]}}}"#.to_owned(),
+    ]
+    .join("\n");
+    std::fs::create_dir_all(env.path("cfg/c/sessions/2026/10/01")).unwrap();
+    std::fs::write(
+        env.path("cfg/c/sessions/2026/10/01/rollout-2026-10-01T09-00-00-th1.jsonl"),
+        rollout,
+    )
+    .unwrap();
+
+    // Temporary folders are left out unless asked for.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "import", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("would import 0 sessions"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let out = env
+        .anchorleg()
+        .args(["sessions", "import", "--include-temp", "--json"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let sessions = r["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2, "{r}");
+    // Oldest first: Codex's started an hour earlier.
+    assert_eq!(
+        (
+            sessions[0]["session_id"].as_str(),
+            sessions[0]["account"].as_str()
+        ),
+        (Some("th1"), Some("c"))
+    );
+    assert_eq!(sessions[1]["name"], "build fix");
+    let claude_run = sessions[1]["run_id"].as_i64().unwrap();
+
+    let out = env
+        .anchorleg()
+        .args(["sessions", "show", &claude_run.to_string(), "--json"])
+        .output()
+        .unwrap();
+    let show: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let texts: Vec<&str> = show["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["text"].as_str())
+        .collect();
+    assert!(
+        texts.contains(&"fix the build") && texts.contains(&"Fixed it."),
+        "{texts:?}"
+    );
+
+    // Importing again finds nothing new.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "import", "--include-temp", "--json"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        (
+            r["sessions"].as_array().unwrap().len(),
+            r["skipped"]["known"].as_i64()
+        ),
+        (0, Some(2)),
+        "{r}"
+    );
+
+    // A follow-up continues the CLI's own session.
+    env.script("a.jsonl", &ok("s1", "continued"));
+    assert_eq!(env.run(&["--follow-up", &claude_run.to_string()]).0, 0);
+    assert!(
+        env.launches()[0].contains("--resume s1"),
+        "{:?}",
+        env.launches()
+    );
+}
