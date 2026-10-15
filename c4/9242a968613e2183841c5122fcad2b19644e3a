@@ -1,0 +1,28 @@
+crates/anchorleg-core/src/adapters/codex.rs
+  s_24d456e49210ef::t_8adeb18b3dc752 606-609
+  s_24d456e49210ef::t_bac971ebe4c316 604
+  s_24d456e49210ef::t_b25785ade304ca 286-304,306,599-603,605,610-611
+CHANGELOG.md
+  s_24d456e49210ef::t_fb09d81d5901f4 30-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c49242a968613e2183841c5122fcad2b19644e3a",
+  "prompts": {},
+  "humans": {
+    "h_a00a27c9fca8dc": {
+      "author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_24d456e49210ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ae58d4be-6c7f-4a82-b1ec-a51e51f5f6e6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Snehal Maheshwari <snehal.maheshwari14@gmail.com>"
+    }
+  }
+}
