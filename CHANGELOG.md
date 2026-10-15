@@ -6,6 +6,8 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-15
+
 ### Added
 - Go back to or fork from any message, not just the start of a run: `anchorleg rewind RUN --at
   POINT` and `anchorleg run --fork RUN --at POINT`, the point being a message's new `at` in
