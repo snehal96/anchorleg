@@ -6,6 +6,7 @@
 pub mod adapters;
 pub mod anchorleg_mod;
 pub mod attachments;
+pub mod changes;
 pub mod checkpoint;
 pub mod conversation;
 pub mod goal;

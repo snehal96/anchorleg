@@ -75,8 +75,10 @@ watches every account's quota, and when one gets close to its limit it:
   quota. Keyboard first; the mouse works too.
 - **Send screenshots and files.** Paste an image (Ctrl+V) or drop a file into `anchorleg ui`, or
   pass `--attach`; both Claude Code and Codex read it, also after a switch.
-- **See what it changed.** `v` in the UI (or `anchorleg diff`) shows the session's own changes
-  since it started, and the agent's task list shows under the conversation as it works.
+- **See what it changed.** `v` in the UI opens a Changes panel with every file the session
+  changed and its diff, as the CLI reported it, in any folder (or `anchorleg diff`). The Files
+  tab (`f`, or **Files ▾** on the conversation) lists the files it created, docs and images
+  included, and opens them. The agent's task list shows under the conversation as it works.
 - **Tells you when it needs you.** A desktop notification when a session waits for an answer,
   finishes, fails or switches accounts; `anchorleg notify --command …` sends the same to your own
   script (a chat bot, a phone push).
@@ -279,7 +281,7 @@ anchorleg rewind 14 -- "use a macro instead"            # back to before run #14
 anchorleg rules --add "Bash(cargo test *)"              # allowed in every session, on every CLI
 anchorleg sync mcp --yes                                # the same MCP servers on every account
 anchorleg stop 12                   # stop a session and its CLI
-anchorleg diff 12 --stat            # what the session changed since it started
+anchorleg diff 12 --stat            # what the session changed, as the CLIs reported it
 anchorleg permission list           # tool calls waiting for you
 anchorleg permission answer 3 yes   # yes | always | rule | no
 anchorleg permission answer 4 2     # an agent's question: option number, label or your own words

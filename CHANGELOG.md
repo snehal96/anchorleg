@@ -7,7 +7,21 @@ All notable changes are listed here. The format follows
 ## [Unreleased]
 
 ### Added
+- A Changes panel in `anchorleg ui` (**v**, right half, closed by default): every file the
+  session changed with its diff, as Claude Code, Codex and Antigravity report it, in any folder.
+  Its Files tab (**f**, or **Files ▾** on the conversation) lists the files the session created
+  and opens them.
+- MCP servers' requests for input in Claude Code sessions reach you through anchorleg, as Codex's
+  already did.
+- Claude Code's prompt suggestions: the guessed next message is one Tab away in the reply box
+  (turn on with `anchorleg settings claude --args "--prompt-suggestions=true"`).
+- `/context` and `/init` for Codex sessions in `anchorleg ui`.
+- `sessions show --json` has `changes` and `suggestion`.
 - Homebrew tap (in progress).
+
+### Changed
+- `anchorleg diff` shows what the CLIs reported changing, in any folder; `--git` compares the
+  folder with how the session found it, as before.
 
 ## [0.7.0] — 2026-10-14
 

@@ -1,3 +1,16 @@
 {
-  "modules": ["./register.ts"]
+  "modules": ["./register.ts"],
+  "hooks": {
+    "Elicitation": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$ANCHORLEG_BIN\" ] && [ -n \"$ANCHORLEG_RUN_ID\" ]; then exec \"$ANCHORLEG_BIN\" permission elicit; fi",
+            "timeout": 86400
+          }
+        ]
+      }
+    ]
+  }
 }

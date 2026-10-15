@@ -953,6 +953,32 @@ pub struct SessionView {
     /// Tokens in the context at the last model request, and the model's window.
     pub context_tokens: Option<u64>,
     pub context_window: Option<u64>,
+    /// The CLI's guess at the person's next message, after the newest run's last turn.
+    pub suggestion: Option<String>,
+}
+
+/// Claude Code's guess at the person's next message (`--prompt-suggestions`): the
+/// `prompt_suggestion` after the last turn, if nothing has been said since.
+pub fn suggestion(log: &str) -> Option<String> {
+    let mut out = None;
+    for line in log.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match v.get("type").and_then(Value::as_str) {
+            Some("prompt_suggestion") => {
+                out = v
+                    .get("suggestion")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned);
+            }
+            Some("anchorleg_user" | "assistant") => out = None,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The view of a session from its runs' logs (`<log_dir>/run-<id>.jsonl`), oldest run first.
@@ -980,6 +1006,7 @@ pub fn session_view(runs: &[&crate::store::Run], log_dir: &std::path::Path) -> S
         newest = log;
     }
     view.running = running(&newest);
+    view.suggestion = suggestion(&newest);
     view.subagents = subagents(&newest);
     read_transcripts(&mut view.subagents);
     let t = crate::handoff::extract(&whole);
@@ -991,6 +1018,25 @@ pub fn session_view(runs: &[&crate::store::Run], log_dir: &std::path::Path) -> S
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_suggestion_after_the_last_turn_until_someone_speaks() {
+        // As Claude Code 2.1.300 prints it, after the turn's `result` (fixture
+        // claude-2.1.300-prompt-suggestion-20261015).
+        let log = include_str!(
+            "../../../fixtures/claude-2.1.300-prompt-suggestion-20261015/stream.jsonl"
+        );
+        assert_eq!(
+            super::suggestion(log).as_deref(),
+            Some("fix the add function")
+        );
+        let later = format!(
+            "{log}{}\n",
+            r#"{"type":"anchorleg_user","text":"no thanks"}"#
+        );
+        assert_eq!(super::suggestion(&later), None);
+        assert_eq!(super::suggestion(""), None);
+    }
 
     #[test]
     fn a_session_view_joins_its_runs_and_reads_the_newest() {

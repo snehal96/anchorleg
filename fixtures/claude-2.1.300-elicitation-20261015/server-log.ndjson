@@ -1,0 +1,2 @@
+{"in":{"method":"tools/call","params":{"name":"pick_color","arguments":{},"_meta":{"claudecode/toolUseId":"toolu_01Qmady2DhNpvzBnjAzFxUY8","progressToken":2}},"jsonrpc":"2.0","id":2}}
+{"in":{"result":{"action":"accept","content":{"color":"teal"}},"jsonrpc":"2.0","id":"e1"}}

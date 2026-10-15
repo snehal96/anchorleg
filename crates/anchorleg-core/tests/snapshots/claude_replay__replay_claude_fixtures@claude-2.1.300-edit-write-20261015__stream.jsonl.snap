@@ -1,0 +1,478 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+expression: replay
+input_file: fixtures/claude-2.1.300-edit-write-20261015/stream.jsonl
+---
+[
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01LorkFp335oTZAyxuHAmJfQ",
+            "input": {
+              "max_results": 2,
+              "query": "select:TaskCreate,TaskUpdate"
+            },
+            "name": "ToolSearch",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_0197YrayKSg8hW15KsjsLb9C",
+            "input": {
+              "file_path": "/tmp/scratch/edits/calc.py"
+            },
+            "name": "Read",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "org_level_disabled",
+      "overageStatus": "rejected",
+      "rateLimitType": "five_hour",
+      "resetsAt": 1792060200,
+      "status": "allowed",
+      "surpassedThreshold": null,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1792060200,
+          "status": null,
+          "utilization": 0.32
+        },
+        "seven_day": {
+          "resetsAt": 1792364400,
+          "status": null,
+          "utilization": 0.63
+        }
+      },
+      "utilization": null
+    },
+    "signals": [
+      {
+        "resets_at": 1792060200,
+        "signal": "quota",
+        "status": "allowed",
+        "used": 0.32,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1792364400,
+        "signal": "quota",
+        "status": null,
+        "used": 0.63,
+        "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "org_level_disabled",
+        "signal": "credits",
+        "state": "off"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_017UeNq4tp71RbX98haetAeq",
+            "input": {
+              "activeForm": "Fixing add() in calc.py",
+              "description": "Change add to return a + b instead of a - b in calc.py",
+              "subject": "Fix add() in calc.py"
+            },
+            "name": "TaskCreate",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_018jxj6qwETYUWmjnNLM9d3z",
+            "input": {
+              "activeForm": "Creating notes.md",
+              "description": "Create notes.md containing one line: fixed add",
+              "subject": "Create notes.md"
+            },
+            "name": "TaskCreate",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_015QESHAc9LhcNu17UHJYBqp",
+            "input": {
+              "status": "in_progress",
+              "taskId": "1"
+            },
+            "name": "TaskUpdate",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01UaycoDHQEEqqJk8JbuwnwF",
+            "input": {
+              "file_path": "/tmp/scratch/edits/calc.py",
+              "new_string": "    return a + b",
+              "old_string": "    return a - b",
+              "replace_all": false
+            },
+            "name": "Edit",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01BaGZ9LnUUHgoDDGxrY8kt5",
+            "input": {
+              "status": "completed",
+              "taskId": "1"
+            },
+            "name": "TaskUpdate",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01J4F1ocFDkucrxjiqhf45xC",
+            "input": {
+              "status": "in_progress",
+              "taskId": "2"
+            },
+            "name": "TaskUpdate",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01ATVA6RBJbirmDwFs8eEoYT",
+            "input": {
+              "content": "fixed add\n",
+              "file_path": "/tmp/scratch/edits/notes.md"
+            },
+            "name": "Write",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01VARw9mNzmZmsTkirSHVSGh",
+            "input": {
+              "status": "completed",
+              "taskId": "2"
+            },
+            "name": "TaskUpdate",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "Fixed `add` in `calc.py`: it now returns `a + b` instead of `a - b`. I also created `notes.md` containing the line `fixed add`. Both were done with Edit and Write as requested. I didn't run anything, since there's no test in the directory.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 12496,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 19670,
+          "cacheReadInputTokens": 157893,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00631813,
+          "inputTokens": 12,
+          "maxOutputTokens": 128000,
+          "outputTokens": 1608,
+          "provider": "firstParty",
+          "thinkingTokens": 420,
+          "webSearchRequests": 0
+        }
+      },
+      "num_turns": 11,
+      "result": "Fixed `add` in `calc.py`: it now returns `a + b` instead of `a - b`. I also created `notes.md` containing the line `fixed add`. Both were done with Edit and Write as requested. I didn't run anything, since there's no test in the directory.",
+      "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0",
+      "subtype": "success",
+      "total_cost_usd": 0.00631813,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 19670,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 19670,
+        "cache_read_input_tokens": 157893,
+        "fallback_credit": null,
+        "inference_geo": "global",
+        "input_tokens": 12,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 150,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 150,
+            "cache_read_input_tokens": 31246,
+            "input_tokens": 2,
+            "output_tokens": 88,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 1608,
+        "output_tokens_details": {
+          "thinking_tokens": 420
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
+    },
+    "signals": [
+      {
+        "cache_read_tokens": 157893,
+        "cache_write_tokens": 19670,
+        "cost_usd": 0.00631813,
+        "input_tokens": 12,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 1608,
+        "signal": "usage"
+      },
+      {
+        "ok": true,
+        "session_id": "3cbbfc46-79f1-466b-ab55-ef25c5d02fd0",
+        "signal": "finished",
+        "text": "Fixed `add` in `calc.py`: it now returns `a + b` instead of `a - b`. I also created `notes.md` containing the line `fixed add`. Both were done with Edit and Write as requested. I didn't run anything, since there's no test in the directory."
+      }
+    ]
+  }
+]

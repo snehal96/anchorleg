@@ -51,6 +51,8 @@ pub trait Launcher {
     fn is_alive(&self, pid: i64) -> bool;
     /// Where an agent CLI is installed, if it is.
     fn find_cli(&self, name: &str) -> Option<PathBuf>;
+    /// Open a file in the app the system picks for it (`open` / `xdg-open`).
+    fn open_file(&self, path: &Path) -> anyhow::Result<()>;
 }
 
 /// The real thing: spawns this same `anchorleg` binary.
@@ -75,6 +77,22 @@ impl Launcher for Processes {
 
     fn stop(&self, run: i64) -> anyhow::Result<()> {
         crate::run::stop(run)
+    }
+
+    fn open_file(&self, path: &Path) -> anyhow::Result<()> {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        std::process::Command::new(opener)
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .with_context(|| format!("running {opener}"))?;
+        Ok(())
     }
 
     fn is_alive(&self, pid: i64) -> bool {
@@ -103,6 +121,17 @@ pub enum Focus {
     Conversation,
     Composer,
     Agents,
+    /// The Changes / Files panel on the right, when it's open.
+    Panel,
+}
+
+/// The side panel's tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    /// Every file the session changed, with its diff, as the CLIs reported it.
+    Changes,
+    /// The files the session created, to open.
+    Files,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,8 +231,12 @@ pub enum Action {
     Help,
     /// Show or hide the usage panel: tokens, cost, credits.
     Usage,
-    /// Show what the selected session changed in its folder since it started.
-    Diff,
+    /// Open the side panel on this tab, or close it when it's showing it already.
+    Panel(Tab),
+    /// Select row n of the side panel's list.
+    PanelPick(usize),
+    /// Open the selected file of the side panel.
+    OpenFile,
     /// Put back the files the selected session changed (press twice).
     Undo,
     Quit,
@@ -218,10 +251,12 @@ pub struct Suggestion {
     insert: String,
 }
 
-/// The selected session's changes, shown over everything (`v`).
-pub struct DiffView {
-    title: String,
-    lines: Vec<String>,
+/// The side panel (`v` / `f`), on the right half while it's open.
+pub struct SidePanel {
+    tab: Tab,
+    /// The selected row of the tab's list.
+    selected: usize,
+    /// Lines scrolled in the diff or preview under the list.
     scroll: usize,
 }
 
@@ -356,7 +391,11 @@ pub struct App {
     /// `!` commands run from the message box, oldest first. Their output goes with the next
     /// message sent in the same folder.
     shell: Vec<Shell>,
-    pub diff_view: Option<DiffView>,
+    /// The CLI's suggested next message for the selected session (Claude `--prompt-suggestions`).
+    next_prompt: Option<String>,
+    pub panel: Option<SidePanel>,
+    /// What the selected session changed, as its CLIs reported it.
+    changes: Vec<anchorleg_core::changes::Change>,
     /// The terminal's height at the last draw (a page for scrolling).
     last_height: u16,
     /// Lines scrolled up from the bottom of the conversation.
@@ -390,6 +429,7 @@ pub struct App {
     session_rows: Option<Rect>,
     agent_rows: Option<Rect>,
     conversation_area: Option<Rect>,
+    panel_area: Option<Rect>,
     composer_area: Option<Rect>,
     pub quit: bool,
 }
@@ -434,7 +474,9 @@ impl App {
             running: None,
             shell: Vec::new(),
             subagents: Vec::new(),
-            diff_view: None,
+            panel: None,
+            changes: Vec::new(),
+            next_prompt: None,
             last_height: 24,
             scroll_up: 0,
             folder,
@@ -456,6 +498,7 @@ impl App {
             session_rows: None,
             agent_rows: None,
             conversation_area: None,
+            panel_area: None,
             composer_area: None,
             quit: false,
         };
@@ -540,6 +583,7 @@ impl App {
         let Some(run) = self.selected_run() else {
             self.conversation.clear();
             self.steps.clear();
+            self.changes.clear();
             self.context = None;
             return;
         };
@@ -563,6 +607,7 @@ impl App {
             .filter_map(|id| self.runs.iter().find(|r| r.id == *id))
             .collect();
         let view = conversation::session_view(&runs, &self.log_dir);
+        self.changes = anchorleg_core::changes::session(&self.log_dir, &chain);
         self.conversation = view.messages;
         self.subagents = view.subagents;
         self.running = match (view.running, self.running.take()) {
@@ -572,6 +617,7 @@ impl App {
         };
         self.context = view.context_tokens.map(|n| (n, view.context_window));
         self.steps = view.steps;
+        self.next_prompt = view.suggestion;
     }
 
     fn agent_count(&self) -> usize {
@@ -638,7 +684,15 @@ impl App {
             Action::Remove => self.remove_agent()?,
             Action::Help => self.help = !self.help,
             Action::Usage => self.usage_panel = !self.usage_panel,
-            Action::Diff => self.open_diff(),
+            Action::Panel(tab) => self.toggle_panel(tab),
+            Action::PanelPick(i) => {
+                if let Some(p) = &mut self.panel {
+                    p.selected = i;
+                    p.scroll = 0;
+                }
+                self.focus = Focus::Panel;
+            }
+            Action::OpenFile => self.open_selected_file()?,
             Action::Undo => self.undo()?,
             Action::Quit => self.quit = true,
         }
@@ -697,6 +751,17 @@ impl App {
             return Vec::new();
         }
         let text = self.message_box.text.as_str();
+        // An empty reply to a session that's done: the CLI's guess at what comes next.
+        if text.is_empty()
+            && let (Some(next), Some(run)) = (&self.next_prompt, self.selected_run())
+            && !Self::is_running(run)
+        {
+            return vec![Suggestion {
+                label: next.clone(),
+                what: "suggested (Tab)".to_owned(),
+                insert: next.clone(),
+            }];
+        }
         if let Some(typed) = text.strip_prefix('/')
             && !typed.contains(' ')
         {
@@ -731,7 +796,7 @@ impl App {
 
     fn slash_suggestions(&self, typed: &str) -> Vec<Suggestion> {
         let v = self.provider().name();
-        let own = [
+        let mut own = vec![
             ("model", format!("anchorleg: model for every {v} account")),
             ("effort", format!("anchorleg: effort for every {v} account")),
             (
@@ -760,6 +825,13 @@ impl App {
                 "anchorleg: <run> <message>: go back to before that run".to_owned(),
             ),
         ];
+        if self.provider() == Vendor::Codex {
+            own.push((
+                "context",
+                "anchorleg: how full the session's context is".to_owned(),
+            ));
+            own.push(("init", "anchorleg: ask Codex to write AGENTS.md".to_owned()));
+        }
         own.into_iter()
             .map(|(n, d)| (n.to_owned(), d))
             .chain(
@@ -1268,6 +1340,19 @@ impl App {
             self.message = format!("new session in {cwd}");
             return Ok(());
         }
+        // Codex has `/context` and `/init` only in its own app. anchorleg answers `/context` from
+        // the session's last token count, and sends what `/init` stands for as the message.
+        if self.provider() == Vendor::Codex && text == "/context" {
+            self.message_box = TextBox::default();
+            self.message = match self.context {
+                Some((n, w)) => format!("context: {}", context_meter(n, w)),
+                None => "no token count yet: send a message first".to_owned(),
+            };
+            return Ok(());
+        }
+        if self.provider() == Vendor::Codex && text == "/init" {
+            self.message_box.set(INIT_PROMPT);
+        }
         // Codex runs its slash commands only in its own app; in a headless session the model
         // would just read "/review" as text.
         if let Some(rest) = text.strip_prefix('/')
@@ -1276,6 +1361,8 @@ impl App {
                 rest.split(' ').next().unwrap_or(""),
                 "model"
                     | "effort"
+                    | "context"
+                    | "init"
                     | "mode"
                     | "fork"
                     | "plan"
@@ -1291,7 +1378,7 @@ impl App {
         {
             let cmd = rest.split(' ').next().unwrap_or("");
             self.message = format!(
-                "Codex runs /{cmd} only in its own app; here: /compact, /clear, /plan, /fork, /mode"
+                "Codex runs /{cmd} only in its own app; here: /compact, /clear, /context, /init, /plan, /fork, /mode"
             );
             return Ok(());
         }
@@ -1617,12 +1704,15 @@ impl App {
     }
 
     fn next_focus(&self, back: bool) -> Focus {
-        let order = [
+        let mut order = vec![
             Focus::Sessions,
             Focus::Conversation,
             Focus::Composer,
             Focus::Agents,
         ];
+        if self.panel.is_some() {
+            order.insert(2, Focus::Panel);
+        }
         let i = order.iter().position(|f| *f == self.focus).unwrap_or(0);
         let n = order.len();
         order[if back { (i + n - 1) % n } else { (i + 1) % n }]
@@ -1636,19 +1726,6 @@ impl App {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         if ctrl && key.code == KeyCode::Char('c') {
             return self.apply(Action::Quit);
-        }
-        if let Some(d) = &mut self.diff_view {
-            let page = usize::from(self.last_height.saturating_sub(4)).max(1);
-            match key.code {
-                KeyCode::Up | KeyCode::Char('k') => d.scroll = d.scroll.saturating_sub(1),
-                KeyCode::Down | KeyCode::Char('j') => d.scroll += 1,
-                KeyCode::PageUp => d.scroll = d.scroll.saturating_sub(page),
-                KeyCode::PageDown | KeyCode::Char(' ') => d.scroll += page,
-                KeyCode::Home => d.scroll = 0,
-                KeyCode::End => d.scroll = usize::MAX,
-                _ => self.diff_view = None,
-            }
-            return Ok(());
         }
         if self.help || self.usage_panel {
             self.help = false;
@@ -1743,12 +1820,62 @@ impl App {
             return Ok(());
         }
 
+        if self.focus == Focus::Panel
+            && let Some(p) = &mut self.panel
+        {
+            let rows = match p.tab {
+                Tab::Changes => self.changes.len(),
+                Tab::Files => created(&self.changes).len(),
+            };
+            let page = usize::from(self.last_height / 2).max(1);
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    p.selected = p.selected.saturating_sub(1);
+                    p.scroll = 0;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    p.selected = (p.selected + 1).min(rows.saturating_sub(1));
+                    p.scroll = 0;
+                }
+                KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(page),
+                KeyCode::PageDown | KeyCode::Char(' ') => p.scroll += page,
+                KeyCode::Left | KeyCode::Right => {
+                    p.tab = match p.tab {
+                        Tab::Changes => Tab::Files,
+                        Tab::Files => Tab::Changes,
+                    };
+                    p.selected = 0;
+                    p.scroll = 0;
+                }
+                KeyCode::Enter | KeyCode::Char('o') => return self.open_selected_file(),
+                KeyCode::Esc => {
+                    self.panel = None;
+                    self.focus = Focus::Conversation;
+                }
+                _ => {}
+            }
+            if matches!(
+                key.code,
+                KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Char('k' | 'j' | ' ')
+                    | KeyCode::PageUp
+                    | KeyCode::PageDown
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Esc
+            ) {
+                return Ok(());
+            }
+        }
+
         // Keys that work in every other pane.
         let action = match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Some(Action::Quit),
             KeyCode::Char('?') => Some(Action::Help),
             KeyCode::Char('u') => Some(Action::Usage),
-            KeyCode::Char('v') => Some(Action::Diff),
+            KeyCode::Char('v') => Some(Action::Panel(Tab::Changes)),
+            KeyCode::Char('f') => Some(Action::Panel(Tab::Files)),
             KeyCode::Char('U') => Some(Action::Undo),
             KeyCode::Char('n') => Some(Action::NewSession),
             KeyCode::Char('/') | KeyCode::Char('m') => Some(Action::Focus(Focus::Composer)),
@@ -1789,6 +1916,8 @@ impl App {
         }
 
         match self.focus {
+            // Its keys are handled above, before the ones every pane shares.
+            Focus::Panel => {}
             Focus::Sessions => match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.select_session(self.selected.saturating_sub(1));
@@ -1837,20 +1966,17 @@ impl App {
         let pos = Position::new(m.column, m.row);
         let over = |r: Option<Rect>| r.is_some_and(|r| r.contains(pos));
         match m.kind {
-            MouseEventKind::ScrollUp if self.diff_view.is_some() => {
-                if let Some(d) = &mut self.diff_view {
-                    d.scroll = d.scroll.saturating_sub(3);
+            MouseEventKind::ScrollUp if over(self.panel_area) => {
+                if let Some(p) = &mut self.panel {
+                    p.scroll = p.scroll.saturating_sub(3);
                 }
             }
-            MouseEventKind::ScrollDown if self.diff_view.is_some() => {
-                if let Some(d) = &mut self.diff_view {
-                    d.scroll += 3;
+            MouseEventKind::ScrollDown if over(self.panel_area) => {
+                if let Some(p) = &mut self.panel {
+                    p.scroll += 3;
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.diff_view.take().is_some() {
-                    return Ok(());
-                }
                 if self.help || self.usage_panel {
                     self.help = false;
                     self.usage_panel = false;
@@ -1894,6 +2020,9 @@ impl App {
         if self.conversation_area.is_some_and(|r| r.contains(pos)) {
             return Some(Action::Focus(Focus::Conversation));
         }
+        if self.panel_area.is_some_and(|r| r.contains(pos)) {
+            return Some(Action::Focus(Focus::Panel));
+        }
         None
     }
 
@@ -1920,6 +2049,15 @@ impl App {
             .clamp(6, 16);
         let [sessions, agents] =
             Layout::vertical([Constraint::Min(5), Constraint::Length(agents_height)]).areas(left);
+        // The side panel takes the right half of the session's side while it's open.
+        let (right, side) = if self.panel.is_some() {
+            let [work, side] =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(right);
+            (work, Some(side))
+        } else {
+            (right, None)
+        };
         let composer_height = if self.selected == 0 { 4 } else { 3 };
         let [convo, composer] =
             Layout::vertical([Constraint::Min(4), Constraint::Length(composer_height)])
@@ -1945,6 +2083,10 @@ impl App {
         self.draw_agents(f, agents);
         self.draw_conversation(f, convo);
         self.draw_composer(f, composer);
+        self.panel_area = side;
+        if let Some(side) = side {
+            self.draw_panel(f, side);
+        }
         self.draw_suggestions(f, convo);
         self.draw_footer(f, footer);
         if self.help {
@@ -1954,9 +2096,6 @@ impl App {
             self.draw_usage(f);
         }
         self.last_height = f.area().height;
-        if self.diff_view.is_some() {
-            self.draw_diff(f);
-        }
     }
 
     /// `/mode [ask|edits|auto]`: the selected session's permission mode (its follow-ups use it), or
@@ -2036,57 +2175,199 @@ impl App {
         Ok(())
     }
 
-    /// `v`: the selected session's changes since it started (`anchorleg diff`).
-    fn open_diff(&mut self) {
-        let Some(run) = self.selected_run().cloned() else {
-            self.message = "select a session to see its changes".to_owned();
-            return;
-        };
-        let chain = self.store.session_runs(run.id).unwrap_or_default();
-        match anchorleg_core::checkpoint::session_diff(Path::new(&run.cwd), &chain, false) {
-            Ok(Some(d)) if d.trim().is_empty() => {
-                self.message = format!("#{}: no changes yet", run.id);
+    /// `v` / `f`: open the side panel on `tab`, or close it when it's showing that tab.
+    fn toggle_panel(&mut self, tab: Tab) {
+        match &self.panel {
+            Some(p) if p.tab == tab => {
+                self.panel = None;
+                if self.focus == Focus::Panel {
+                    self.focus = Focus::Conversation;
+                }
             }
-            Ok(Some(d)) => {
-                self.diff_view = Some(DiffView {
-                    title: format!(" Changes in #{} since it started ", run.id),
-                    lines: d.lines().map(str::to_owned).collect(),
+            _ => {
+                if self.selected_run().is_none() {
+                    self.message = "select a session to see its changes and files".to_owned();
+                    return;
+                }
+                self.panel = Some(SidePanel {
+                    tab,
+                    selected: 0,
                     scroll: 0,
                 });
+                self.focus = Focus::Panel;
             }
-            Ok(None) => {
-                self.message = format!(
-                    "#{}: no start to compare with (not a git repository, or an older session)",
-                    run.id
-                );
-            }
-            Err(e) => self.message = format!("couldn't diff #{}: {e}", run.id),
         }
     }
 
-    fn draw_diff(&mut self, f: &mut Frame) {
-        let area = f.area();
-        let rect = Rect::new(
-            area.x + 1,
-            area.y + 1,
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(2),
-        );
-        let Some(d) = &mut self.diff_view else {
+    /// The side panel's rows: (path shown, change), for its tab.
+    fn panel_rows(&self, tab: Tab) -> Vec<&anchorleg_core::changes::Change> {
+        match tab {
+            Tab::Changes => self.changes.iter().collect(),
+            Tab::Files => created(&self.changes),
+        }
+    }
+
+    /// Enter in the side panel: open the selected file in the app the system picks.
+    fn open_selected_file(&mut self) -> anyhow::Result<()> {
+        let Some(p) = &self.panel else {
+            return Ok(());
+        };
+        let Some(c) = self
+            .panel_rows(p.tab)
+            .get(p.selected)
+            .map(|c| c.path.clone())
+        else {
+            return Ok(());
+        };
+        let path = PathBuf::from(&c);
+        if !path.exists() {
+            self.message = format!("{c} isn't there any more");
+            return Ok(());
+        }
+        self.launcher.open_file(&path)?;
+        self.message = format!("opened {c}");
+        Ok(())
+    }
+
+    fn draw_panel(&mut self, f: &mut Frame, area: Rect) {
+        let Some(tab) = self.panel.as_ref().map(|p| p.tab) else {
             return;
         };
-        let height = usize::from(rect.height.saturating_sub(2));
-        d.scroll = d.scroll.min(d.lines.len().saturating_sub(height));
-        let lines: Vec<Line> = d
-            .lines
+        let cwd = self
+            .selected_run()
+            .map(|r| r.cwd.clone())
+            .unwrap_or_default();
+        let block = self.pane("", Focus::Panel);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        // Tabs on the top border, clickable.
+        let files = created(&self.changes).len();
+        let mut x = area.x + 2;
+        for (label, t) in [
+            (format!("Changes ({})", self.changes.len()), Tab::Changes),
+            (format!("Files ({files})"), Tab::Files),
+        ] {
+            let style = if t == tab {
+                Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(Color::DarkGray)
+            };
+            let text = format!(" {label} ");
+            let width = u16::try_from(text.chars().count()).unwrap_or(0);
+            let rect = Rect::new(x, area.y, width.min(area.right().saturating_sub(x)), 1);
+            f.render_widget(Paragraph::new(Span::styled(text, style)), rect);
+            self.hits.push((rect, Action::Panel(t)));
+            x += width + 1;
+        }
+        let rows: Vec<anchorleg_core::changes::Change> =
+            self.panel_rows(tab).into_iter().cloned().collect();
+        if rows.is_empty() {
+            let note = match tab {
+                Tab::Changes => "No file changes reported in this session yet.",
+                Tab::Files => "This session hasn't created any files yet.",
+            };
+            f.render_widget(
+                Paragraph::new(Span::styled(note, Style::new().fg(Color::DarkGray))),
+                inner,
+            );
+            return;
+        }
+        let list_height = u16::try_from(rows.len())
+            .unwrap_or(u16::MAX)
+            .min(inner.height / 3)
+            .max(1);
+        let [list, rule, body] = Layout::vertical([
+            Constraint::Length(list_height),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(inner);
+        let Some(p) = &mut self.panel else {
+            return;
+        };
+        p.selected = p.selected.min(rows.len() - 1);
+        let (selected, skip) = (
+            p.selected,
+            p.selected
+                .saturating_sub(usize::from(list_height).saturating_sub(1)),
+        );
+        let mut hits = Vec::new();
+        let width = usize::from(list.width);
+        for (i, c) in rows
             .iter()
-            .skip(d.scroll)
+            .enumerate()
+            .skip(skip)
+            .take(usize::from(list_height))
+        {
+            let y = list.y + u16::try_from(i - skip).unwrap_or(0);
+            let rel = anchorleg_core::changes::relative(&c.path, &cwd);
+            let (mark, color) = match c.kind {
+                anchorleg_core::changes::Kind::Created => ("A", Color::Green),
+                anchorleg_core::changes::Kind::Modified => ("M", Color::Yellow),
+                anchorleg_core::changes::Kind::Deleted => ("D", Color::Red),
+            };
+            let counts = if c.has_diff {
+                format!("+{} -{}", c.added, c.removed)
+            } else {
+                "no diff".to_owned()
+            };
+            let gone = tab == Tab::Files && !Path::new(&c.path).exists();
+            let name_room = width.saturating_sub(counts.len() + 4);
+            let mut line = Line::from(vec![
+                Span::styled(format!("{mark} "), Style::new().fg(color)),
+                Span::raw(format!(
+                    "{:<name_room$} ",
+                    truncate_left(
+                        &format!("{rel}{}", if gone { " (gone)" } else { "" }),
+                        name_room
+                    )
+                )),
+                Span::styled(counts, Style::new().fg(Color::DarkGray)),
+            ]);
+            if i == selected {
+                line = line.style(Style::new().add_modifier(Modifier::REVERSED));
+            }
+            let rect = Rect::new(list.x, y, list.width, 1);
+            f.render_widget(Paragraph::new(line), rect);
+            hits.push((rect, Action::PanelPick(i)));
+        }
+        self.hits.extend(hits);
+        let c = &rows[selected];
+        let hint = match tab {
+            Tab::Changes => "↑↓ file · PgUp PgDn scroll · ←→ tab · Enter open · Esc close",
+            Tab::Files => "↑↓ file · Enter opens it · ←→ tab · Esc close",
+        };
+        let open_x = rule.right().saturating_sub(8);
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                truncate(hint, usize::from(rule.width.saturating_sub(9))),
+                Style::new().fg(Color::DarkGray),
+            )),
+            rule,
+        );
+        if open_x > rule.x {
+            self.button(f, rule, open_x, "Open", Action::OpenFile);
+        }
+        // Under the list: the file's diff, or for Files a look at what's in it.
+        let text: Vec<String> = match tab {
+            Tab::Changes if c.has_diff => c.diff.lines().map(str::to_owned).collect(),
+            Tab::Changes => {
+                vec!["This CLI names the file it changed but doesn't report the diff.".to_owned()]
+            }
+            Tab::Files => preview(&c.path),
+        };
+        let height = usize::from(body.height);
+        let Some(p) = &mut self.panel else {
+            return;
+        };
+        p.scroll = p.scroll.min(text.len().saturating_sub(height));
+        let lines: Vec<Line> = text
+            .iter()
+            .skip(p.scroll)
             .take(height)
             .map(|l| {
-                let style = if l.starts_with("diff --git") {
-                    Style::new().add_modifier(Modifier::BOLD)
-                } else if l.starts_with("+++") || l.starts_with("---") {
-                    Style::new().fg(Color::DarkGray)
+                let style = if tab == Tab::Files {
+                    Style::new()
                 } else if l.starts_with('+') {
                     Style::new().fg(Color::Green)
                 } else if l.starts_with('-') {
@@ -2096,26 +2377,13 @@ impl App {
                 } else {
                     Style::new()
                 };
-                Line::from(Span::styled(l.replace('\t', "    "), style))
+                Line::from(Span::styled(
+                    truncate(&l.replace('\t', "    "), usize::from(body.width)),
+                    style,
+                ))
             })
             .collect();
-        let shown = format!(
-            " {}–{} of {} · ↑↓ PgUp PgDn · any other key closes ",
-            (d.scroll + 1).min(d.lines.len()),
-            (d.scroll + height).min(d.lines.len()),
-            d.lines.len()
-        );
-        f.render_widget(Clear, rect);
-        f.render_widget(
-            Paragraph::new(lines).block(
-                Block::new()
-                    .borders(Borders::ALL)
-                    .border_style(Style::new().fg(Color::Cyan))
-                    .title(d.title.clone())
-                    .title_bottom(shown),
-            ),
-            rect,
-        );
+        f.render_widget(Paragraph::new(lines), body);
     }
 
     fn pane(&self, title: &str, focus: Focus) -> Block<'static> {
@@ -2353,6 +2621,22 @@ impl App {
         let mut inner = block.inner(area);
         f.render_widget(block, area);
         self.conversation_area = Some(area);
+        // The files this session made, one click away (opens the Files tab).
+        let made = created(&self.changes).len();
+        if made > 0 && self.panel.is_none() {
+            let label = format!("Files ({made}) ▾");
+            let width = u16::try_from(label.chars().count() + 2).unwrap_or(0);
+            let x = area.right().saturating_sub(width + 2);
+            if x > area.x + 20 {
+                self.button(
+                    f,
+                    Rect::new(x, area.y, width, 1),
+                    x,
+                    &label,
+                    Action::Panel(Tab::Files),
+                );
+            }
+        }
         if let Some(p) = self.waiting().cloned()
             && inner.height > 6
         {
@@ -2828,7 +3112,8 @@ impl App {
             ("Send (⏎)", Action::Send),
             ("Stop (s)", Action::Stop),
             ("Usage (u)", Action::Usage),
-            ("Changes (v)", Action::Diff),
+            ("Changes (v)", Action::Panel(Tab::Changes)),
+            ("Files (f)", Action::Panel(Tab::Files)),
             ("Help (?)", Action::Help),
             ("Quit (q)", Action::Quit),
         ] {
@@ -2962,7 +3247,44 @@ impl App {
     }
 }
 
+/// `text` cut to `width` characters from the left, so a path keeps its file name: `…/a/b.rs`.
+fn truncate_left(text: &str, width: usize) -> String {
+    let n = text.chars().count();
+    if n <= width {
+        return text.to_owned();
+    }
+    let keep: String = text.chars().skip(n - width.saturating_sub(1)).collect();
+    format!("…{keep}")
+}
+
+/// The files a session created and didn't delete again.
+fn created(changes: &[anchorleg_core::changes::Change]) -> Vec<&anchorleg_core::changes::Change> {
+    changes
+        .iter()
+        .filter(|c| c.kind == anchorleg_core::changes::Kind::Created)
+        .collect()
+}
+
+/// The first lines of a file, for the Files tab: text only.
+fn preview(path: &str) -> Vec<String> {
+    use std::io::Read as _;
+    let mut buf = Vec::new();
+    match std::fs::File::open(path).and_then(|f| f.take(64 * 1024).read_to_end(&mut buf)) {
+        Err(_) => vec!["(not there any more)".to_owned()],
+        Ok(_) => match std::str::from_utf8(&buf) {
+            Ok(text) => text.lines().take(500).map(str::to_owned).collect(),
+            Err(_) => vec!["(not text: Enter opens it)".to_owned()],
+        },
+    }
+}
+
 /// `ctx 42k/200k (21%)`, or `ctx 42k` when the window isn't known.
+/// What Codex's `/init` asks for, sent as a message where the command isn't available.
+const INIT_PROMPT: &str = "Look through this repository and write an AGENTS.md at its root: a \
+     short guide for coding agents with the project's layout, how to build, test and lint it, \
+     and the conventions the code follows. Keep it under 300 lines; if an AGENTS.md exists, \
+     improve it instead of starting over.";
+
 fn context_meter(tokens: u64, window: Option<u64>) -> String {
     let short = |n: u64| match n {
         n if n >= 1_000_000 && n % 1_000_000 == 0 => format!("{}M", n / 1_000_000),
@@ -3029,7 +3351,8 @@ fn draw_help(f: &mut Frame) {
         "  / or m            type a message (new task or reply)",
         "  s                 stop the selected session",
         "  u                 usage: tokens, API price, credits",
-        "  v                 the selected session's changes since it started (a diff)",
+        "  v                 Changes panel: every file the session changed, with its diff",
+        "  f                 Files panel: files the session created (Enter opens one)",
         "  U U               undo them: files go back to how the session found them",
         "Message box (more)  Ctrl+V paste an image · drop a file to attach it",
         "                    while a session works: Enter sends to it · Ctrl+X interrupts first",
@@ -3420,6 +3743,7 @@ mod tests {
     struct Calls {
         started: Vec<Vec<String>>,
         stopped: Vec<i64>,
+        opened: Vec<PathBuf>,
     }
 
     struct FakeLauncher(Rc<RefCell<Calls>>);
@@ -3438,6 +3762,10 @@ mod tests {
         }
         fn find_cli(&self, name: &str) -> Option<PathBuf> {
             (name == "cursor-agent").then(|| PathBuf::from("/bin/cursor-agent"))
+        }
+        fn open_file(&self, path: &Path) -> anyhow::Result<()> {
+            self.0.borrow_mut().opened.push(path.to_owned());
+            Ok(())
         }
     }
 
@@ -4057,6 +4385,88 @@ mod tests {
     }
 
     #[test]
+    fn files_the_session_made_are_a_click_away() {
+        let mut fx = fixture(
+            &[("personal", 1)],
+            &[("write notes", RunState::Done, Some("s1"))],
+        );
+        let made = fx.dir.path().join("notes.md");
+        std::fs::write(&made, "fixed add\n").unwrap();
+        let write = serde_json::json!({ "type": "user", "tool_use_result": { "type": "create",
+            "filePath": made, "content": "fixed add\n", "structuredPatch": [] } });
+        std::fs::write(fx.dir.path().join("runs/run-1.jsonl"), format!("{write}\n")).unwrap();
+        fx.app.refresh().unwrap();
+        fx.app.select_session(1);
+        let s = screen(&mut fx.app);
+        assert!(s.contains("Files (1) ▾"), "{s}");
+        // A click on it opens the Files tab, with what's in the file.
+        click(&mut fx.app, "Files (1) ▾");
+        let s = screen(&mut fx.app);
+        assert!(s.contains("Files (1)") && s.contains("notes.md"), "{s}");
+        assert!(s.contains("fixed add"), "{s}");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.calls.borrow().opened, [made]);
+        // Esc closes the panel, not the UI.
+        key(&mut fx.app, KeyCode::Esc);
+        assert!(fx.app.panel.is_none() && !fx.app.quit);
+    }
+
+    #[test]
+    fn codex_gets_context_and_init_from_anchorleg() {
+        let mut fx = fixture(&[("personal", 1)], &[("hi", RunState::Done, Some("t1"))]);
+        let config = fx.dir.path().join("config.toml");
+        let text = std::fs::read_to_string(&config).unwrap();
+        std::fs::write(&config, text.replace("\"claude\"", "\"codex\"")).unwrap();
+        fx.app.refresh().unwrap();
+        key(&mut fx.app, KeyCode::Char('/'));
+        typed(&mut fx.app, "/con");
+        assert!(screen(&mut fx.app).contains("how full the session"));
+
+        fx.app.message_box = TextBox::default();
+        typed(&mut fx.app, "/context");
+        key(&mut fx.app, KeyCode::Enter);
+        assert!(
+            fx.app.message.contains("no token count yet"),
+            "{}",
+            fx.app.message
+        );
+        assert!(fx.calls.borrow().started.is_empty());
+        fx.app.context = Some((48_000, Some(258_000)));
+        typed(&mut fx.app, "/context");
+        key(&mut fx.app, KeyCode::Enter);
+        assert_eq!(fx.app.message, "context: ctx 48k/258k (18%)");
+
+        // `/init` goes as the request it stands for, a follow-up of the session.
+        typed(&mut fx.app, "/init");
+        key(&mut fx.app, KeyCode::Enter);
+        let started = fx.calls.borrow().started.clone();
+        assert_eq!(started.len(), 1, "{started:?}");
+        assert!(started[0].contains(&INIT_PROMPT.to_owned()), "{started:?}");
+    }
+
+    #[test]
+    fn the_clis_suggested_next_message_is_one_tab_away() {
+        let mut fx = fixture(&[("personal", 1)], &[("hi", RunState::Done, Some("s1"))]);
+        std::fs::write(
+            fx.dir.path().join("runs/run-1.jsonl"),
+            r#"{"type":"result","session_id":"s1","result":"add subtracts"}
+{"type":"prompt_suggestion","suggestion":"fix the add function"}"#,
+        )
+        .unwrap();
+        fx.app.refresh().unwrap();
+        key(&mut fx.app, KeyCode::Char('/'));
+        assert!(fx.app.message_box.text.is_empty());
+        let s = screen(&mut fx.app);
+        assert!(s.contains("fix the add function"), "{s}");
+        key(&mut fx.app, KeyCode::Tab);
+        assert_eq!(fx.app.message_box.text, "fix the add function");
+        // Once you type, it's gone.
+        fx.app.message_box = TextBox::default();
+        typed(&mut fx.app, "no");
+        assert!(!screen(&mut fx.app).contains("fix the add function"));
+    }
+
+    #[test]
     fn slash_model_and_effort_set_the_provider_and_others_complete() {
         let mut fx = fixture(&[("personal", 1)], &[("hi", RunState::Done, Some("s1"))]);
         std::fs::write(
@@ -4324,9 +4734,13 @@ mod tests {
         let usage =
             r#"{"type":"assistant","message":{"usage":{"input_tokens":42000},"content":[]}}"#;
         let result = r#"{"type":"result","modelUsage":{"m":{"contextWindow":200000}}}"#;
+        // What Claude Code reports for the edit (fixture claude-2.1.300-edit-write-20261015).
+        let edit = serde_json::json!({ "type": "user", "tool_use_result": {
+            "filePath": repo.join("a.txt"), "structuredPatch": [{ "oldStart": 1, "oldLines": 1,
+            "newStart": 1, "newLines": 2, "lines": [" one", "+two"] }] } });
         std::fs::write(
             fx.dir.path().join(format!("runs/run-{id}.jsonl")),
-            format!("{todo}\n{usage}\n{result}\n"),
+            format!("{todo}\n{usage}\n{edit}\n{result}\n"),
         )
         .unwrap();
         fx.app.refresh().unwrap();
@@ -4341,15 +4755,13 @@ mod tests {
         );
         assert!(s.contains("◻ Run the tests"), "{s}");
 
+        // `v`: the side panel with what the CLI reported changing.
         key(&mut fx.app, KeyCode::Char('v'));
         let s = screen(&mut fx.app);
-        assert!(
-            s.contains(&format!("Changes in #{id} since it started")),
-            "{s}"
-        );
-        assert!(s.contains("+two"), "{s}");
-        key(&mut fx.app, KeyCode::Char('x'));
-        assert!(fx.app.diff_view.is_none());
+        assert!(s.contains("Changes (1)") && s.contains("M a.txt"), "{s}");
+        assert!(s.contains("+1 -0") && s.contains("+two"), "{s}");
+        key(&mut fx.app, KeyCode::Char('v'));
+        assert!(fx.app.panel.is_none());
 
         // Undo asks first, then puts the file back.
         key(&mut fx.app, KeyCode::Char('U'));
