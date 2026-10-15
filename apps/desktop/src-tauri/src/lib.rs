@@ -159,10 +159,34 @@ async fn start(req: Start) -> Result<Value, String> {
     blocking(move || cli::json(&args)).await
 }
 
-/// What a session changed in its folder since it started (`anchorleg diff`), as a unified diff.
+/// Open a web link (`http(s)` only) in the browser, or an existing file in the app the system
+/// picks for it. Anything else is refused: the target comes from what an agent or MCP server said.
+#[tauri::command]
+async fn open_target(target: String) -> Result<(), String> {
+    let ok = target.starts_with("https://")
+        || target.starts_with("http://")
+        || std::path::Path::new(&target).is_file();
+    if !ok {
+        return Err(format!("not a web link or a file: {target}"));
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(opener)
+        .arg(&target)
+        .spawn()
+        .map(drop)
+        .map_err(|e| e.to_string())
+}
+
+/// The session's folder compared with how it found it (`anchorleg diff --git`), as a unified
+/// diff: catches what shell commands changed too. The files the CLIs reported come with the
+/// session (`changes`).
 #[tauri::command]
 async fn diff(run: i64) -> Result<String, String> {
-    blocking(move || cli::text(&["diff".to_owned(), run.to_string()])).await
+    blocking(move || cli::text(&["diff".to_owned(), run.to_string(), "--git".to_owned()])).await
 }
 
 /// `preview` (the files, nothing changes), `undo` or `redo` a session's changes.
@@ -299,6 +323,7 @@ pub fn run() {
             session,
             start,
             diff,
+            open_target,
             undo,
             shell,
             send,

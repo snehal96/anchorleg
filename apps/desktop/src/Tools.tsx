@@ -1,8 +1,8 @@
 // Beside a session's conversation: what it changed (diff, undo / redo, review) and the side
 // questions asked of it (`/btw`).
 import { useEffect, useState } from "react";
-import { diff, session, start, undo, type Run, type Session } from "./api";
-import { question } from "./sessions";
+import { diff, openTarget, session, start, undo, type FileChange, type Run, type Session } from "./api";
+import { question, tilde } from "./sessions";
 
 export type ToolTab = "changes" | "side";
 
@@ -26,7 +26,7 @@ export default function Tools({
     <aside className="tools">
       <div className="tools-head">
         <button className={tab === "changes" ? "tab active" : "tab"} onClick={() => onTab("changes")}>
-          Changed files
+          Changed files{view.changes?.length ? ` (${view.changes.length})` : ""}
         </button>
         <button className={tab === "side" ? "tab active" : "tab"} onClick={() => onTab("side")}>
           Side questions{side.length ? ` (${side.length})` : ""}
@@ -44,6 +44,9 @@ export default function Tools({
 function Changes({ view, onStarted }: { view: Session; onStarted: (run: number) => void }) {
   const run = view.run.id;
   const [text, setText] = useState<string | null>(null);
+  // The files the CLIs reported, or the whole folder compared with git (catches shell edits).
+  const [whole, setWhole] = useState(false);
+  const reported = view.changes;
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null | undefined>(undefined);
   const [note, setNote] = useState<string | null>(null);
@@ -57,8 +60,9 @@ function Changes({ view, onStarted }: { view: Session; onStarted: (run: number) 
     setText(null);
     setPreview(undefined);
     setNote(null);
-    load();
-  }, [run]);
+    // An older CLI sends no `changes`: compare the folder instead.
+    if (whole || reported === undefined) load();
+  }, [run, whole]);
   const act = async (f: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -74,9 +78,16 @@ function Changes({ view, onStarted }: { view: Session; onStarted: (run: number) 
   return (
     <div className="tools-body">
       <div className="tools-actions">
-        <button className="secondary small" disabled={busy} onClick={load}>
-          Refresh
-        </button>
+        {reported !== undefined && (
+          <label className="check small" title="Compare the whole folder with how the task found it (git); catches files changed by commands too">
+            <input type="checkbox" checked={whole} onChange={(e) => setWhole(e.target.checked)} /> Whole folder
+          </label>
+        )}
+        {(whole || reported === undefined) && (
+          <button className="secondary small" disabled={busy} onClick={load}>
+            Refresh
+          </button>
+        )}
         <button
           className="secondary small"
           disabled={busy || working}
@@ -129,8 +140,48 @@ function Changes({ view, onStarted }: { view: Session; onStarted: (run: number) 
       )}
       {note && <p className="ok small">{note}</p>}
       {error && <p className="error small">{error}</p>}
-      {text != null && (text.trim() === "" || text.startsWith("no changes") ? <p className="muted">No files have changed since the task started.</p> : <Diff text={text} />)}
+      {reported !== undefined && !whole ? (
+        <Reported files={reported} cwd={view.run.cwd} />
+      ) : (
+        text != null && (text.trim() === "" || text.startsWith("no changes") ? <p className="muted">No files have changed since the task started.</p> : <Diff text={text} />)
+      )}
     </div>
+  );
+}
+
+/** The files the session changed, as its CLIs reported them; the selected one's diff below. */
+function Reported({ files, cwd }: { files: FileChange[]; cwd: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  if (files.length === 0) return <p className="muted">No files changed yet.</p>;
+  const sel = files.find((f) => f.path === open) ?? files[0];
+  const rel = (p: string) => (p.startsWith(cwd + "/") ? p.slice(cwd.length + 1) : tilde(p));
+  return (
+    <>
+      <ul className="changed-files">
+        {files.map((f) => (
+          <li key={f.path}>
+            <button className={`changed-file ${f === sel ? "selected" : ""}`} onClick={() => setOpen(f.path)} title={f.path}>
+              <span className={`change-kind kind-${f.kind}`}>{f.kind === "created" ? "new" : f.kind === "deleted" ? "gone" : "edit"}</span>
+              <span className="mono grow ellipsis">{rel(f.path)}</span>
+              {f.has_diff && (
+                <span className="mono small">
+                  <span className="add-n">+{f.added}</span> <span className="del-n">−{f.removed}</span>
+                </span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {sel.kind !== "deleted" && (
+        <div className="tools-actions">
+          <span className="mono small muted ellipsis grow">{rel(sel.path)}</span>
+          <button className="secondary small" onClick={() => openTarget(sel.path).catch(() => {})} title="Open it in the app your system uses for it">
+            Open
+          </button>
+        </div>
+      )}
+      {sel.has_diff ? <Diff text={sel.diff} /> : <p className="muted small">The agent named this file but didn't send what changed (Antigravity). Turn on “Whole folder” to compare it.</p>}
+    </>
   );
 }
 

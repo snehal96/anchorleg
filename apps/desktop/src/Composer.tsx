@@ -3,7 +3,9 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { files, rename, send, shell, start, type Session } from "./api";
 import { pastedImages } from "./paste";
+import { short } from "./sessions";
 import { Icon, Menu, Modal } from "./ui";
+import { useVendors } from "./vendors";
 
 /** Typed shortcuts for people who like them; every one is also a button or menu item. */
 const OWN: [string, string][] = [
@@ -17,6 +19,16 @@ const OWN: [string, string][] = [
   ["goal", "<condition>: keep going until it holds"],
 ];
 const MAX_SUGGESTIONS = 8;
+
+/** Codex has `/context` and `/init` only in its own app; anchorleg stands in for them. */
+const CODEX_OWN: [string, string][] = [
+  ["context", "how full the agent's memory is"],
+  ["init", "write or improve AGENTS.md for this project"],
+];
+
+/** What Codex's `/init` asks for, sent as the message (as `anchorleg ui` does). */
+const INIT_PROMPT =
+  "Look through this repository and write an AGENTS.md at its root: a short guide for coding agents with the project's layout, how to build, test and lint it, and the conventions the code follows. Keep it under 300 lines; if an AGENTS.md exists, improve it instead of starting over.";
 
 /**
  * The reply box of a task. Send replies (`run --follow-up`); while the agent works, a message
@@ -50,6 +62,9 @@ export default function Composer({
   const box = useRef<HTMLTextAreaElement>(null);
   const folder = view.run.cwd;
   const working = view.working;
+  const codex = useVendors().ofAccount(view.run.account)?.vendor === "codex";
+  // Claude's guess at the next message: shown in an empty box, Tab puts it in.
+  const guess = !working && view.suggestion ? view.suggestion : null;
 
   // Files dropped on the window go with the message.
   useEffect(() => {
@@ -76,12 +91,13 @@ export default function Composer({
     const slash = text.match(/^\/(\S*)$/);
     if (slash) {
       const typed = slash[1].toLowerCase();
-      const theirs = (view.slash_commands ?? []).filter((c) => !OWN.some(([n]) => n === c)).map((c): [string, string] => [c, "the agent's command"]);
-      return [...OWN, ...theirs].filter(([n]) => n.toLowerCase().startsWith(typed)).slice(0, MAX_SUGGESTIONS);
+      const own = codex ? [...OWN, ...CODEX_OWN] : OWN;
+      const theirs = (view.slash_commands ?? []).filter((c) => !own.some(([n]) => n === c)).map((c): [string, string] => [c, "the agent's command"]);
+      return [...own, ...theirs].filter(([n]) => n.toLowerCase().startsWith(typed)).slice(0, MAX_SUGGESTIONS);
     }
     if (atWord && list?.folder === folder) return match(list.files, atWord[2]).map((f): [string, string] => [f, ""]);
     return [];
-  }, [text, view, atWord, list, folder]);
+  }, [text, view, atWord, list, folder, codex]);
   useEffect(() => setPick(0), [suggestions.length]);
 
   const complete = (choice: string) => {
@@ -123,6 +139,15 @@ export default function Composer({
         const out = await shell(folder, command);
         setShellOut((o) => [...o, `$ ${command}\n${out}`]);
         done("The output goes with your next message.");
+      } else if (codex && cmd === "context" && !arg) {
+        const { tokens, window: w } = view.context;
+        done(tokens == null ? "No token count yet: send a message first." : `Memory: ${short(tokens)}${w ? ` of ${short(w)} tokens (${Math.round((tokens * 100) / w)}%)` : " tokens"}.`);
+      } else if (codex && cmd === "init" && !arg) {
+        if (working) throw "Wait until it finishes, or stop it first.";
+        const r = await start({ text: withShell(INIT_PROMPT), follow_up: view.run.id, mode: mode ?? undefined });
+        sent();
+        done("Asked it to write AGENTS.md.");
+        onStarted(r.run_id);
       } else if (cmd === "clear") {
         done("");
         onNew(folder);
@@ -180,6 +205,11 @@ export default function Composer({
   };
 
   const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Tab" && guess && !text) {
+      e.preventDefault();
+      setText(guess);
+      return;
+    }
     if (suggestions.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -238,7 +268,7 @@ export default function Composer({
         ref={box}
         rows={Math.min(8, Math.max(2, text.split("\n").length))}
         value={text}
-        placeholder={working ? "Write a message for the agent…" : "Reply to the agent…"}
+        placeholder={working ? "Write a message for the agent…" : guess ? `${guess}  (Tab)` : "Reply to the agent…"}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKey}
         onPaste={(e) =>

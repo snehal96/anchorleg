@@ -90,6 +90,20 @@ export interface Session {
   steps: { text: string; status: "pending" | "in_progress" | "done" }[];
   context: { tokens: number | null; window: number | null };
   slash_commands: string[] | null;
+  /** Claude's guess at the next message (prompt suggestions on); older CLIs leave it out. */
+  suggestion?: string | null;
+  /** Every file the session changed, as its CLIs reported it. */
+  changes?: FileChange[];
+}
+
+export interface FileChange {
+  path: string;
+  kind: "created" | "modified" | "deleted";
+  diff: string;
+  added: number;
+  removed: number;
+  /** False when the CLI named the file but sent no diff (Antigravity). */
+  has_diff: boolean;
 }
 
 export const session = (run: number, since = 0) => invoke<Session>("session", { run, since });
@@ -338,6 +352,9 @@ export const updateTray = (title: string | null, lines: string[], waiting: numbe
 // ---- Session tools and the rest of the settings (M4) ----------------------------------------------
 
 /** What a session changed since it started, as a unified diff (git folders). */
+/** Open an http(s) link in the browser, or an existing file in its app. */
+export const openTarget = (target: string) => invoke<void>("open_target", { target });
+/** `anchorleg diff <run> --git`: the folder compared with how the session found it. */
 export const diff = (run: number) => invoke<string>("diff", { run });
 /** `preview` → `{preview}` (diff --stat, or null: no changes); `undo` / `redo` → `{done}`. */
 export const undo = (run: number, action: "preview" | "undo" | "redo") =>

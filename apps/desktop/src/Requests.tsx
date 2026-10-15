@@ -1,7 +1,25 @@
 // What a session waits for, in its conversation: a tool call to approve, questions from the
 // agent, or a plan. Answers go through `anchorleg permission answer` (docs/CLI.md).
 import { useEffect, useState } from "react";
-import { answer, approvePlan, type Question, type Request } from "./api";
+import { answer, approvePlan, openTarget, type Question, type Request } from "./api";
+
+/** Text with its web links clickable (an MCP server's "open this page, then answer Done"). */
+function Linked({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)])/);
+  return (
+    <>
+      {parts.map((p, i) =>
+        i % 2 ? (
+          <a key={i} href={p} onClick={(e) => (e.preventDefault(), openTarget(p))}>
+            {p}
+          </a>
+        ) : (
+          p
+        ),
+      )}
+    </>
+  );
+}
 
 export default function Requests({ requests, onAnswered }: { requests: Request[]; onAnswered: () => void }) {
   return (
@@ -96,7 +114,7 @@ function Questions({ r, busy, run }: Act) {
       {qs.map((q, i) => (
         <fieldset key={q.id} className="question">
           <legend>
-            {q.header && <span className="tag">{q.header}</span>} {q.question}
+            {q.header && <span className="tag">{q.header}</span>} <Linked text={q.question} />
           </legend>
           {q.secret ? (
             <p className="muted small">
