@@ -118,6 +118,30 @@ fn rewind_point(store: &Store, db: &Path, id: i64) -> anyhow::Result<(i64, Strin
     Ok((parent.id, at))
 }
 
+/// For `--at POINT` with `--rewind RUN` or `--fork RUN`: RUN must have reached that point.
+/// Returns whether it's the point RUN started from (so its files can go back too).
+fn point_in_run(db: &Path, id: i64, at: &str) -> anyhow::Result<bool> {
+    let log = db.with_file_name("runs").join(format!("run-{id}.jsonl"));
+    let points = anchorleg_core::conversation::turn_points(
+        &std::fs::read_to_string(log).unwrap_or_default(),
+    );
+    let found = points
+        .before
+        .iter()
+        .chain(&points.after)
+        .flatten()
+        .any(|p| p == at);
+    if !found {
+        anyhow::bail!(
+            "#{id}'s conversation has no point {at} (see `anchorleg sessions show {id} --json`)"
+        );
+    }
+    Ok(points
+        .before
+        .first()
+        .is_some_and(|p| p.as_deref() == Some(at)))
+}
+
 /// Run the task; returns the report so `main` can pick the exit code.
 /// How long `--detach` waits for the background run to record itself.
 const DETACH_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
@@ -225,11 +249,23 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
-    // `--rewind R`: R's session as it was when R started, i.e. where R's parent left it.
-    let rewound = match args.rewind {
-        Some(id) => Some(rewind_point(&store, &db, id)?),
-        None => None,
+    if args.at.is_some() && args.rewind.is_none() && args.fork.is_none() {
+        anyhow::bail!("--at goes with --rewind RUN or --fork RUN");
+    }
+    // `--rewind R`: R's session as it was when R started, i.e. where R's parent left it; with
+    // `--at P`, R's own session at P. The files go back only to where R started.
+    let mut files_back = !args.keep_files;
+    let rewound = match (args.rewind, &args.at) {
+        (Some(id), Some(at)) => {
+            files_back &= point_in_run(&db, id, at)?;
+            Some((id, at.clone()))
+        }
+        (Some(id), None) => Some(rewind_point(&store, &db, id)?),
+        (None, _) => None,
     };
+    if let (Some(id), Some(at)) = (args.fork, &args.at) {
+        point_in_run(&db, id, at)?;
+    }
     let parent_id = args
         .follow_up
         .or(args.fork)
@@ -277,7 +313,14 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
                 );
             }
         }
-        if !args.keep_files {
+        if !files_back && !args.keep_files {
+            if !args.json {
+                eprintln!(
+                    "anchorleg: the files stay as they are: they can only go back to where #{id} \
+                     started, and this point is inside it"
+                );
+            }
+        } else if !args.keep_files {
             let line = match anchorleg_core::checkpoint::rewind_files(&cwd, id)? {
                 Some(r) => format!(
                     "files back to how they were when #{id} started: {} put back, {} removed \
@@ -431,7 +474,10 @@ pub fn run(args: RunArgs) -> anyhow::Result<RunReport> {
             session_id,
             account,
             fork,
-            at: rewound.as_ref().map(|(_, at)| at.clone()),
+            at: rewound
+                .as_ref()
+                .map(|(_, at)| at.clone())
+                .or_else(|| args.fork.and(args.at.clone())),
         });
         opts.side = args.btw.is_some();
     }

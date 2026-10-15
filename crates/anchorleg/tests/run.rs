@@ -2785,6 +2785,74 @@ fn a_side_question_is_answered_by_a_read_only_fork() {
 }
 
 #[test]
+fn rewind_and_fork_from_a_point_inside_a_run() {
+    let env = Env::new(&["a"]);
+    let work = env.path("work");
+    let assistant = |sid: &str, uuid: &str| {
+        format!(
+            r#"{{"type":"assistant","uuid":"{uuid}","session_id":"{sid}","parent_tool_use_id":null,"message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}]}}}}"#
+        )
+    };
+    env.script(
+        "a.1.jsonl",
+        &format!("{}\n{}", assistant("s1", "m1"), ok("s1", "first")),
+    );
+    env.script("a.2.jsonl", &ok("s2", "went back"));
+    env.script("a.3.jsonl", &ok("s3", "forked"));
+    assert_eq!(env.run(&[]).0, 0);
+    std::fs::write(work.join("kept.txt"), "made after #1\n").unwrap();
+
+    // The session view says where each message can go back to: the reply ending #1's turn.
+    let out = env
+        .anchorleg()
+        .args(["sessions", "show", "1", "--json"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let reply = v["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "agent")
+        .unwrap();
+    assert_eq!(reply["at"], "m1", "{v}");
+    assert_eq!(reply["run"], 1, "{v}");
+
+    // A point inside #1 (its first run): the conversation goes back, the files stay.
+    env.anchorleg()
+        .args(["rewind", "1", "--at", "nope", "--", "x"])
+        .assert()
+        .failure();
+    let out = env
+        .anchorleg()
+        .args(["rewind", "1", "--at", "m1", "--json", "--", "again"])
+        .output()
+        .unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "went back", "{r}");
+    assert!(work.join("kept.txt").exists());
+    assert_eq!(
+        env.run(&["--fork", "1", "--at", "m1"]).0,
+        0,
+        "a fork from a point"
+    );
+    let launches = env.launches();
+    assert!(
+        launches[1].contains("--resume s1 --resume-session-at m1 --fork-session"),
+        "{launches:?}"
+    );
+    assert!(
+        launches[2].contains("--resume s1 --resume-session-at m1 --fork-session"),
+        "{launches:?}"
+    );
+    // `--at` alone means nothing.
+    env.anchorleg()
+        .args(["run", "--at", "m1", "--", "x"])
+        .assert()
+        .failure();
+}
+
+#[test]
 fn rewind_goes_back_to_before_a_run_in_the_conversation_and_the_files() {
     let env = Env::new(&["a"]);
     let work = env.path("work");
@@ -3280,7 +3348,16 @@ fn sessions_started_in_the_clis_are_imported_and_can_be_continued() {
         "{texts:?}"
     );
 
-    // Importing again finds nothing new.
+    // Importing again finds nothing new, but brings the ones nobody went on with up to date:
+    // what was said since in the CLI, and where each message can go back to.
+    let more = [
+        format!(r#"{{"type":"user","sessionId":"s1","cwd":"{w}","timestamp":"2026-10-01T11:00:00Z","message":{{"content":"and the docs"}}}}"#),
+        r#"{"type":"assistant","sessionId":"s1","uuid":"u2","timestamp":"2026-10-01T11:00:05Z","message":{"content":[{"type":"text","text":"Docs done."}]}}"#.to_owned(),
+    ]
+    .join("\n");
+    let path = env.path("cfg/a/projects/-w/s1.jsonl");
+    let before = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{before}\n{more}")).unwrap();
     let out = env
         .anchorleg()
         .args(["sessions", "import", "--include-temp", "--json"])
@@ -3290,10 +3367,23 @@ fn sessions_started_in_the_clis_are_imported_and_can_be_continued() {
     assert_eq!(
         (
             r["sessions"].as_array().unwrap().len(),
-            r["skipped"]["known"].as_i64()
+            r["skipped"]["known"].as_i64(),
+            r["updated"].as_i64()
         ),
-        (0, Some(2)),
+        (0, Some(2), Some(2)),
         "{r}"
+    );
+    let out = env
+        .anchorleg()
+        .args(["sessions", "show", &claude_run.to_string(), "--json"])
+        .output()
+        .unwrap();
+    let show: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let last = show["messages"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(
+        (last["text"].as_str(), last["at"].as_str()),
+        (Some("Docs done."), Some("u2")),
+        "{show}"
     );
 
     // A follow-up continues the CLI's own session.

@@ -4,6 +4,7 @@
 //! checkpoint, conversation.
 
 pub mod adapters;
+pub mod agents;
 pub mod anchorleg_mod;
 pub mod attachments;
 pub mod changes;

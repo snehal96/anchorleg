@@ -283,18 +283,27 @@ pub fn rollout_quota(rollout: &str) -> Vec<QuotaReading> {
 
 /// Quota from an `account/rateLimits/read` result (camelCase twin of the rollout's).
 pub fn live_quota(result: &Value) -> Vec<QuotaReading> {
-    match result.get("rateLimits").filter(|l| l.is_object()) {
-        Some(limits) => readings(
-            limits,
-            [
-                "windowDurationMins",
-                "usedPercent",
-                "resetsAt",
-                "rateLimitReachedType",
-            ],
-        ),
-        None => Vec::new(),
+    let Some(limits) = result.get("rateLimits").filter(|l| l.is_object()) else {
+        return Vec::new();
+    };
+    let mut out = readings(
+        limits,
+        [
+            "windowDurationMins",
+            "usedPercent",
+            "resetsAt",
+            "rateLimitReachedType",
+        ],
+    );
+    // Codex 0.162+: the backend's own word on whether the plan's usage is available. `false`
+    // means blocked whatever the percentages say ("clients must not infer recovery from
+    // percentages or reset times"); it's asked again before every pick.
+    if result.get("ordinaryUsageAllowed") == Some(&Value::Bool(false)) {
+        for r in &mut out {
+            r.status = Some(QuotaStatus::Rejected);
+        }
     }
+    out
 }
 
 /// `primary` / `secondary` windows, with the field names `[minutes, used %, resets at, reached]`.
@@ -587,6 +596,19 @@ mod tests {
         assert_eq!(q[1].used, Some(0.07));
         assert_eq!(q[1].status, Some(QuotaStatus::Allowed));
         assert!(live_quota(&serde_json::json!({})).is_empty());
+
+        // Codex 0.162: the backend says the plan's usage isn't available, percentages aside.
+        let mut blocked = result.clone();
+        blocked["ordinaryUsageAllowed"] = false.into();
+        blocked["rateLimits"]["primary"]["usedPercent"] = 3.into();
+        blocked["rateLimits"]["rateLimitReachedType"] = Value::Null;
+        let q = live_quota(&blocked);
+        assert!(
+            q.iter().all(|r| r.status == Some(QuotaStatus::Rejected)),
+            "{q:?}"
+        );
+        blocked["ordinaryUsageAllowed"] = Value::Null;
+        assert_eq!(live_quota(&blocked)[0].status, Some(QuotaStatus::Allowed));
     }
 
     #[test]
