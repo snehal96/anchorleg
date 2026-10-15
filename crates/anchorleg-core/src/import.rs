@@ -40,11 +40,11 @@ pub struct Found {
 /// Longest tool output kept per call; the conversation only shows an excerpt anyway.
 const MAX_OUTPUT: usize = 4_000;
 
-fn epoch(ts: &str) -> Option<EpochSecs> {
+pub(crate) fn epoch(ts: &str) -> Option<EpochSecs> {
     ts.parse::<jiff::Timestamp>().ok().map(|t| t.as_second())
 }
 
-fn modified(path: &Path) -> EpochSecs {
+pub(crate) fn modified(path: &Path) -> EpochSecs {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .ok()
@@ -56,7 +56,7 @@ fn user_line(text: &str) -> String {
     json!({ "type": "anchorleg_user", "text": text }).to_string()
 }
 
-fn clip(s: &str) -> String {
+pub(crate) fn clip(s: &str) -> String {
     if s.len() <= MAX_OUTPUT {
         return s.to_owned();
     }
@@ -230,7 +230,7 @@ pub fn claude(transcript: &str, account: &str, file: &Path) -> Option<Found> {
 
 /// A Codex rollout item (`event_msg` `item_completed`) as the `codex exec --json` item the
 /// conversation reader knows; the person's messages become `anchorleg_user` lines.
-fn codex_item(item: &Value) -> Option<Value> {
+pub(crate) fn codex_item(item: &Value) -> Option<Value> {
     let text = |key: &str| -> String {
         item.get(key)
             .and_then(Value::as_array)

@@ -24,7 +24,7 @@ Logs go to stderr (`ANCHORLEG_LOG=debug` for more). stdout carries only the resu
 | `anchorleg policy [drain\|balance\|save-weekly] [--json]` | works |
 | `anchorleg notify [--desktop on\|off] [--command CMD \| --no-command] [--test] [--json]` | works (macOS, Linux) |
 | `anchorleg ui` | works: session manager, keyboard + mouse |
-| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` · `import [--account A] [--since 30d] [--cwd DIR] [--include-temp] [--dry-run] [--json]` | works |
+| `anchorleg sessions [--json] [--limit N]` · `show <run> [--since N] [--json]` · `agents <run> [--json]` · `import [--account A] [--since 30d] [--cwd DIR] [--include-temp] [--dry-run] [--json]` | works |
 | `anchorleg permission list [--json]` · `answer <id> yes\|always\|rule\|no` · `answer <id> <answer>… \| --skip` (questions) · `answer <id> edit \| --plan-file F` (a plan) · `ask --json` (anchorleg-mod) | works (Claude, Codex, Antigravity) |
 | `anchorleg rules [--add RULE]… [--rm RULE]… [--json]` | works (Claude, Codex, Antigravity) |
 | `anchorleg rename <run> <name>` | works |
@@ -825,6 +825,21 @@ anchorleg up to date: what was said in the CLI since, and the points to go back 
 "folder_gone", "other_folder", "temporary_folder", "in_use"}, "not_importable": [accounts],
 "updated"}` (`updated`: sessions imported before whose conversation was read again);
 `run_id` is `null` with `--dry-run`.
+
+## `anchorleg sessions agents <run> [--json]`
+
+A session's subagents in full: what each was asked, every step it took and what it reported,
+whether it's still at work. Read from what the CLIs keep on disk, so finished ones show too:
+Claude Code's subagent transcripts (`<config dir>/projects/<folder>/<session>/subagents/
+agent-<id>.jsonl` and `.meta.json`) and Codex's subagent threads (rollouts whose `session_meta`
+names the session's thread as their parent). Antigravity keeps none.
+
+`--json` → `{"schema": 1, "agents": [{"id", "run", "tool_use_id", "name", "kind", "status",
+"prompt", "result", "steps", "messages", "started_at", "updated_at"}]}`. `status` is `working`,
+`done` (it reported back) or `stopped` (no report, and nothing written for 2 minutes). `kind` is
+Claude's agent type or Codex's role, when set; `messages` are its own, as in `sessions show`;
+`tool_use_id` is the parent's Agent call (Claude), matching `subagents[].id` there. You can't
+message a subagent from outside; ask the main agent about it (a follow-up).
 
 ## `anchorleg sessions show <run> --json` → session
 

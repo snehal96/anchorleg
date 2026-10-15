@@ -1,4 +1,5 @@
 mod accounts;
+mod agents;
 mod import;
 mod permission;
 mod run;
@@ -34,6 +35,14 @@ enum SessionsCmd {
         /// Only messages from this index on (the `next` of an earlier `--json` call), for polling.
         #[arg(long, default_value_t = 0)]
         since: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// A session's subagents in full: what each was asked, its steps and what it reported, read
+    /// from what Claude Code and Codex keep on disk.
+    Agents {
+        /// Any run of the session.
+        run: i64,
         #[arg(long)]
         json: bool,
     },
@@ -629,6 +638,10 @@ fn main() -> ExitCode {
             show: Some(SessionsCmd::Show { run, since, json }),
             ..
         } => status::show_session(run, since, json),
+        Command::Sessions {
+            show: Some(SessionsCmd::Agents { run, json }),
+            ..
+        } => agents::show(run, json),
         Command::Sessions {
             show:
                 Some(SessionsCmd::Import {
