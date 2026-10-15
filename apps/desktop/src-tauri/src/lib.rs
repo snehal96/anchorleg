@@ -34,6 +34,13 @@ async fn sessions(limit: Option<u32>) -> Result<Value, String> {
     blocking(move || cli::json(&["sessions", "--json", "--limit", &limit])).await
 }
 
+/// `anchorleg sessions agents <run> --json`: the session's subagents in full.
+#[tauri::command]
+async fn agents(run: i64) -> Result<Value, String> {
+    let run = run.to_string();
+    blocking(move || cli::json(&["sessions", "agents", &run, "--json"])).await
+}
+
 /// `anchorleg sessions show <run> --since N --json`: one session's conversation from message N.
 #[tauri::command]
 async fn session(run: i64, since: Option<usize>) -> Result<Value, String> {
@@ -327,6 +334,7 @@ pub fn run() {
             start,
             diff,
             open_target,
+            agents,
             undo,
             shell,
             send,

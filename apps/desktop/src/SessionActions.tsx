@@ -48,6 +48,9 @@ export default function SessionActions({
       <button className="icon-button" onClick={() => onTools("changes")} aria-label="See changes" data-tip="See changes">
         <Icon name="diff" />
       </button>
+      <button className="icon-button" onClick={() => onTools("agents")} aria-label="Sub-agents" data-tip="Sub-agents: what each was asked and found">
+        <Icon name="people" />
+      </button>
       {can("side") && (
         <button className="icon-button" onClick={() => setDialog("side")} aria-label="Ask a side question" data-tip="Ask a side question">
           <Icon name="chat" />

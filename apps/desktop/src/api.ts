@@ -113,6 +113,26 @@ export interface FileChange {
 
 export const session = (run: number, since = 0) => invoke<Session>("session", { run, since });
 
+/** A subagent, in full (`anchorleg sessions agents --json`). */
+export interface SubAgent {
+  id: string;
+  run: number;
+  tool_use_id: string | null;
+  name: string;
+  /** Its type or role (`general-purpose`, `Explore`, …). */
+  kind: string | null;
+  status: "working" | "done" | "stopped";
+  /** What it was asked to do. */
+  prompt: string;
+  /** What it reported back. */
+  result: string | null;
+  steps: number;
+  messages: Message[];
+  started_at: number;
+  updated_at: number;
+}
+export const agents = (run: number) => invoke<{ agents: SubAgent[] }>("agents", { run }).then((r) => r.agents);
+
 export interface Start {
   text: string;
   cwd?: string;

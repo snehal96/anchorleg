@@ -839,3 +839,31 @@ button.back { margin: -8px 0 10px -8px; font-size: 13px; }
 .jump-list button.current { color: var(--ink); font-weight: 550; }
 .jump-list button:active { transform: none; }
 @media (max-width: 1100px) { .jump-rail { right: 4px; } }
+
+/* Sub-agents panel: one line each, opened for what it was asked, did and reported. */
+.agents-summary { margin: 0 0 10px; }
+.agents { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.agent-line {
+  width: 100%; justify-content: flex-start; gap: 9px; background: none; box-shadow: none; font-weight: 400;
+  padding: 8px 10px; border-radius: 9px; text-align: left; min-width: 0;
+}
+.agent-line:hover:not(:disabled) { background: var(--hover); }
+.agent-line:active:not(:disabled) { transform: none; }
+.agent.open > .agent-line { background: var(--sunken); }
+.agent-line > .icon:last-child { margin-left: auto; flex: none; color: var(--muted); transition: transform 200ms var(--ease-out); }
+.agent.open > .agent-line > .icon:last-child { transform: rotate(180deg); }
+.agent-mark { width: 16px; flex: none; display: grid; place-items: center; color: var(--muted); }
+.agent-mark.done { color: var(--ok); }
+.agent-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.agent-meta { font-size: 12px; white-space: nowrap; flex: none; }
+.agent-detail { padding: 6px 10px 14px 35px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.agent-label { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 6px; }
+.agent-prompt.clamped { max-height: 9.5em; overflow: hidden; mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.agent-prompt .md, .agent-result .md { font-size: 13px; }
+.agent-steps { display: grid; grid-template-columns: minmax(0, 1fr); }
+.agent-actions { margin-top: 8px; }
+.step-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tools-body { overflow-x: hidden; }
+.agent-detail { min-width: 0; }
+.agent-detail > * { min-width: 0; }
+.agents li { min-width: 0; }

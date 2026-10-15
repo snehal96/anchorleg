@@ -1,10 +1,13 @@
-// Beside a session's conversation: what it changed (diff, undo / redo, review) and the side
-// questions asked of it (`/btw`).
+// Beside a session's conversation: what it changed (diff, undo / redo, review), the side
+// questions asked of it (`/btw`) and its subagents.
 import { useEffect, useState } from "react";
-import { diff, openTarget, session, start, undo, type FileChange, type Run, type Session } from "./api";
-import { question, tilde } from "./sessions";
+import { agents as loadAgents, diff, openTarget, session, start, undo, type FileChange, type Message, type Run, type Session, type SubAgent } from "./api";
+import { Step } from "./Conversation";
+import { Markdown } from "./Markdown";
+import { ago, question, tilde } from "./sessions";
+import { Icon } from "./ui";
 
-export type ToolTab = "changes" | "side";
+export type ToolTab = "changes" | "side" | "agents";
 
 export default function Tools({
   view,
@@ -13,6 +16,7 @@ export default function Tools({
   onTab,
   onClose,
   onStarted,
+  onAsk,
 }: {
   view: Session;
   /** Side questions asked of this session, newest first. */
@@ -21,6 +25,8 @@ export default function Tools({
   onTab: (t: ToolTab) => void;
   onClose: () => void;
   onStarted: (run: number) => void;
+  /** Put this in the reply box (a question to the main agent about a subagent's work). */
+  onAsk: (text: string) => void;
 }) {
   return (
     <aside className="tools">
@@ -31,12 +37,15 @@ export default function Tools({
         <button className={tab === "side" ? "tab active" : "tab"} onClick={() => onTab("side")}>
           Side questions{side.length ? ` (${side.length})` : ""}
         </button>
+        <button className={tab === "agents" ? "tab active" : "tab"} onClick={() => onTab("agents")}>
+          Sub-agents
+        </button>
         <span className="spacer" />
         <button className="link" onClick={onClose} aria-label="Close">
           ×
         </button>
       </div>
-      {tab === "changes" ? <Changes view={view} onStarted={onStarted} /> : <Side side={side} />}
+      {tab === "changes" ? <Changes view={view} onStarted={onStarted} /> : tab === "side" ? <Side side={side} /> : <Agents view={view} onAsk={onAsk} />}
     </aside>
   );
 }
@@ -252,5 +261,140 @@ function SideAnswer({ r }: { r: Run }) {
       <div className="msg user">{question(r.task)}</div>
       {answer ? <div className="msg agent">{answer}</div> : <p className="muted small">{working ? "answering…" : "no answer"}</p>}
     </div>
+  );
+}
+
+/** The agents this session's agent started to work on parts of the task, working or done:
+ * what each was asked, its steps and what it reported (`anchorleg sessions agents`). They can't
+ * be messaged; the main agent can be asked about one. */
+function Agents({ view, onAsk }: { view: Session; onAsk: (text: string) => void }) {
+  const [list, setList] = useState<SubAgent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const run = view.run.id;
+  const live = view.working || view.subagents.some((a) => !a.done);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const load = () =>
+      loadAgents(run).then(
+        (a) => {
+          if (!alive) return;
+          setList(a);
+          setError(null);
+          if (live) timer = setTimeout(load, 3000);
+        },
+        (e) => alive && setError(String(e)),
+      );
+    load();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [run, live]);
+  if (error) return <p className="error pad">{error}</p>;
+  if (!list)
+    return (
+      <div className="tools-body">
+        <div className="skeleton-list">
+          {[60, 45].map((w, i) => (
+            <div key={i} className="skeleton-row">
+              <span className="skeleton" style={{ width: `${w}%` }} />
+              <span className="skeleton short" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  if (list.length === 0)
+    return (
+      <div className="tools-body">
+        <p className="muted small">
+          No sub-agents yet. When the agent hands parts of the task to agents of its own (Claude Code's Agent tool, Codex's spawned agents), they show here with what each was asked and found.
+        </p>
+      </div>
+    );
+  const working = list.filter((a) => a.status === "working").length;
+  return (
+    <div className="tools-body">
+      <p className="muted small agents-summary">
+        {list.length} sub-agent{list.length === 1 ? "" : "s"}
+        {working ? `, ${working} working` : ""}. They can't be messaged; ask the main agent about one instead.
+      </p>
+      <ul className="agents">
+        {[...list].reverse().map((a) => (
+          <AgentRow key={a.id} a={a} open={open === a.id} onToggle={() => setOpen(open === a.id ? null : a.id)} cwd={view.run.cwd} onAsk={onAsk} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AgentRow({ a, open, onToggle, cwd, onAsk }: { a: SubAgent; open: boolean; onToggle: () => void; cwd: string; onAsk: (text: string) => void }) {
+  const [fullPrompt, setFullPrompt] = useState(false);
+  const steps: { what: string; result?: Message }[] = [];
+  for (let i = 0; i < a.messages.length; i++) {
+    const m = a.messages[i];
+    if (m.role !== "tool") continue;
+    const next = a.messages[i + 1];
+    steps.push({ what: m.text, result: next && (next.role === "output" || next.role === "tool_error") ? next : undefined });
+  }
+  const ask = () => {
+    const report = (a.result ?? "").trim();
+    const quoted = report
+      ? report
+          .slice(0, 600)
+          .split("\n")
+          .map((l) => `> ${l}`)
+          .join("\n") + (report.length > 600 ? "\n> …" : "")
+      : "> (it hasn't reported back yet)";
+    onAsk(`About the sub-agent “${a.name}”, which reported:\n${quoted}\n\n`);
+  };
+  return (
+    <li className={`agent ${open ? "open" : ""}`}>
+      <button className="agent-line" onClick={onToggle} aria-expanded={open}>
+        <span className={`agent-mark ${a.status}`}>{a.status === "working" ? <span className="spinner" /> : a.status === "done" ? <Icon name="check" size={13} /> : "·"}</span>
+        <span className="agent-name">{a.name}</span>
+        <span className="agent-meta muted">
+          {a.kind ? `${a.kind} · ` : ""}
+          {a.steps} step{a.steps === 1 ? "" : "s"} · {ago(a.updated_at)} ago
+        </span>
+        <Icon name="chevron" size={12} />
+      </button>
+      {open && (
+        <div className="agent-detail">
+          <div className="agent-label">Asked to</div>
+          <div className={`agent-prompt ${fullPrompt ? "" : "clamped"}`}>
+            <Markdown source={a.prompt || "(no task recorded)"} cwd={cwd} />
+          </div>
+          {a.prompt.split("\n").length > 6 || a.prompt.length > 500 ? (
+            <button className="link small" onClick={() => setFullPrompt(!fullPrompt)}>
+              {fullPrompt ? "Show less" : "Show all"}
+            </button>
+          ) : null}
+          {steps.length > 0 && (
+            <>
+              <div className="agent-label">Steps</div>
+              <div className="agent-steps">
+                {steps.map((s, i) => (
+                  <Step key={i} what={s.what} result={s.result} />
+                ))}
+              </div>
+            </>
+          )}
+          <div className="agent-label">{a.status === "done" ? "Reported" : a.status === "working" ? "Still working" : "Stopped without a report"}</div>
+          {a.result && (
+            <div className="agent-result">
+              <Markdown source={a.result} cwd={cwd} />
+            </div>
+          )}
+          <div className="agent-actions">
+            <button className="secondary small" onClick={ask}>
+              <Icon name="chat" size={13} /> Ask the main agent about this
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }

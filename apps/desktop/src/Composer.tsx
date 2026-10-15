@@ -41,8 +41,11 @@ export default function Composer({
   onStarted,
   onNew,
   onSide,
+  draft,
 }: {
   view: Session;
+  /** Text put in the box from elsewhere (asking about a subagent); `n` changes each time. */
+  draft?: { text: string; n: number } | null;
   /** The approval setting for this message (`null`: the task's own). */
   mode: string | null;
   /** The message went: the one-off settings are used up. */
@@ -60,6 +63,16 @@ export default function Composer({
   const [pick, setPick] = useState(0);
   const [dialog, setDialog] = useState<"mention" | "command" | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!draft) return;
+    setText(draft.text);
+    requestAnimationFrame(() => {
+      const el = box.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [draft?.n]);
   const folder = view.run.cwd;
   const working = view.working;
   const codex = useVendors().ofAccount(view.run.account)?.vendor === "codex";

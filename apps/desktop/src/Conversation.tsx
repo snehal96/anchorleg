@@ -36,6 +36,8 @@ export default function Conversation({
   const [view, setView] = useState<Session | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolTab | null>(null);
+  // What "Ask the main agent about this" puts in the reply box.
+  const [draft, setDraft] = useState<{ text: string; n: number } | null>(null);
   // The approval setting picked for the next message (null: the task's own).
   const [mode, setMode] = useState<string | null>(null);
   // The run the messages are for and how far they go; a reply's run shows the same history.
@@ -153,11 +155,13 @@ export default function Conversation({
         </div>
         <JumpRail messages={view.messages} scroller={scroller} onJump={() => (pinned.current = false)} />
         </div>
-        <Progress view={view} />
+        <Progress view={view} onAgents={() => setTools("agents")} />
         {error && <p className="error pad">{error}</p>}
-        <Composer view={view} mode={mode} onSent={() => setMode(null)} onStarted={onStarted} onNew={onNew} onSide={() => setTools("side")} />
+        <Composer view={view} mode={mode} onSent={() => setMode(null)} onStarted={onStarted} onNew={onNew} onSide={() => setTools("side")} draft={draft} />
       </div>
-      {tools && <Tools view={view} side={side} tab={tools} onTab={setTools} onClose={() => setTools(null)} onStarted={onStarted} />}
+      {tools && (
+        <Tools view={view} side={side} tab={tools} onTab={setTools} onClose={() => setTools(null)} onStarted={onStarted} onAsk={(text) => setDraft({ text, n: Date.now() })} />
+      )}
     </div>
   );
 }
@@ -464,13 +468,13 @@ function Steps({ steps, live }: { steps: StepItem[]; live: boolean }) {
   );
 }
 
-function Step({ what, result }: { what: string; result?: Message }) {
+export function Step({ what, result }: { what: string; result?: Message }) {
   const [open, setOpen] = useState(false);
   const failed = result?.role === "tool_error";
   return (
     <div className={`step ${failed ? "failed" : ""}`}>
       <button className="step-line" onClick={() => result && setOpen(!open)} disabled={!result}>
-        <span className="dot">{failed ? "!" : "•"}</span> {friendly(what)}
+        <span className="dot">{failed ? "!" : "•"}</span> <span className="step-text">{friendly(what).trim()}</span>
         {result && <span className="step-more">{open ? "Hide" : failed ? "Show the error" : "Show output"}</span>}
       </button>
       {open && result && <pre className={`msg output ${failed ? "error" : ""}`}>{result.text}</pre>}
@@ -500,7 +504,7 @@ function Line({ m }: { m: Message }) {
 
 /** Above the composer: one line for the plan and the sub-agents at work, opened on a click.
  * Finished sub-agents aren't listed here; the conversation already says what they did. */
-function Progress({ view }: { view: Session }) {
+function Progress({ view, onAgents }: { view: Session; onAgents: () => void }) {
   const [open, setOpen] = useState(false);
   const done = view.steps.filter((s) => s.status === "done").length;
   const now = view.steps.find((s) => s.status === "in_progress");
@@ -545,6 +549,11 @@ function Progress({ view }: { view: Session }) {
                   {a.doing && <span className="muted small"> · {friendly(a.doing)}</span>}
                 </li>
               ))}
+              <li>
+                <button className="link small" onClick={onAgents}>
+                  See what each sub-agent was asked and found
+                </button>
+              </li>
             </ul>
           )}
         </div>
