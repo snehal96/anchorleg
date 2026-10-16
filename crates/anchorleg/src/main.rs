@@ -259,9 +259,9 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    /// Send a message to a session that's still working. Codex takes it into the running turn;
-    /// Claude and agy get it when their turn ends. `--interrupt` stops the agent at its next clean point
-    /// so the message is read now.
+    /// Send a message to a session that's still working. Codex and Claude take it into the running
+    /// turn; agy gets it when its turn ends. `--interrupt` has it read now (Claude's "send now", which
+    /// may stop a running tool; agy is stopped).
     Send {
         run: i64,
         #[arg(long)]

@@ -1,0 +1,410 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+assertion_line: 32
+expression: replay
+input_file: fixtures/claude-2.1.301-steer-20261016/send-now.jsonl
+---
+[
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/sendnow-probe/work",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "d3c7552c-861c-417c-a847-6bd159e50460",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_011p8kVNGRw56APT1QfYUP3L",
+            "input": {
+              "command": "ping -c 25 127.0.0.1",
+              "description": "Ping localhost 25 times in foreground"
+            },
+            "name": "Bash",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "org_level_disabled",
+      "overageStatus": "rejected",
+      "rateLimitType": "seven_day",
+      "resetsAt": 1792364400,
+      "status": "allowed_warning",
+      "surpassedThreshold": 0.75,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1792165800,
+          "status": null,
+          "utilization": 0.44
+        },
+        "seven_day": {
+          "resetsAt": 1792364400,
+          "status": null,
+          "utilization": 0.97
+        }
+      },
+      "utilization": 0.97
+    },
+    "signals": [
+      {
+        "resets_at": 1792165800,
+        "signal": "quota",
+        "status": null,
+        "used": 0.44,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1792364400,
+        "signal": "quota",
+        "status": "warning",
+        "used": 0.97,
+        "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "org_level_disabled",
+        "signal": "credits",
+        "state": "off"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "control_response"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 5900,
+      "errors": [
+        "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
+      ],
+      "event": "result",
+      "is_error": true,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 11125,
+          "cacheReadInputTokens": 14207,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00241427,
+          "inputTokens": 2,
+          "maxOutputTokens": 128000,
+          "outputTokens": 94,
+          "provider": "firstParty",
+          "thinkingTokens": 0,
+          "webSearchRequests": 0
+        }
+      },
+      "num_turns": 3,
+      "result": null,
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460",
+      "subtype": "error_during_execution",
+      "total_cost_usd": 0.00241427,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 11125,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 11125,
+        "cache_read_input_tokens": 14207,
+        "fallback_credit": null,
+        "inference_geo": "global",
+        "input_tokens": 2,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 11125,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 11125,
+            "cache_read_input_tokens": 14207,
+            "input_tokens": 2,
+            "output_tokens": 94,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 94,
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
+    },
+    "signals": [
+      {
+        "cache_read_tokens": 14207,
+        "cache_write_tokens": 11125,
+        "cost_usd": 0.00241427,
+        "input_tokens": 2,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 94,
+        "signal": "usage"
+      },
+      {
+        "ok": false,
+        "session_id": "d3c7552c-861c-417c-a847-6bd159e50460",
+        "signal": "finished",
+        "text": "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/sendnow-probe/work",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "d3c7552c-861c-417c-a847-6bd159e50460",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "BANANA. I did not run the ping: your permission was rejected, so I stopped. Tell me if you want me to run `ping -c 25 127.0.0.1` now.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 2713,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 24509,
+          "cacheReadInputTokens": 39539,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00550809,
+          "inputTokens": 4,
+          "maxOutputTokens": 128000,
+          "outputTokens": 421,
+          "provider": "firstParty",
+          "thinkingTokens": 270,
+          "webSearchRequests": 0
+        }
+      },
+      "num_turns": 1,
+      "result": "BANANA. I did not run the ping: your permission was rejected, so I stopped. Tell me if you want me to run `ping -c 25 127.0.0.1` now.",
+      "session_id": "d3c7552c-861c-417c-a847-6bd159e50460",
+      "subtype": "success",
+      "total_cost_usd": 0.00550809,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 13384,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 13384,
+        "cache_read_input_tokens": 25332,
+        "fallback_credit": null,
+        "inference_geo": "global",
+        "input_tokens": 2,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 13384,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 13384,
+            "cache_read_input_tokens": 25332,
+            "input_tokens": 2,
+            "output_tokens": 327,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 327,
+        "output_tokens_details": {
+          "thinking_tokens": 270
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
+    },
+    "signals": [
+      {
+        "cache_read_tokens": 39539,
+        "cache_write_tokens": 24509,
+        "cost_usd": 0.00550809,
+        "input_tokens": 4,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 421,
+        "signal": "usage"
+      },
+      {
+        "ok": true,
+        "session_id": "d3c7552c-861c-417c-a847-6bd159e50460",
+        "signal": "finished",
+        "text": "BANANA. I did not run the ping: your permission was rejected, so I stopped. Tell me if you want me to run `ping -c 25 127.0.0.1` now."
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  }
+]

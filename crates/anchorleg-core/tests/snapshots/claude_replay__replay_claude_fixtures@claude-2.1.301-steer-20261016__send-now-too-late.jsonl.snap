@@ -1,0 +1,423 @@
+---
+source: crates/anchorleg-core/tests/claude_replay.rs
+assertion_line: 32
+expression: replay
+input_file: fixtures/claude-2.1.301-steer-20261016/send-now-too-late.jsonl
+---
+[
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/sendnow-probe/work",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "930475dc-0511-4175-8a60-3ff59d083015",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "id": "toolu_01VRTwq7psWSFcCHA1RhLCu5",
+            "input": {
+              "command": "sleep 25",
+              "description": "Sleep for 25 seconds"
+            },
+            "name": "Bash",
+            "type": "tool_use"
+          }
+        ]
+      },
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "user"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "rate_limit",
+      "isUsingOverage": false,
+      "overageDisabledReason": "org_level_disabled",
+      "overageStatus": "rejected",
+      "rateLimitType": "seven_day",
+      "resetsAt": 1792364400,
+      "status": "allowed_warning",
+      "surpassedThreshold": 0.75,
+      "unifiedWindows": {
+        "five_hour": {
+          "resetsAt": 1792165800,
+          "status": null,
+          "utilization": 0.44
+        },
+        "seven_day": {
+          "resetsAt": 1792364400,
+          "status": null,
+          "utilization": 0.97
+        }
+      },
+      "utilization": 0.97
+    },
+    "signals": [
+      {
+        "resets_at": 1792165800,
+        "signal": "quota",
+        "status": null,
+        "used": 0.44,
+        "window": "five_hour"
+      },
+      {
+        "resets_at": 1792364400,
+        "signal": "quota",
+        "status": "warning",
+        "used": 0.97,
+        "window": "seven_day"
+      },
+      {
+        "balance": null,
+        "reason": "org_level_disabled",
+        "signal": "credits",
+        "state": "off"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/commands_changed"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "system/thinking_tokens"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "other"
+          }
+        ]
+      },
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "The `sleep 25` was blocked by the harness, which treats a standalone sleep as something to replace with a condition-based wait. I haven't run it, so I can't reply DONE yet.\n\nIf you still want the 25-second pause, I can wait on a real condition with Monitor instead, or you can run `sleep 25` yourself in your terminal.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 5495,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 27716,
+          "cacheReadInputTokens": 25317,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00606277,
+          "inputTokens": 4,
+          "maxOutputTokens": 128000,
+          "outputTokens": 532,
+          "provider": "firstParty",
+          "thinkingTokens": 338,
+          "webSearchRequests": 0
+        }
+      },
+      "num_turns": 2,
+      "result": "The `sleep 25` was blocked by the harness, which treats a standalone sleep as something to replace with a condition-based wait. I haven't run it, so I can't reply DONE yet.\n\nIf you still want the 25-second pause, I can wait on a real condition with Monitor instead, or you can run `sleep 25` yourself in your terminal.",
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015",
+      "subtype": "success",
+      "total_cost_usd": 0.00606277,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 27716,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 27716,
+        "cache_read_input_tokens": 25317,
+        "fallback_credit": null,
+        "inference_geo": "global",
+        "input_tokens": 4,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 2399,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 2399,
+            "cache_read_input_tokens": 25317,
+            "input_tokens": 2,
+            "output_tokens": 450,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 532,
+        "output_tokens_details": {
+          "thinking_tokens": 338
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
+    },
+    "signals": [
+      {
+        "cache_read_tokens": 25317,
+        "cache_write_tokens": 27716,
+        "cost_usd": 0.00606277,
+        "input_tokens": 4,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 532,
+        "signal": "usage"
+      },
+      {
+        "ok": true,
+        "session_id": "930475dc-0511-4175-8a60-3ff59d083015",
+        "signal": "finished",
+        "text": "The `sleep 25` was blocked by the harness, which treats a standalone sleep as something to replace with a condition-based wait. I haven't run it, so I can't reply DONE yet.\n\nIf you still want the 25-second pause, I can wait on a real condition with Monitor instead, or you can run `sleep 25` yourself in your terminal."
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "apiKeySource": "none",
+      "cwd": "/tmp/scratch/sendnow-probe/work",
+      "event": "init",
+      "model": "claude-haiku-5-5",
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015"
+    },
+    "signals": [
+      {
+        "model": "claude-haiku-5-5",
+        "session_id": "930475dc-0511-4175-8a60-3ff59d083015",
+        "signal": "started"
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "control_response"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "event": "assistant",
+      "message": {
+        "content": [
+          {
+            "text": "BANANA\n\nThe `sleep 25` is still not run. The harness blocked it as a standalone sleep, so I haven't replied DONE. Say the word if you want me to wait on a condition with Monitor instead, or run `sleep 25` yourself in your terminal.",
+            "type": "text"
+          }
+        ]
+      },
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "duration_ms": 1163,
+      "errors": [],
+      "event": "result",
+      "is_error": false,
+      "modelUsage": {
+        "claude-haiku-5-5": {
+          "cacheCreationInputTokens": 39699,
+          "cacheReadInputTokens": 53033,
+          "canonicalModel": "claude-haiku-5-5",
+          "contextWindow": 1000000,
+          "costBasis": "list",
+          "costUSD": 0.00878073,
+          "inputTokens": 6,
+          "maxOutputTokens": 128000,
+          "outputTokens": 620,
+          "provider": "firstParty",
+          "thinkingTokens": 338,
+          "webSearchRequests": 0
+        }
+      },
+      "num_turns": 1,
+      "result": "BANANA\n\nThe `sleep 25` is still not run. The harness blocked it as a standalone sleep, so I haven't replied DONE. Say the word if you want me to wait on a condition with Monitor instead, or run `sleep 25` yourself in your terminal.",
+      "session_id": "930475dc-0511-4175-8a60-3ff59d083015",
+      "subtype": "success",
+      "total_cost_usd": 0.00878073,
+      "usage": {
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 11983,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 11983,
+        "cache_read_input_tokens": 27716,
+        "fallback_credit": null,
+        "inference_geo": "global",
+        "input_tokens": 2,
+        "iterations": [
+          {
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 11983,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "cache_creation_input_tokens": 11983,
+            "cache_read_input_tokens": 27716,
+            "input_tokens": 2,
+            "output_tokens": 88,
+            "type": "message"
+          }
+        ],
+        "output_tokens": 88,
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "server_tool_use": {
+          "web_fetch_requests": 0,
+          "web_search_requests": 0
+        },
+        "service_tier": "standard",
+        "speed": "standard"
+      }
+    },
+    "signals": [
+      {
+        "cache_read_tokens": 53033,
+        "cache_write_tokens": 39699,
+        "cost_usd": 0.00878073,
+        "input_tokens": 6,
+        "model": "claude-haiku-5-5",
+        "output_tokens": 620,
+        "signal": "usage"
+      },
+      {
+        "ok": true,
+        "session_id": "930475dc-0511-4175-8a60-3ff59d083015",
+        "signal": "finished",
+        "text": "BANANA\n\nThe `sleep 25` is still not run. The harness blocked it as a standalone sleep, so I haven't replied DONE. Say the word if you want me to wait on a condition with Monitor instead, or run `sleep 25` yourself in your terminal."
+      }
+    ]
+  },
+  {
+    "event": {
+      "event": "other",
+      "kind": "command_lifecycle"
+    },
+    "signals": []
+  },
+  {
+    "event": {
+      "error": "no string `type` field",
+      "event": "malformed"
+    },
+    "signals": []
+  }
+]
