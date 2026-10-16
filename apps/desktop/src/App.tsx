@@ -23,6 +23,7 @@ import Conversation, { firstLine } from "./Conversation";
 import NewTask from "./NewTask";
 import { accountHue, ago, heads, isWorking, nameOf, newest, startedOn } from "./sessions";
 import TerminalCard from "./TerminalCard";
+import { AppOutdated, isNewerDatabase, TerminalOutdated } from "./VersionCheck";
 import { Icon } from "./ui";
 import { loadVendors, VendorsContext, type VendorCaps } from "./vendors";
 
@@ -226,6 +227,8 @@ export default function App() {
   const lastNotice = useRef<{ run: number; at: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTerminal, setShowTerminal] = useState(firstLaunch);
+  // Closed for this launch; it comes back while the data stays newer than the app.
+  const [appOutdatedClosed, setAppOutdatedClosed] = useState(false);
   const [selected, setSelected] = useState<number | "new">("new");
   const [folder, setFolderState] = useState(() => remembered(LAST_FOLDER));
   const setFolder = (f: string) => {
@@ -341,6 +344,9 @@ export default function App() {
   return (
     <VendorsContext.Provider value={{ vendors: vendorCaps, accounts: list ?? [] }}>
     <div className="app">
+      {/* The terminal's anchorleg older than the app's (the card covers it on first launch). */}
+      {info?.ok && info.bundled && !showTerminal && !isNewerDatabase(error) && <TerminalOutdated />}
+      {isNewerDatabase(error) && !appOutdatedClosed && <AppOutdated onClose={() => setAppOutdatedClosed(true)} />}
       <header>
         <Logo />
         <h1 title={info?.ok ? `CLI ${info.version}${info.bundled ? "" : " (installed)"}` : undefined}>anchorleg</h1>

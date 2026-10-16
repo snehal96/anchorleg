@@ -2,7 +2,9 @@ name: desktop-release
 # Push a tag like desktop-v0.3.0 (matching "version" in apps/desktop/src-tauri/tauri.conf.json) to
 # build the desktop app: one universal .dmg for Macs, an AppImage and a .deb per Linux
 # architecture, each with the anchorleg CLI from the same commit inside. The release is created
-# as a draft; publish it by hand after trying a download. Or run it by hand (Actions → Run
+# as a draft and never as "latest"; publish it after trying a download, with
+# `gh release edit desktop-vX.Y.Z --draft=false --latest=false` (the web page's "Set as the latest
+# release" box must stay unticked). Or run it by hand (Actions → Run
 # workflow) to get the bundles as workflow artifacts only.
 on:
   push:
@@ -81,6 +83,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
+          # Never "latest": install.sh, the README and the site take the CLI from
+          # releases/latest, so a desktop release must not take that place.
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag --latest=false \
             --title "anchorleg desktop ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "The anchorleg desktop app, with the anchorleg CLI inside. macOS: the app isn't notarized; the first time, right-click → Open, or System Settings → Privacy & Security → Open Anyway."
+            --notes-file apps/desktop/RELEASE_NOTES.md

@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 /// The oldest CLI this app works with (only matters for a fallback or `ANCHORLEG_BIN`).
-pub const MIN_VERSION: (u32, u32, u32) = (0, 8, 0);
+pub const MIN_VERSION: (u32, u32, u32) = (0, 9, 0);
 
 /// Shown when no CLI can be found at all (a build without the bundled copy).
 pub const INSTALL_COMMAND: &str =
@@ -515,7 +515,7 @@ mod tests {
         assert_eq!(parse_version("anchorleg 0.2.0"), Some((0, 2, 0)));
         assert_eq!(parse_version("anchorleg 1.10.3\n"), Some((1, 10, 3)));
         assert_eq!(parse_version("anchorleg"), None);
-        assert!((0, 7, 0) < MIN_VERSION && (0, 8, 0) >= MIN_VERSION);
+        assert!((0, 8, 0) < MIN_VERSION && (0, 9, 0) >= MIN_VERSION);
     }
 
     #[test]

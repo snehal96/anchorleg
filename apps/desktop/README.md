@@ -21,6 +21,15 @@ npm run tauri dev                         # hot-reloading window
 (cd src-tauri && cargo test --lib && cargo clippy --all-targets -- -D warnings)
 ```
 
+## Keeping the terminal CLI in step
+
+The app and a terminal `anchorleg` share one store, and an older CLI refuses a store a newer one
+has upgraded. At start the app checks which `anchorleg` a terminal runs (`VersionCheck.tsx`):
+older than the app's copy → a dialog offers to point `~/.local/bin/anchorleg` at the app's copy
+(or says what to do when Homebrew or another copy comes first on PATH); "Not now" is remembered
+for that pair of versions. When the app's own copy is the older one (the CLI answers "the
+database is from a newer anchorleg"), a dialog sends you to the desktop downloads instead.
+
 ## Notifications
 
 While the app is open it shows the CLI's notices itself (a run waiting for an answer, done,
@@ -45,7 +54,9 @@ icon brings the window back.
 They land in `release/` with `SHA256SUMS`. Each bundle carries the CLI built from the same
 checkout (universal on macOS: native on Apple silicon and Intel). CI does the same for macOS and both Linux architectures when a `desktop-v*`
 tag matching `version` in `src-tauri/tauri.conf.json` is pushed
-(`.github/workflows/desktop-release.yml`), and leaves a draft release to check and publish.
+(`.github/workflows/desktop-release.yml`), and leaves a draft release, with `RELEASE_NOTES.md`
+as its notes, to check and publish (`gh release edit desktop-vX.Y.Z --draft=false --latest=false`:
+the CLI's release stays "latest").
 
 The app is ad-hoc signed and not notarized, so macOS blocks it the first time it opens. To allow
 it, open System Settings → Privacy & Security and click **Open Anyway**, or run
