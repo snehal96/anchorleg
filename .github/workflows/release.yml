@@ -55,7 +55,13 @@ jobs:
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        # The notes are this version's CHANGELOG.md section, then the commits since the last one.
+        run: |
+          ./scripts/release-notes.sh "$GITHUB_REF_NAME" > notes.md
+          [[ -s notes.md ]] || { echo "CHANGELOG.md has no section for $GITHUB_REF_NAME"; exit 1; }
+          printf '\n[All changes](https://github.com/snehal96/anchorleg/blob/main/CHANGELOG.md) · [Install](https://github.com/snehal96/anchorleg#install)\n' >> notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "anchorleg ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md --generate-notes --verify-tag --latest
       - uses: actions/upload-artifact@v6
         with:
           name: sha256

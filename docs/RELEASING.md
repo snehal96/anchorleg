@@ -39,9 +39,15 @@ Without the secret, releases still publish; the Homebrew job just skips. Users t
    ```bash
    git tag v0.1.0 && git push origin main v0.1.0
    ```
-   The workflow refuses a tag that doesn't match `Cargo.toml`.
+   The workflow refuses a tag that doesn't match `Cargo.toml`, or a version with no
+   `## [X.Y.Z]` section in `CHANGELOG.md`: that section becomes the release notes
+   (`scripts/release-notes.sh vX.Y.Z` shows them), followed by the list of commits.
 3. Watch **Actions → release**. When it's green: the GitHub release has the files above and
-   the tap has the new formula.
+   the tap has the new formula. The CLI release is always marked "latest": `install.sh` and
+   the README download from `releases/latest`.
+
+The desktop app is released separately, from the `desktop` branch, with `desktop-vX.Y.Z` tags
+(`.github/workflows/desktop-release.yml` there). Those releases are never marked latest.
 
 ## Checking a build locally
 
