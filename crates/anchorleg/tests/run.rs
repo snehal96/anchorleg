@@ -2485,7 +2485,7 @@ fn wait_launches(env: &Env, n: usize) {
 }
 
 #[test]
-fn a_message_for_a_working_claude_session_continues_it_when_the_turn_ends() {
+fn a_message_claude_never_takes_in_continues_the_session_when_the_turn_ends() {
     let env = Env::new(&["a"]);
     env.script("a.1.jsonl", &ok("s1", "tests migrated"));
     env.script("a.2.jsonl", &ok("s1", "docs updated too"));
@@ -2515,6 +2515,66 @@ fn a_message_for_a_working_claude_session_continues_it_when_the_turn_ends() {
         .args(["send", "1", "--", "late"])
         .assert()
         .failure();
+}
+
+#[test]
+fn a_message_for_a_working_claude_turn_joins_it() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "tests migrated, docs too"));
+    let child = spawn_run(&env, &[("FAKE_STEER", "1")]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--", "also", "update", "the", "docs"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "tests migrated, docs too", "{r}");
+    // The prompt and the message both went in on stdin, and the turn took the message in.
+    let launches = env.launches();
+    assert_eq!(launches.len(), 1, "{launches:?}");
+    assert!(
+        launches[0].contains(" -p fix the tests --output-format stream-json"),
+        "{launches:?}"
+    );
+    let steer = std::fs::read_to_string(env.path("fake/steer.out")).unwrap();
+    let msg: Value = serde_json::from_str(steer.lines().next().unwrap()).unwrap();
+    assert_eq!(msg["type"], "user");
+    assert_eq!(msg["message"]["content"], "also update the docs");
+    assert!(!steer.contains("send_now"), "{steer}");
+    let log = std::fs::read_to_string(env.path("home/runs/run-1.jsonl")).unwrap();
+    assert_eq!(
+        log.matches(r#""text":"also update the docs","type":"anchorleg_user""#)
+            .count(),
+        1,
+        "{log}"
+    );
+}
+
+#[test]
+fn interrupt_and_send_asks_claude_to_send_it_now() {
+    let env = Env::new(&["a"]);
+    env.script("a.jsonl", &ok("s1", "moved to src/"));
+    let child = spawn_run(&env, &[("FAKE_STEER", "1")]);
+    wait_launches(&env, 1);
+    env.anchorleg()
+        .args(["send", "1", "--interrupt", "--", "stop,", "use", "src/"])
+        .assert()
+        .success();
+    let out = child.wait_with_output().unwrap();
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(r["result"], "moved to src/", "{r}");
+    let steer = std::fs::read_to_string(env.path("fake/steer.out")).unwrap();
+    let lines: Vec<Value> = steer
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2, "{steer}");
+    assert_eq!(lines[0]["message"]["content"], "stop, use src/");
+    assert_eq!(lines[1]["request"]["subtype"], "interrupt");
+    assert_eq!(lines[1]["request"]["send_now"], true);
+    assert_eq!(lines[1]["request"]["message_uuid"], lines[0]["uuid"]);
+    assert_eq!(env.launches().len(), 1, "{:?}", env.launches());
 }
 
 fn codex_waiting(thread: &str, text: &str) -> String {

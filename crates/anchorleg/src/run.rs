@@ -756,9 +756,9 @@ pub fn stop(id: i64) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `anchorleg send`: a message for a session that's still working. Codex takes it into the
-/// running turn; Claude and agy get it as soon as their turn ends (or, with `interrupt`, at its next
-/// clean point), in the same run.
+/// `anchorleg send`: a message for a session that's still working. Codex and Claude take it into
+/// the running turn; agy gets it as soon as its turn ends (or, with `interrupt`, at once), in the
+/// same run.
 pub fn send(id: i64, text: &str, interrupt: bool, attach: &[PathBuf]) -> anyhow::Result<()> {
     let store = Store::open(&Store::default_path()?)?;
     let run = store

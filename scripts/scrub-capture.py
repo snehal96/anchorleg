@@ -6,7 +6,7 @@
 Rewrites the files in place:
 - home folders, temp folders and session scratch paths -> neutral ones (/Users/me, /tmp/...)
 - your username (anywhere) and account names in RENAME -> neutral names
-- init events: drops the installed plugins, MCP connectors, skills and personal slash commands
+- init events: drops the installed plugins, MCP connectors, extra directories, skills and personal slash commands
   (keeps Claude's built-in commands, which tests use); commands_changed events: keeps only
   built-in commands
 - drops SessionStart hook output lines (they echo the person's own hooks) and `codex app-server`
@@ -49,7 +49,7 @@ BUILTIN = {
     "batch", "loop", "schedule", "agents", "output-style", "fast", "rename", "recap",
     "doctor", "color", "focus", "reload-plugins", "reload-skills",
 }
-PERSONAL_LISTS = ("mcp_servers", "plugins")
+PERSONAL_LISTS = ("mcp_servers", "plugins", "additional_directories")
 FILTERED_LISTS = ("slash_commands", "skills", "terminal_slash_commands")
 
 

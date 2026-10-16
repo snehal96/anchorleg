@@ -1008,6 +1008,16 @@ impl Store {
         Ok(n == 1)
     }
 
+    /// Put a taken message back in the queue: it was handed to a CLI that ended before taking
+    /// it in.
+    pub fn untake_message(&self, id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET taken_at = NULL WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
     /// Whether the person asked this run to stop at its next clean point for a new message.
     pub fn interrupt_requested(&self, run_id: RunId) -> Result<bool> {
         Ok(self

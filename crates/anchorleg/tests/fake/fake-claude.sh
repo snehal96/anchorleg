@@ -40,7 +40,22 @@ if [[ "${*: -1}" == /usage ]]; then
   exit 0
 fi
 
-printf '%s %s [stop_at=%s]%s\n' "$account" "$(printf '%s' "$*" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" \
+# `--input-format stream-json` (D70): the prompt is the first stdin line. It is logged where a
+# `-p <prompt>` argument would be, so the log reads the same either way.
+logargs=("$@")
+if [[ " $* " == *" --input-format stream-json "* ]]; then
+  IFS= read -r first || first=""
+  prompt="$(printf '%s' "$first" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read() or "{}").get("message",{}).get("content",""), end="")')"
+  logargs=()
+  skip=""
+  for arg in "$@"; do
+    if [[ -n "$skip" ]]; then skip=""; continue; fi
+    if [[ "$arg" == --input-format ]]; then logargs+=("$prompt"); skip=1; continue; fi
+    logargs+=("$arg")
+  done
+fi
+
+printf '%s %s [stop_at=%s]%s\n' "$account" "$(printf '%s' "${logargs[*]}" | tr '\n' ' ')" "${ANCHORLEG_STOP_AT:-}" \
   "${ANCHORLEG_PERMISSION_MODE:+ [permission_mode=$ANCHORLEG_PERMISSION_MODE]}${ANCHORLEG_BUDGET_LEFT:+ [budget_left=$ANCHORLEG_BUDGET_LEFT]}" \
   >>"$FAKE_LOG"  # one line per launch
 n="$(grep -c "^$account " "$FAKE_LOG")"
@@ -84,6 +99,25 @@ fi
 if [[ -n "${FAKE_SLEEP:-}" ]]; then
   head -1 "$script"   # the init line, then hang like a long task
   sleep "$FAKE_SLEEP" || exit 143   # stopped: never go on to print a result
+fi
+# $FAKE_STEER: like a turn that runs a tool, take one message from stdin while it runs (Claude's
+# `command_lifecycle` `started`), then finish; the stdin lines go to $FAKE_DIR/steer.out.
+if [[ -n "${FAKE_STEER:-}" ]]; then
+  head -1 "$script"
+  if IFS= read -r -t 20 msg; then
+    printf '%s\n' "$msg" >"$FAKE_DIR/steer.out"
+    # Whatever follows it at once (a "send now" request) goes there too.
+    while IFS= read -r -t 1 more; do printf '%s\n' "$more" >>"$FAKE_DIR/steer.out"; done
+    # "Send now" ends the turn there, as Claude does with a running tool; the message is
+    # answered in the next turn, in the same process.
+    if grep -q '"send_now":true' "$FAKE_DIR/steer.out"; then
+      echo '{"type":"control_response","response":{"subtype":"success","request_id":"x","response":{"still_queued":[],"send_now":"stopped"}}}'
+      echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":null,"session_id":"'"$sid"'"}'
+    fi
+    printf '%s' "$msg" | python3 -c 'import json,sys; m=json.loads(sys.stdin.read()); print(json.dumps({"type":"command_lifecycle","command_uuid":m["uuid"],"state":"started"}, separators=(",", ":")))'
+  fi
+  tail -n +2 "$script"
+  exit 0
 fi
 cat "$script"
 grep -q '"is_error":true' "$script" && exit 1

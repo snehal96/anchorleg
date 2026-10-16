@@ -9,7 +9,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{
     AgentSignal, CreditState, Credits, EpochSecs, QuotaReading, QuotaStatus, Usage, Window,
@@ -226,6 +226,77 @@ pub fn reply_model(line: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|m| !m.starts_with('<'))
         .map(str::to_owned)
+}
+
+// Messages to a running session (`--input-format stream-json`, D70): each person's message is
+// one stdin line. Claude takes a waiting message into the running turn at the next tool result
+// and says so with `command_lifecycle` `started` (fixture claude-2.1.301-steer-20261016).
+
+/// A uuid-shaped id for a message anchorleg writes to Claude's stdin.
+pub fn message_uuid(run_id: i64, n: u64) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!(
+        "{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}",
+        (nanos >> 32) as u32,
+        (nanos >> 16) as u16,
+        n & 0xfff,
+        (run_id as u64) & 0xfff,
+        (nanos as u64) & 0xffff_ffff_ffff
+    )
+}
+
+/// One stdin line: the person's message.
+pub fn user_line(uuid: &str, text: &str) -> String {
+    json!({
+        "type": "user",
+        "uuid": uuid,
+        "session_id": "",
+        "parent_tool_use_id": null,
+        "message": { "role": "user", "content": text },
+    })
+    .to_string()
+}
+
+/// One stdin line: "send now" for a waiting message. Claude either takes it into the running
+/// turn or ends that turn at once (running tools stop) and answers it next.
+pub fn send_now_line(request_id: &str, uuid: &str) -> String {
+    json!({
+        "type": "control_request",
+        "request_id": request_id,
+        "request": { "subtype": "interrupt", "send_now": true, "message_uuid": uuid },
+    })
+    .to_string()
+}
+
+/// The message a `command_lifecycle` line says the session has now taken in.
+pub fn message_started(line: &str) -> Option<String> {
+    if !line.contains(r#""type":"command_lifecycle""#) {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    (v.get("state")?.as_str()? == "started")
+        .then(|| v.get("command_uuid")?.as_str().map(str::to_owned))
+        .flatten()
+}
+
+/// Whether this line is Claude's answer to a "send now" that ended the running turn
+/// (`send_now: "stopped"`): the message is answered in a turn of its own, next.
+pub fn send_now_stopped(line: &str) -> bool {
+    line.contains(r#""type":"control_response""#)
+        && serde_json::from_str::<Value>(line).is_ok_and(|v| {
+            v.pointer("/response/response/send_now")
+                .and_then(Value::as_str)
+                == Some("stopped")
+        })
+}
+
+/// Whether this line is the main session's end-of-turn `result`.
+pub fn is_result(line: &str) -> bool {
+    line.contains(r#""type":"result""#)
+        && serde_json::from_str::<Value>(line)
+            .is_ok_and(|v| v.get("type").and_then(Value::as_str) == Some("result"))
 }
 
 pub fn signals(event: &ClaudeEvent) -> Vec<AgentSignal> {
@@ -703,5 +774,55 @@ mod tests {
                 text: Some("usage limit reached in docs only".into()),
             }]
         );
+    }
+
+    #[test]
+    fn a_message_sent_mid_turn_is_taken_in_and_the_turn_ends_once() {
+        // The probe's own stdin lines (`_sent`) aren't the CLI's.
+        let lines: Vec<&str> =
+            include_str!("../../../../fixtures/claude-2.1.301-steer-20261016/steer.jsonl")
+                .lines()
+                .filter(|l| !l.starts_with(r#"{"_"#))
+                .collect();
+        let started: Vec<String> = lines.iter().filter_map(|l| message_started(l)).collect();
+        // The prompt, then the message sent while the first tool ran.
+        assert_eq!(
+            started,
+            [
+                "99674d36-8c7b-45fa-a15a-54e361e14c73",
+                "e5157821-01a5-4405-9a9d-b716b453c0a5"
+            ]
+        );
+        let results: Vec<usize> = (0..lines.len()).filter(|&i| is_result(lines[i])).collect();
+        assert_eq!(results.len(), 1);
+        let taken = lines
+            .iter()
+            .position(|l| message_started(l).is_some_and(|u| u.starts_with("e515")));
+        assert!(taken.unwrap() < results[0]);
+    }
+
+    #[test]
+    fn a_send_now_that_ends_the_turn_is_seen() {
+        let text =
+            include_str!("../../../../fixtures/claude-2.1.301-steer-20261016/send-now.jsonl");
+        let late = include_str!(
+            "../../../../fixtures/claude-2.1.301-steer-20261016/send-now-too-late.jsonl"
+        );
+        assert_eq!(text.lines().filter(|l| send_now_stopped(l)).count(), 1);
+        assert_eq!(late.lines().filter(|l| send_now_stopped(l)).count(), 0);
+    }
+
+    #[test]
+    fn stdin_lines_are_what_claude_reads() {
+        let u = message_uuid(7, 1);
+        assert_eq!(u.len(), 36);
+        assert_eq!(u.matches('-').count(), 4);
+        let msg: Value = serde_json::from_str(&user_line(&u, "use vitest")).unwrap();
+        assert_eq!(msg["type"], "user");
+        assert_eq!(msg["message"]["content"], "use vitest");
+        let now: Value = serde_json::from_str(&send_now_line("r1", &u)).unwrap();
+        assert_eq!(now["request"]["subtype"], "interrupt");
+        assert_eq!(now["request"]["send_now"], true);
+        assert_eq!(now["request"]["message_uuid"], u.as_str());
     }
 }

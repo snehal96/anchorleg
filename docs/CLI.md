@@ -124,8 +124,10 @@ Before launching, anchorleg removes inherited variables that would select anothe
 ## `anchorleg run`
 
 Picks an account (see *Switch policies* below), runs
-`<account launch> -p <prompt> --output-format stream-json --verbose [--model M]` in `--cwd`
-with stdin closed, and records quota from the stream. On a limit hit it blocks that account
+`<account launch> -p --input-format stream-json --output-format stream-json --verbose [--model M]`
+in `--cwd`, writes the prompt to its stdin (and later your messages; a `/command` prompt is
+passed as `-p <prompt>` with stdin closed), closes stdin when the turn ends, and records quota
+from the stream. On a limit hit it blocks that account
 until its reset, copies the session (transcript, subagent transcripts, and newer project
 `memory/` files) into the next account's config dir and resumes it with
 "Continue from where you stopped." If the next account can't see the session, it starts once
@@ -264,13 +266,17 @@ fresh on the next account from the handoff instead of being resumed on a cold ca
 agent without stopping the session:
 
 - **Codex** takes it into the running turn (`turn/steer`), as typing in Codex does.
-- **Claude Code** and **Antigravity** have no way to take a message mid-turn in `-p`, so it waits
-  until the turn ends; then anchorleg continues the same session with it, in the same run.
+- **Claude Code** takes it into the running turn at the next tool result, as typing while it
+  works in Claude Code does (anchorleg keeps Claude's stdin open, `--input-format stream-json`).
+  A message it hasn't taken in when the turn ends continues the same session right after.
+- **Antigravity** has no way to take a message mid-turn, so it waits until the turn ends; then
+  anchorleg continues the same session with it, in the same run.
 
-`--interrupt` (Ctrl+X in the UI) reads it now: Codex's turn is interrupted; Claude stops before
-its next model request (anchorleg-mod checks before each one, like the quota stop), never in the
-middle of a tool call; Antigravity is stopped at once (it has no clean-point hook) and its
-conversation resumed with the message. Either way the session then continues with your message. Messages not
+`--interrupt` (Ctrl+X in the UI) reads it now: Codex's turn is interrupted; Claude Code gets it
+as "send now", like its own send-now key: Claude either takes it into the turn at once or ends
+the turn there, stopping a running tool, and answers it next (and anchorleg-mod still stops
+before the next model request if neither has happened); Antigravity is stopped at once (it has
+no clean-point hook) and its conversation resumed with the message. Either way the session then continues with your message. Messages not
 delivered yet show in the conversation as `(queued)`. A session that isn't working takes a
 normal reply (`anchorleg run --follow-up <run>`).
 

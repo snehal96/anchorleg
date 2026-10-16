@@ -1036,9 +1036,8 @@ impl App {
         (notes + &text, files)
     }
 
-    /// The message box, sent to the selected session while it works (`anchorleg send`): Codex
-    /// takes it into the running turn, Claude when its turn ends; `interrupt` stops the agent at
-    /// its next clean point first.
+    /// The message box, sent to the selected session while it works (`anchorleg send`): Codex and
+    /// Claude take it into the running turn, agy when its turn ends; `interrupt` has it read now.
     fn send_to_running(&mut self, interrupt: bool) -> anyhow::Result<()> {
         let Some(run) = self.selected_run().cloned() else {
             return Ok(());
@@ -1066,12 +1065,9 @@ impl App {
         let text = anchorleg_core::attachments::with_note(&text, &staged);
         self.store.queue_message(run.id, &text, interrupt, now())?;
         self.message_box.set("");
-        let codex = self.provider() == Vendor::Codex;
-        self.message = match (interrupt, codex) {
-            (true, _) => format!(
-                "#{}: stopping at the next clean point, then your message",
-                run.id
-            ),
+        let into_turn = matches!(self.provider(), Vendor::Codex | Vendor::Claude);
+        self.message = match (interrupt, into_turn) {
+            (true, _) => format!("#{}: interrupting for your message", run.id),
             (false, true) => format!("#{}: sent into the running turn", run.id),
             (false, false) => format!(
                 "#{}: queued; the agent reads it when this turn ends (Ctrl+X to interrupt)",
@@ -4156,14 +4152,19 @@ mod tests {
         key(&mut fx.app, KeyCode::Enter);
         // No new run: the message waits for the working one.
         assert!(fx.calls.borrow().started.is_empty());
-        assert!(fx.app.message.contains("queued"), "{}", fx.app.message);
+        // Claude takes it into the running turn; until then it shows as queued.
+        assert!(
+            fx.app.message.contains("sent into the running turn"),
+            "{}",
+            fx.app.message
+        );
         let s = screen(&mut fx.app);
         assert!(s.contains("> (queued) also update the docs"), "{s}");
         typed(&mut fx.app, "stop, wrong folder");
         fx.app
             .on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL))
             .unwrap();
-        assert!(fx.app.message.contains("stopping at the next clean point"));
+        assert!(fx.app.message.contains("interrupting for your message"));
         assert!(fx.app.store.interrupt_requested(1).unwrap());
         assert!(screen(&mut fx.app).contains("> (interrupting) stop, wrong folder"));
         assert_eq!(fx.app.store.queued_messages(1).unwrap().len(), 2);

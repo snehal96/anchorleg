@@ -257,6 +257,13 @@ impl Feed {
 }
 
 /// The next event, or `None` once `deadline` passes first.
+/// Write one line to a CLI's stdin.
+async fn write_line(input: &mut tokio::process::ChildStdin, line: &str) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+    input.write_all(format!("{line}\n").as_bytes()).await?;
+    input.flush().await
+}
+
 async fn next_item(
     source: &mut Feed,
     deadline: Option<tokio::time::Instant>,
@@ -1381,6 +1388,8 @@ impl Supervisor<'_> {
         };
         let mut cmd = launch.command();
         let mut codex_turn: Option<codex_server::Turn> = None;
+        let claude_stdin =
+            account.vendor == Vendor::Claude && !prompt.trim_start().starts_with('/');
         // The provider's model and effort, shared by all its accounts (D20); `--model` on
         // `anchorleg run` overrides the model for this run.
         let shared = self.config.vendors.get(&account.vendor);
@@ -1548,7 +1557,13 @@ impl Supervisor<'_> {
                     cmd.env("ANCHORLEG_BIN", bin);
                 }
             }
-            cmd.arg("-p").arg(prompt);
+            // The prompt goes in on stdin, which stays open so the person's messages reach the
+            // running turn (D70). A slash command stays an argument: Claude runs it as its own.
+            if claude_stdin {
+                cmd.args(["-p", "--input-format", "stream-json"]);
+            } else {
+                cmd.arg("-p").arg(prompt);
+            }
             cmd.args(["--output-format", "stream-json", "--verbose"]);
             // The person's hooks: what they block or say shows in the conversation.
             if !launch.args.iter().any(|a| a == "--include-hook-events") {
@@ -1567,7 +1582,7 @@ impl Supervisor<'_> {
         }
         // Without this, `claude -p` waits 3 s for stdin on every launch (Phase 0).
         cmd.current_dir(&opts.cwd)
-            .stdin(if codex_turn.is_some() {
+            .stdin(if codex_turn.is_some() || claude_stdin {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -1588,6 +1603,22 @@ impl Supervisor<'_> {
                 source,
             })?;
         let stdout = child.stdout.take().expect("stdout is piped");
+        // Claude's stdin: the prompt now, the person's messages while the turn runs (D70).
+        let mut claude_in = if claude_stdin {
+            child.stdin.take()
+        } else {
+            None
+        };
+        if let Some(input) = claude_in.as_mut()
+            && write_line(
+                input,
+                &claude::user_line(&claude::message_uuid(run_id, 0), prompt),
+            )
+            .await
+            .is_err()
+        {
+            claude_in = None;
+        }
         // Messages the person sends while a Codex turn runs go straight into it (`turn/steer`).
         let mut steer_tx: Option<tokio::sync::mpsc::UnboundedSender<Steer>> = None;
         let mut source = match codex_turn {
@@ -1627,6 +1658,14 @@ impl Supervisor<'_> {
         let mut forwarded: Vec<i64> = Vec::new();
         // agy was stopped for a message sent with "interrupt".
         let mut interrupted = false;
+        // Messages written to Claude's stdin that the session hasn't taken in yet: (uuid, id,
+        // text). They count as taken (so the mod doesn't also stop for one) and go back in the
+        // queue if the launch ends first.
+        let mut in_flight: Vec<(String, i64, String)> = Vec::new();
+        let mut sent = 0u64;
+        // Claude ended the turn for a "send now": the turn that answers the message follows in
+        // the same process.
+        let mut sent_now = false;
 
         loop {
             let item = tokio::select! {
@@ -1638,7 +1677,33 @@ impl Supervisor<'_> {
                         break;
                     }
                 },
-                _ = tick.tick(), if steer_tx.is_some() || account.vendor == Vendor::Antigravity => {
+                _ = tick.tick(), if steer_tx.is_some() || claude_in.is_some() || account.vendor == Vendor::Antigravity => {
+                    // Claude takes a message into the running turn at its next tool result;
+                    // "interrupt" also asks it to send now, which may end the turn at once.
+                    if let Some(input) = claude_in.as_mut() {
+                        for m in self.store.queued_messages(run_id)? {
+                            // Taken first, so the mod's interrupt check doesn't see it too.
+                            if !self.store.take_message(m.id, self.now())? {
+                                continue;
+                            }
+                            sent += 1;
+                            let uuid = claude::message_uuid(run_id, sent);
+                            let mut ok = write_line(input, &claude::user_line(&uuid, &m.text))
+                                .await
+                                .is_ok();
+                            if ok && m.interrupt {
+                                let id = format!("anchorleg-{sent}");
+                                ok = write_line(input, &claude::send_now_line(&id, &uuid))
+                                    .await
+                                    .is_ok();
+                            }
+                            if !ok {
+                                self.store.untake_message(m.id)?;
+                                break;
+                            }
+                            in_flight.push((uuid, m.id, m.text));
+                        }
+                    }
                     // agy takes nothing mid-turn: "interrupt" stops it, and the session goes on
                     // with the message (as Claude's does at its next step, through the mod).
                     if account.vendor == Vendor::Antigravity
@@ -1713,6 +1778,32 @@ impl Supervisor<'_> {
             if line.trim().is_empty() {
                 continue;
             }
+            if claude_stdin {
+                if let Some(uuid) = claude::message_started(&line)
+                    && let Some(i) = in_flight.iter().position(|(u, ..)| *u == uuid)
+                {
+                    let (.., text) = in_flight.remove(i);
+                    self.log_line(
+                        opts,
+                        run_id,
+                        &json!({ "type": "anchorleg_user", "text": text }),
+                    );
+                }
+                if claude::send_now_stopped(&line) {
+                    sent_now = true;
+                }
+                // One turn per launch, except the one a "send now" ended: let the CLI answer
+                // that message itself. Otherwise the turn is over, so let the CLI exit; a
+                // message it hasn't taken in yet would start another turn here, so stop it
+                // instead, and the message continues the session on the next launch.
+                if claude::is_result(&line) {
+                    if in_flight.is_empty() {
+                        claude_in = None;
+                    } else if !std::mem::take(&mut sent_now) {
+                        child.start_kill()?;
+                    }
+                }
+            }
             let mut signals = decoder.feed(&line);
             // Claude says nothing when it answers with another model; compare.
             if matches!(decoder, Decoder::Claude)
@@ -1738,6 +1829,10 @@ impl Supervisor<'_> {
                 };
                 deadline = Some(tokio::time::Instant::now() + grace);
             }
+        }
+        drop(claude_in);
+        for (_, id, _) in in_flight {
+            self.store.untake_message(id)?;
         }
         if matches!(source, Feed::Codex(_)) {
             // The turn is over and the driver closed the server's stdin; give it a moment to

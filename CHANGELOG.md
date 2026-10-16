@@ -6,6 +6,11 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Messages to a working Claude Code session reach the running turn: Claude takes one in at its
+  next tool result, as Codex already did with `turn/steer`. `--interrupt` (Ctrl+X) sends it as
+  Claude's "send now", which stops a running tool at once instead of waiting for the next step.
+
 ### Changed
 - anchorleg-mod carries anchorleg's version instead of staying at 0.1.0 (set at the next release).
 - anchorleg-mod has its own README (what it does, what it runs and sends) and license files, for
