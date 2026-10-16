@@ -6,13 +6,19 @@ All notable changes are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-16
+
 ### Added
 - Messages to a working Claude Code session reach the running turn: Claude takes one in at its
   next tool result, as Codex already did with `turn/steer`. `--interrupt` (Ctrl+X) sends it as
-  Claude's "send now", which stops a running tool at once instead of waiting for the next step.
+  Claude's "send now", which stops a running tool at once and answers your message right away,
+  in the same session.
 
 ### Changed
-- anchorleg-mod carries anchorleg's version instead of staying at 0.1.0 (set at the next release).
+- A shorter README: a quick start, the main features and the everyday commands. Everything else
+  is in [docs/FEATURES.md](https://github.com/snehal96/anchorleg/blob/main/docs/FEATURES.md).
+- GitHub release notes are this changelog's section for the version.
+- anchorleg-mod carries anchorleg's version (0.9.0) instead of staying at 0.1.0.
 - anchorleg-mod has its own README (what it does, what it runs and sends) and license files, for
   plugin directories.
 

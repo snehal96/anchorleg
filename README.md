@@ -148,14 +148,14 @@ Every command and option, and the JSON contract: [docs/CLI.md](docs/CLI.md).
 
 The install script downloads the latest release for your machine, checks its SHA-256 and puts
 `anchorleg` in `~/.local/bin`. Set `ANCHORLEG_INSTALL_DIR` to install somewhere else, or
-`ANCHORLEG_VERSION=v0.8.0` to pin a version. Run it again to update.
+`ANCHORLEG_VERSION=v0.9.0` to pin a version. Run it again to update.
 
 **Debian / Ubuntu** (`.deb`):
 
 ```bash
 arch=$(dpkg --print-architecture)   # amd64 or arm64
-curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.8.0-1_${arch}.deb"
-sudo apt install "./anchorleg_0.8.0-1_${arch}.deb"
+curl -fsSLO "https://github.com/snehal96/anchorleg/releases/latest/download/anchorleg_0.9.0-1_${arch}.deb"
+sudo apt install "./anchorleg_0.9.0-1_${arch}.deb"
 ```
 
 **Prebuilt binaries:** every [release](https://github.com/snehal96/anchorleg/releases/latest)
