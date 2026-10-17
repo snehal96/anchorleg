@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the anchorleg CLI from this repo and put it where Tauri bundles it from:
 # src-tauri/binaries/anchorleg-<target triple> (D31: the app ships its own CLI).
-# For universal-apple-darwin it builds both Mac architectures and joins them with lipo.
+# For universal-apple-darwin it builds both Mac architectures, joins them with lipo, and keeps
+# each one's copy as well (Tauri builds the app per architecture first).
 # ANCHORLEG_CLI_DIR builds it from another checkout instead, e.g. a `cli/<topic>` worktree whose
 # changes aren't on this branch yet (D65).
 set -uo pipefail
@@ -22,6 +23,10 @@ if [ "$target" = universal-apple-darwin ]; then
   lipo -create -output "$out" \
     "$root/target/aarch64-apple-darwin/$profile/anchorleg" \
     "$root/target/x86_64-apple-darwin/$profile/anchorleg" || exit 1
+  # Tauri compiles the app once per architecture and wants that architecture's copy too.
+  for a in aarch64-apple-darwin x86_64-apple-darwin; do
+    cp "$root/target/$a/$profile/anchorleg" "$here/src-tauri/binaries/anchorleg-$a" || exit 1
+  done
 else
   build "$target" || exit 1
   cp "$root/target/$target/$profile/anchorleg" "$out"

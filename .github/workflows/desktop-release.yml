@@ -15,7 +15,8 @@ permissions:
 jobs:
   build:
     strategy:
-      fail-fast: true
+      # Every platform reports its own result; the release job still needs all of them.
+      fail-fast: false
       matrix:
         include:
           # One .dmg for every Mac: Apple silicon and Intel, both native.
