@@ -188,6 +188,32 @@ td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; color: var(--muted); font-size: 0.9rem; }
 
+/* feedback */
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
+.linkish:hover { color: var(--ink); }
+.fb-float { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 10; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); font: 600 0.88rem var(--body); padding: 0.55rem 0.9rem; border-radius: 999px; cursor: pointer; box-shadow: 0 4px 16px rgb(0 0 0 / 0.12); }
+.fb-float:hover { border-color: var(--muted); }
+dialog.fb { width: min(32rem, calc(100vw - 32px)); border: 1px solid var(--rule); border-radius: 12px; background: var(--panel); color: var(--ink); padding: 1.25rem; }
+dialog.fb::backdrop { background: rgb(15 21 27 / 0.45); }
+.fb form { display: grid; gap: 0.9rem; }
+.fb h2 { font-size: var(--step-1); }
+.fb p { color: var(--muted); font-size: 0.92rem; }
+.fb label { display: grid; gap: 0.35rem; font-weight: 500; font-size: 0.92rem; }
+.fb textarea, .fb input[type=email] { font: inherit; color: inherit; background: var(--ground); border: 1px solid var(--rule); border-radius: 8px; padding: 0.55rem 0.7rem; width: 100%; }
+.fb textarea { min-height: 7rem; resize: vertical; }
+.fb .kinds { display: flex; flex-wrap: wrap; gap: 0.5rem; border: 0; padding: 0; margin: 0; }
+.fb .kinds label { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 400; border: 1px solid var(--rule); border-radius: 999px; padding: 0.3rem 0.75rem; cursor: pointer; }
+.fb .kinds input { accent-color: var(--ok); }
+.fb .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.fb .actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
+.fb .actions button { font: 600 0.92rem var(--body); padding: 0.55rem 0.95rem; border-radius: 6px; cursor: pointer; border: 1px solid var(--rule); background: transparent; color: var(--ink); }
+.fb .actions button[type=submit] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.fb .actions button:disabled { opacity: 0.6; cursor: default; }
+.fb .status { min-height: 1.2em; font-size: 0.9rem; }
+.fb .status.ok { color: var(--ok); }
+.fb .status.err { color: var(--stop); }
+@media print { .fb-float { display: none; } }
+
 @media (max-width: 860px) {
   .hero, .features, .rules { grid-template-columns: minmax(0, 1fr); }
   .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -206,8 +232,10 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
   <nav aria-label="Page">
     <a href="#how">How it works</a>
     <a href="#features">Features</a>
+    <a href="#desktop">Desktop app</a>
     <a href="#rules">Ground rules</a>
     <a href="#start">Get started</a>
+    <button type="button" class="linkish" data-feedback>Feedback</button>
     <a href="https://github.com/snehal96/anchorleg" data-goatcounter-click="out-github-nav" data-goatcounter-title="GitHub (nav)"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
   </nav>
 </header>
@@ -225,7 +253,7 @@ footer { border-top: 1px solid var(--rule); padding-top: 1.5rem; display: flex; 
         <pre id="install-cmd">curl -fsSL https://raw.githubusercontent.com/snehal96/anchorleg/main/install.sh | bash</pre>
         <button type="button" id="copy-install" aria-label="Copy install command">Copy</button>
       </div>
-      <p class="alt">macOS and Linux. Also as a <code>.deb</code>, prebuilt binaries or <code>cargo install</code>; Homebrew is coming soon. <a href="https://github.com/snehal96/anchorleg#install" data-goatcounter-click="out-install-other" data-goatcounter-title="Install details">Install details</a></p>
+      <p class="alt">macOS and Linux. Also as a <code>.deb</code>, prebuilt binaries or <code>cargo install</code>; Homebrew is coming soon. <a href="https://github.com/snehal96/anchorleg#install" data-goatcounter-click="out-install-other" data-goatcounter-title="Install details">Install details</a> · prefer a window? <a href="#desktop">Get the desktop app</a></p>
       <div class="cta">
         <a class="btn primary" href="https://github.com/snehal96/anchorleg" data-goatcounter-click="out-github-hero" data-goatcounter-title="View on GitHub (hero)"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> View on GitHub</a>
         <a class="btn ghost" href="#start" data-goatcounter-click="quick-start" data-goatcounter-title="Quick start">Quick start</a>
@@ -325,6 +353,22 @@ Claude requested permissions to write to src/auth/session.rs
  1 Yes    2 Yes, for this session    3 No</pre>
     </div>
     <div class="feature">
+      <h3>Talk to it while it works</h3>
+      <p>Type to a working session and Claude Code or Codex reads it in the turn that's running, at
+        its next step, the way typing in the CLI does. Need it now? Ctrl+X (<code>anchorleg send
+        --interrupt</code>) stops a running command and your message goes in at once.</p>
+<pre class="screen" aria-label="a message sent mid-turn">⏺ Bash(npm test)
+<span class="u">&gt; also run the e2e tests before you finish     </span>
+  ⎿ 42 passed
+⏺ Bash(npm run e2e) · 9 passed
+⏺ Unit and e2e tests pass.</pre>
+    </div>
+    <div class="feature">
+      <h3>See what changed, go back to any message</h3>
+      <p>Every file a session changed, with its diff, from any CLI; undo in one step. Go back to any
+        message, or fork a new session from it, and see what each sub-agent was asked and did.</p>
+    </div>
+    <div class="feature">
       <h3>Plan, goal, review</h3>
       <p><code>--plan</code>: approve a plan before anything changes. <code>--goal "cargo test
         passes"</code>: keep going, turn after turn, until it holds, even across accounts.
@@ -358,6 +402,21 @@ Claude requested permissions to write to src/auth/session.rs
   </div>
 </section>
 
+<section id="desktop">
+  <div class="section-head">
+    <p class="eyebrow">Desktop app · preview</p>
+    <h2>The same sessions, in a window</h2>
+    <p>Start tasks, watch the conversation (Markdown, diagrams, charts and maths drawn), approve
+      what the agent may do, answer its questions, and see every account's quota in the menu bar.
+      The app includes the CLI, so installing it is the only step.</p>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/snehal96/anchorleg/releases?q=desktop&amp;expanded=true" data-goatcounter-click="out-desktop-download" data-goatcounter-title="Desktop app download">Download for macOS or Linux</a>
+    <a class="btn ghost" href="https://github.com/snehal96/anchorleg/tree/desktop/apps/desktop" data-goatcounter-click="out-desktop-source" data-goatcounter-title="Desktop app source">Source</a>
+  </div>
+  <p class="alt" style="margin-top:0.9rem">macOS: one <code>.dmg</code> for Apple silicon and Intel. It isn't notarized yet, so the first time, right-click the app → Open. Linux: AppImage or <code>.deb</code>.</p>
+</section>
+
 <section id="rules">
   <div class="section-head">
     <p class="eyebrow">Ground rules</p>
@@ -368,7 +427,7 @@ Claude requested permissions to write to src/auth/session.rs
     <li><strong>Official binaries only</strong><span>It starts <code>claude</code>, <code>codex</code> and <code>agy</code> (later <code>cursor-agent</code>) exactly as you would.</span></li>
     <li><strong>No token tricks</strong><span>It never extracts subscription tokens, never calls vendor APIs directly, never runs a proxy.</span></li>
     <li><strong>Nothing changed inside a session</strong><span>The mod reads usage and stops at a step boundary. Switching happens outside, by relaunching.</span></li>
-    <li><strong>Secrets stay in the keychain</strong><span>Tokens, when you use them, live in the macOS Keychain. Never in config, logs or test data.</span></li>
+    <li><strong>Secrets stay in the keychain</strong><span>Tokens, when you use them, live in the macOS Keychain or Linux's Secret Service. Never in config, logs or test data.</span></li>
     <li><strong>Local checkpoints, never pushed</strong><span>Checkpoints are refs under <code>refs/anchorleg/</code>. Your branch, index and stash are untouched.</span></li>
     <li><strong>Nothing approved without you</strong><span>Tool calls Claude would ask about wait for your answer. No answer in 30 minutes means no.</span></li>
   </ul>
@@ -385,7 +444,7 @@ Claude requested permissions to write to src/auth/session.rs
     <div class="chip"><b>Codex</b><span class="pill yes">supported</span></div>
     <div class="chip"><b>Antigravity (agy)</b><span class="pill soon">in progress</span></div>
     <div class="chip"><b>Kimi, Cursor</b><span class="pill later">planned</span></div>
-    <div class="chip"><b>Desktop app</b><span class="pill later">planned</span></div>
+    <div class="chip"><b>Desktop app</b><span class="pill soon">preview</span></div>
     <div class="chip"><b>macOS, Linux</b><span class="pill yes">released</span></div>
     <div class="chip"><b>Homebrew</b><span class="pill soon">in progress</span></div>
   </div>
@@ -411,11 +470,37 @@ anchorleg ui</pre>
 </section>
 
 <footer>
-  <span>anchorleg · dual-licensed MIT or Apache-2.0</span>
+  <span>anchorleg · dual-licensed MIT or Apache-2.0 · visits are counted with <a href="https://www.goatcounter.com">GoatCounter</a>, without cookies</span>
   <span><a href="https://github.com/snehal96/anchorleg" data-goatcounter-click="out-github-footer" data-goatcounter-title="Source (footer)"><svg class="gh" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> Source</a> · <a href="https://github.com/snehal96/anchorleg/blob/main/docs/CLI.md" data-goatcounter-click="out-cli-docs" data-goatcounter-title="CLI reference">CLI reference</a> · <a href="https://github.com/snehal96/anchorleg#how-it-works" data-goatcounter-click="out-design" data-goatcounter-title="How it works">How it works</a></span>
 </footer>
 
 </div>
+<button type="button" class="fb-float" data-feedback>Feedback</button>
+<dialog class="fb" id="feedback" aria-labelledby="fb-title">
+  <form id="feedback-form">
+    <h2 id="fb-title">Tell us what you think</h2>
+    <p>A bug, an idea, something that confused you: all of it helps. It goes to the maintainer only.</p>
+    <fieldset class="kinds" aria-label="Kind of feedback">
+      <label><input type="radio" name="kind" value="idea" checked> Idea</label>
+      <label><input type="radio" name="kind" value="bug"> Bug</label>
+      <label><input type="radio" name="kind" value="question"> Question</label>
+      <label><input type="radio" name="kind" value="other"> Other</label>
+    </fieldset>
+    <label>Your message
+      <textarea name="message" required maxlength="4000" placeholder="What happened, or what would make anchorleg better for you?"></textarea>
+    </label>
+    <label><span>Email <span style="font-weight:400;color:var(--muted)">(optional, if you'd like an answer)</span></span>
+      <input type="email" name="email" maxlength="200" autocomplete="email">
+    </label>
+    <input type="text" name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <p>Prefer it public? <a href="https://github.com/snehal96/anchorleg/issues/new" data-goatcounter-click="out-issue-from-feedback" data-goatcounter-title="Issue (feedback form)">Open a GitHub issue</a>.</p>
+    <p class="status" id="fb-status" role="status"></p>
+    <div class="actions">
+      <button type="button" id="fb-cancel">Cancel</button>
+      <button type="submit" id="fb-send">Send</button>
+    </div>
+  </form>
+</dialog>
 <script>
 document.getElementById('copy-install').addEventListener('click', function (ev) {
   var btn = ev.currentTarget;
@@ -435,6 +520,56 @@ document.getElementById('copy-install').addEventListener('click', function (ev) 
     } else { select(); }
   } catch (e) { select(); }
 });
+// Feedback: posted to a Google Apps Script web app that adds a row to a private Google Sheet
+// (docs/FEEDBACK.md). Until FEEDBACK_URL is set, the form opens a pre-filled GitHub issue instead.
+var FEEDBACK_URL = 'https://script.google.com/macros/s/AKfycbyQvhshYQP4BSSKd090V4EezBOcLiKymFwe2V49tCvvPKR1lR3GYqm8Oxq6dWQrvKjq2g/exec';
+(function () {
+  var dlg = document.getElementById('feedback');
+  var form = document.getElementById('feedback-form');
+  var status = document.getElementById('fb-status');
+  var send = document.getElementById('fb-send');
+  var track = function (path, title) {
+    if (window.goatcounter && window.goatcounter.count) window.goatcounter.count({ path: path, title: title, event: true });
+  };
+  var open = function () {
+    status.textContent = ''; status.className = 'status'; send.disabled = false;
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    track('feedback-open', 'Opened feedback');
+  };
+  document.querySelectorAll('[data-feedback]').forEach(function (b) { b.addEventListener('click', open); });
+  document.getElementById('fb-cancel').addEventListener('click', function () { dlg.close ? dlg.close() : dlg.removeAttribute('open'); });
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var d = new FormData(form);
+    var message = String(d.get('message') || '').trim();
+    if (!message) return;
+    var kind = String(d.get('kind') || 'other');
+    var done = function () {
+      status.textContent = 'Thank you, it\u2019s sent.'; status.className = 'status ok';
+      form.reset(); track('feedback-sent', 'Sent feedback (' + kind + ')');
+      setTimeout(function () { dlg.close ? dlg.close() : dlg.removeAttribute('open'); }, 1600);
+    };
+    if (d.get('website')) { done(); return; }   // filled in only by bots
+    if (!FEEDBACK_URL) {
+      // No sheet yet: a GitHub issue, without the email (it would be public).
+      var url = 'https://github.com/snehal96/anchorleg/issues/new?labels=feedback&title=' +
+        encodeURIComponent('[' + kind + '] ' + message.slice(0, 60)) + '&body=' + encodeURIComponent(message);
+      window.open(url, '_blank', 'noopener'); track('feedback-issue', 'Feedback as an issue'); return;
+    }
+    send.disabled = true; status.textContent = 'Sending…'; status.className = 'status';
+    // text/plain keeps it a "simple" request (no CORS preflight, which Apps Script can't answer);
+    // the answer is opaque, so a network error is the only failure we can see.
+    fetch(FEEDBACK_URL, {
+      method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ kind: kind, message: message, email: String(d.get('email') || ''),
+        page: location.pathname + location.hash, ref: document.referrer, ua: navigator.userAgent,
+        lang: navigator.language })
+    }).then(done, function () {
+      send.disabled = false; status.className = 'status err';
+      status.textContent = 'Couldn\u2019t send it. Try again, or open a GitHub issue.';
+    });
+  });
+})();
 </script>
 </body>
 </html>
