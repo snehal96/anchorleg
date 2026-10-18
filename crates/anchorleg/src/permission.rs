@@ -57,7 +57,12 @@ fn elicit(store: &Store, run_id: i64, hook: &Value) -> Value {
                 answers: Some(answers),
                 ..
             }) => Some(answers),
-            _ => None,
+            Ok(_) => None,
+            Err(e) => {
+                // Claude Code shows a hook's stderr in its debug log; the request is declined.
+                eprintln!("anchorleg: couldn't ask about the MCP server's request: {e:#}");
+                None
+            }
         }
     };
     let mut out = match answers {

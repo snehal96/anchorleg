@@ -431,6 +431,7 @@ fn an_mcp_servers_request_in_a_claude_run_goes_to_the_person() {
         let mut child = c
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
         writeln!(child.stdin.take().unwrap(), "{hook}").unwrap();
@@ -451,21 +452,38 @@ fn an_mcp_servers_request_in_a_claude_run_goes_to_the_person() {
         .stdout(std::process::Stdio::null())
         .spawn()
         .unwrap();
+    // Running with its pid recorded: a question for a run without one is expired at once.
     let start = std::time::Instant::now();
     while start.elapsed() < std::time::Duration::from_secs(60) {
         let out = std_cmd(&["sessions", "--json"]).output().unwrap();
-        if String::from_utf8_lossy(&out.stdout).contains("running") {
+        let runs: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+        if runs
+            .as_array()
+            .and_then(|r| r.iter().find(|r| r["id"] == 1))
+            .is_some_and(|r| r["state"] == "running" && r["pid"].is_i64())
+        {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    let child = elicit(Some("1"));
+    let mut child = elicit(Some("1"));
     let start = std::time::Instant::now();
     let id = loop {
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(60),
-            "never asked"
-        );
+        // It only ends without asking when something went wrong: say what.
+        if child.try_wait().unwrap().is_some() {
+            let out = child.wait_with_output().unwrap();
+            let sessions = std_cmd(&["sessions", "--json"]).output().unwrap();
+            panic!(
+                "elicit ended without asking: {}\n{}\nsessions: {}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+                String::from_utf8_lossy(&sessions.stdout)
+            );
+        }
+        if start.elapsed() > std::time::Duration::from_secs(60) {
+            let list = std_cmd(&["permission", "list", "--json"]).output().unwrap();
+            panic!("never asked: {list:?}");
+        }
         let out = std_cmd(&["permission", "list", "--json"]).output().unwrap();
         let pending: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
         if let Some(id) = pending.get(0).and_then(|p| p["id"].as_i64()) {
